@@ -4,15 +4,16 @@ from typing import Optional
 from datetime import datetime
 from uuid import UUID
 
-# Tenant Schemas
-class TenantCreate(BaseModel):
+# Organization Schemas (formerly Tenant)
+class OrganizationCreate(BaseModel):
     name: str
     subdomain: str
 
-class TenantResponse(BaseModel):
+class OrganizationResponse(BaseModel):
     id: UUID
     name: str
     subdomain: str
+    access_code: str
     is_active: bool
     created_at: datetime
     
@@ -29,7 +30,15 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
-    tenant_subdomain: str
+
+class UserRegister(BaseModel):
+    email: EmailStr
+    username: str
+    password: str = Field(..., min_length=8)
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    organization_subdomain: str
+    access_code: str
 
 class UserResponse(BaseModel):
     id: UUID
@@ -57,6 +66,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    organization_subdomain: str  # Add this to return org info on login
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str

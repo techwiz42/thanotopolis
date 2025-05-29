@@ -1,10 +1,11 @@
+// frontend/src/app/layout.tsx
 import './globals.css'
 import React from 'react'
 import { AuthProvider } from '@/contexts/AuthContext'
 import MainLayout from '@/components/MainLayout'
 
 export const metadata = {
-  title: 'Thanatopolis',
+  title: 'Thanotopolis',
   description: 'Manage your afterlife affairs',
 }
 

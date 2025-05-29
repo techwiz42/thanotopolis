@@ -1,3 +1,4 @@
+// frontend/src/components/MainLayout.tsx
 'use client'
 
 import React from 'react'
@@ -10,11 +11,11 @@ interface MainLayoutProps {
 }
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
-  const { user, tenant, logout } = useAuth()
+  const { user, organization, logout } = useAuth()
   const pathname = usePathname()
 
   // Determine if we're on a public page
-  const isPublicPage = ['/', '/login', '/register'].includes(pathname)
+  const isPublicPage = ['/', '/login', '/register', '/organizations/new'].includes(pathname)
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -28,11 +29,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 <svg className="w-8 h-8 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
-                <h1 className="text-xl font-semibold text-gray-900">Thanatopolis</h1>
+                <h1 className="text-xl font-semibold text-gray-900">Thanotopolis</h1>
               </Link>
-              {user && tenant && (
+              {user && organization && (
                 <span className="ml-4 text-sm text-gray-500 hidden sm:block">
-                  Tenant: {tenant}
+                  Organization: {organization}
                 </span>
               )}
             </div>
@@ -67,6 +68,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                       Home
                     </Link>
                   )}
+                  <Link
+                    href="/organizations/new"
+                    className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                  >
+                    Create Organization
+                  </Link>
                   {pathname !== '/login' && (
                     <Link
                       href="/login"
@@ -100,7 +107,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex flex-col sm:flex-row justify-between items-center">
             <p className="text-sm text-gray-600">
-              &copy; 2024 Thanatopolis. All rights reserved.
+              &copy; 2025 Thanotopolis. All rights reserved.
             </p>
             <div className="flex space-x-6 mt-2 sm:mt-0">
               <a href="#" className="text-sm text-gray-500 hover:text-gray-700">Privacy Policy</a>

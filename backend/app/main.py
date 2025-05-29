@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Multi-Tenant Auth API",
+    title="Thanotopolis Auth API",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -36,14 +36,14 @@ app.add_middleware(
 # Health check
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "multi-tenant-auth"}
+    return {"status": "healthy", "service": "thanotopolis-auth"}
 
 # Root endpoint
 @app.get("/")
 async def root():
     return {
-        "message": "Multi-Tenant Auth API",
-        "version": "0.0.1",
+        "message": "Thanotopolis Auth API",
+        "version": "1.0.0",
         "docs": "/docs"
     }
 

@@ -1,10 +1,11 @@
-# models.py
+# backend/app/models/models.py
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.sql import func
 from datetime import datetime
 import uuid
+import secrets
 
 Base = declarative_base()
 
@@ -14,6 +15,7 @@ class Tenant(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
     subdomain = Column(String, unique=True, nullable=False)
+    access_code = Column(String, nullable=False, default=lambda: secrets.token_urlsafe(8))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -58,4 +60,3 @@ class RefreshToken(Base):
     
     # Relationships
     user = relationship("User", back_populates="refresh_tokens")
-

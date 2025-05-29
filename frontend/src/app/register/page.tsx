@@ -1,9 +1,16 @@
+// frontend/src/app/register/page.tsx
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
+
+interface Organization {
+  id: string
+  name: string
+  subdomain: string
+}
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -13,15 +20,33 @@ export default function Register() {
     confirmPassword: '',
     first_name: '',
     last_name: '',
-    tenant: ''
+    organization_subdomain: '',
+    access_code: ''
   })
+  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   
   const { register } = useAuth()
   const router = useRouter()
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    // Fetch available organizations
+    const fetchOrganizations = async () => {
+      try {
+        const response = await fetch('/api/organizations')
+        if (response.ok) {
+          const orgs = await response.json()
+          setOrganizations(orgs)
+        }
+      } catch (error) {
+        console.error('Failed to fetch organizations:', error)
+      }
+    }
+    fetchOrganizations()
+  }, [])
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData(prev => ({
       ...prev,
       [e.target.name]: e.target.value
@@ -42,11 +67,21 @@ export default function Register() {
       return
     }
 
+    if (!formData.organization_subdomain) {
+      setError('Please select an organization')
+      return
+    }
+
+    if (!formData.access_code) {
+      setError('Please enter the organization access code')
+      return
+    }
+
     setIsSubmitting(true)
 
     try {
-      const { confirmPassword, tenant, ...registerData } = formData
-      await register(registerData, tenant)
+      const { confirmPassword, ...registerData } = formData
+      await register(registerData)
       router.push('/greeting')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
@@ -77,17 +112,45 @@ export default function Register() {
           )}
           <div className="space-y-4">
             <div>
-              <label htmlFor="tenant" className="block text-sm font-medium text-gray-700">
-                Tenant Subdomain
+              <label htmlFor="organization_subdomain" className="block text-sm font-medium text-gray-700">
+                Organization
+              </label>
+              <select
+                id="organization_subdomain"
+                name="organization_subdomain"
+                required
+                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                value={formData.organization_subdomain}
+                onChange={handleChange}
+              >
+                <option value="">Select an organization</option>
+                {organizations.map(org => (
+                  <option key={org.id} value={org.subdomain}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Don't see your organization?{' '}
+                <Link href="/organizations/new" className="text-blue-600 hover:text-blue-500">
+                  Create one here
+                </Link>
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="access_code" className="block text-sm font-medium text-gray-700">
+                Organization Access Code
               </label>
               <input
-                id="tenant"
-                name="tenant"
+                id="access_code"
+                name="access_code"
                 type="text"
                 required
                 className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                value={formData.tenant}
+                value={formData.access_code}
                 onChange={handleChange}
+                placeholder="Enter the code provided by your organization"
               />
             </div>
             

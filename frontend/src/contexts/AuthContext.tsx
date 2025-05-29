@@ -1,3 +1,4 @@
+// frontend/src/contexts/AuthContext.tsx
 'use client'
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
@@ -25,9 +26,9 @@ interface AuthTokens {
 interface AuthContextType {
   user: User | null
   tokens: AuthTokens | null
-  tenant: string | null
-  login: (email: string, password: string, tenant: string) => Promise<void>
-  register: (data: RegisterData, tenant: string) => Promise<void>
+  organization: string | null
+  login: (email: string, password: string) => Promise<void>
+  register: (data: RegisterData) => Promise<void>
   logout: () => void
   isLoading: boolean
 }
@@ -38,6 +39,8 @@ interface RegisterData {
   password: string
   first_name?: string
   last_name?: string
+  organization_subdomain: string
+  access_code: string
 }
 
 // Auth Context
@@ -58,19 +61,19 @@ const API_BASE_URL = ''
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null)
   const [tokens, setTokens] = useState<AuthTokens | null>(null)
-  const [tenant, setTenant] = useState<string | null>(null)
+  const [organization, setOrganization] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     const loadStoredAuth = () => {
       const storedTokens = localStorage.getItem('tokens')
-      const storedTenant = localStorage.getItem('tenant')
+      const storedOrganization = localStorage.getItem('organization')
       
-      if (storedTokens && storedTenant) {
+      if (storedTokens && storedOrganization) {
         const parsedTokens = JSON.parse(storedTokens)
         setTokens(parsedTokens)
-        setTenant(storedTenant)
-        fetchUser(parsedTokens.access_token, storedTenant)
+        setOrganization(storedOrganization)
+        fetchUser(parsedTokens.access_token, storedOrganization)
       } else {
         setIsLoading(false)
       }
@@ -79,12 +82,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadStoredAuth()
   }, [])
 
-  const fetchUser = async (accessToken: string, tenantSubdomain: string) => {
+  const fetchUser = async (accessToken: string, organizationSubdomain: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/me`, {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
-          'X-Tenant-ID': tenantSubdomain
+          'X-Tenant-ID': organizationSubdomain
         }
       })
 
@@ -102,7 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }
 
-  const login = async (email: string, password: string, tenantSubdomain: string) => {
+  const login = async (email: string, password: string) => {
     const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: {
@@ -110,8 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       },
       body: JSON.stringify({
         email,
-        password,
-        tenant_subdomain: tenantSubdomain
+        password
       })
     })
 
@@ -120,22 +122,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error(error.detail || 'Login failed')
     }
 
-    const authTokens = await response.json()
+    const authResponse = await response.json()
+    const { access_token, refresh_token, token_type, organization_subdomain } = authResponse
+    
+    const authTokens = { access_token, refresh_token, token_type }
     setTokens(authTokens)
-    setTenant(tenantSubdomain)
+    setOrganization(organization_subdomain)
     
     localStorage.setItem('tokens', JSON.stringify(authTokens))
-    localStorage.setItem('tenant', tenantSubdomain)
+    localStorage.setItem('organization', organization_subdomain)
     
-    await fetchUser(authTokens.access_token, tenantSubdomain)
+    await fetchUser(access_token, organization_subdomain)
   }
 
-  const register = async (data: RegisterData, tenantSubdomain: string) => {
+  const register = async (data: RegisterData) => {
     const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Tenant-ID': tenantSubdomain
       },
       body: JSON.stringify(data)
     })
@@ -146,7 +150,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // Auto-login after registration
-    await login(data.email, data.password, tenantSubdomain)
+    await login(data.email, data.password)
   }
 
   const logout = () => {
@@ -155,20 +159,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${tokens.access_token}`,
-          'X-Tenant-ID': tenant || ''
+          'X-Tenant-ID': organization || ''
         }
       }).catch(console.error)
     }
 
     setUser(null)
     setTokens(null)
-    setTenant(null)
+    setOrganization(null)
     localStorage.removeItem('tokens')
-    localStorage.removeItem('tenant')
+    localStorage.removeItem('organization')
   }
 
   return (
-    <AuthContext.Provider value={{ user, tokens, tenant, login, register, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, tokens, organization, login, register, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   )
