@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from app.models.models import User, Tenant, RefreshToken
@@ -182,13 +182,13 @@ async def login(
     # Create tokens
     access_token = AuthService.create_access_token(
         data={
-            "sub": user.id,
-            "tenant_id": tenant.id,
+            "sub": str(user.id),
+            "tenant_id": str(tenant.id),
             "email": user.email,
             "role": user.role
         }
     )
-    refresh_token = await AuthService.create_refresh_token(user.id, db)
+    refresh_token = await AuthService.create_refresh_token(str(user.id), db)
     
     return TokenResponse(
         access_token=access_token,
@@ -205,7 +205,7 @@ async def refresh_token(
     result = await db.execute(
         select(RefreshToken).filter(
             RefreshToken.token == refresh_data.refresh_token,
-            RefreshToken.expires_at > datetime.utcnow()
+            RefreshToken.expires_at > datetime.now(timezone.utc)
         )
     )
     token = result.scalars().first()
@@ -232,13 +232,13 @@ async def refresh_token(
     # Create new tokens
     access_token = AuthService.create_access_token(
         data={
-            "sub": user.id,
-            "tenant_id": user.tenant_id,
+            "sub": str(user.id),
+            "tenant_id": str(user.tenant_id),
             "email": user.email,
             "role": user.role
         }
     )
-    new_refresh_token = await AuthService.create_refresh_token(user.id, db)
+    new_refresh_token = await AuthService.create_refresh_token(str(user.id), db)
     
     return TokenResponse(
         access_token=access_token,
@@ -304,7 +304,7 @@ async def get_user(
 ):
     """Get specific user information (admin only or own profile)."""
     # Users can view their own profile
-    if current_user.id == user_id:
+    if str(current_user.id) == user_id:
         return current_user
     
     # Otherwise, admin access required
@@ -383,7 +383,7 @@ async def delete_user(
             detail="Not authorized. Admin access required."
         )
     
-    if current_user.id == user_id:
+    if str(current_user.id) == user_id:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete your own account"

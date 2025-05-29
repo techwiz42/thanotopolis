@@ -1,6 +1,7 @@
 # backend/tests/unit/test_auth_service.py
 import pytest
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 
 from app.auth.auth import AuthService, SECRET_KEY, ALGORITHM
@@ -59,8 +60,8 @@ class TestAuthService:
         decoded2 = jwt.decode(token2, SECRET_KEY, algorithms=[ALGORITHM])
         
         # Verify custom expiration is approximately correct (within 5 seconds)
-        expected_exp = datetime.utcnow() + custom_delta
-        actual_exp = datetime.fromtimestamp(decoded2["exp"])
+        expected_exp = datetime.now(timezone.utc) + custom_delta
+        actual_exp = datetime.fromtimestamp(decoded2["exp"], tz=timezone.utc)
         assert abs((expected_exp - actual_exp).total_seconds()) < 5
     
     def test_verify_token(self):
@@ -90,7 +91,7 @@ class TestAuthService:
     async def test_create_refresh_token(self, db_session: AsyncSession, test_user: User):
         """Test refresh token creation."""
         # Create refresh token
-        token = await AuthService.create_refresh_token(test_user.id, db_session)
+        token = await AuthService.create_refresh_token(str(test_user.id), db_session)
         
         assert isinstance(token, str)
         assert len(token) > 20
@@ -103,10 +104,10 @@ class TestAuthService:
         
         assert refresh_token is not None
         assert refresh_token.user_id == test_user.id
-        assert refresh_token.expires_at > datetime.utcnow()
+        assert refresh_token.expires_at > datetime.now(timezone.utc)
         
         # Verify expiration is approximately 7 days
-        expected_exp = datetime.utcnow() + timedelta(days=7)
+        expected_exp = datetime.now(timezone.utc) + timedelta(days=7)
         actual_exp = refresh_token.expires_at
         assert abs((expected_exp - actual_exp).total_seconds()) < 60  # Within 1 minute
     

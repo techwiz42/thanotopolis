@@ -5,8 +5,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import uvicorn
 
-from app.db.database import init_db, get_db_context
-from app.auth.auth import get_tenant_from_request
+from app.db.database import init_db
 from app.api.auth import router as auth_router
 from app.core.config import settings
 
@@ -33,29 +32,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Middleware to set tenant context
-@app.middleware("http")
-async def tenant_middleware(request: Request, call_next):
-    # Skip tenant check for certain paths
-    if request.url.path in ["/", "/docs", "/openapi.json", "/health", "/api/tenants"]:
-        return await call_next(request)
-    
-    # For auth endpoints, we'll handle tenant differently
-    if request.url.path.startswith("/api/auth"):
-        return await call_next(request)
-    
-    # For other endpoints, require tenant context
-    async with get_db_context() as db:
-        tenant = await get_tenant_from_request(request, db)
-        if not tenant and not request.url.path.startswith("/api/tenants"):
-            return JSONResponse(
-                status_code=400,
-                content={"detail": "Tenant not found"}
-            )
-    
-    response = await call_next(request)
-    return response
 
 # Health check
 @app.get("/health")

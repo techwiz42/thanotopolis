@@ -1,8 +1,10 @@
 # backend/tests/integration/test_auth_flow.py
 import pytest
+import uuid
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+import time
 
 from app.models.models import User, Tenant, RefreshToken
 from app.auth.auth import AuthService
@@ -76,6 +78,9 @@ class TestAuthenticationFlow:
         )
         assert login_response.status_code == 200
         initial_tokens = login_response.json()
+        
+        # Wait a bit to ensure different token timestamps
+        time.sleep(1.1)
         
         # Use refresh token to get new access token
         refresh_response = await client.post(
@@ -159,6 +164,8 @@ class TestMultiTenantIsolation:
         tenant2 = Tenant(name="Company B", subdomain="companyb")
         db_session.add_all([tenant1, tenant2])
         await db_session.commit()
+        await db_session.refresh(tenant1)
+        await db_session.refresh(tenant2)
         
         # Register same email in both tenants (should work)
         for tenant in [tenant1, tenant2]:
@@ -213,18 +220,23 @@ class TestMultiTenantIsolation:
             }
         )
         
-        assert me1.json()["tenant_id"] == tenant1.id
-        assert me2.json()["tenant_id"] == tenant2.id
-        assert me1.json()["username"] == f"user_{tenant1.subdomain}"
-        assert me2.json()["username"] == f"user_{tenant2.subdomain}"
+        me1_data = me1.json()
+        me2_data = me2.json()
+        
+        assert me1_data["tenant_id"] == str(tenant1.id)
+        assert me2_data["tenant_id"] == str(tenant2.id)
+        assert me1_data["username"] == f"user_{tenant1.subdomain}"
+        assert me2_data["username"] == f"user_{tenant2.subdomain}"
     
     async def test_cross_tenant_access_denied(self, client: AsyncClient, db_session: AsyncSession):
         """Test that users cannot access other tenants' resources."""
-        # Create two tenants with admin users
+        # Create two tenants
         tenant1 = Tenant(name="Tenant 1", subdomain="tenant1")
         tenant2 = Tenant(name="Tenant 2", subdomain="tenant2")
         db_session.add_all([tenant1, tenant2])
         await db_session.commit()
+        await db_session.refresh(tenant1)
+        await db_session.refresh(tenant2)
         
         # Create admin in tenant1
         admin1 = User(
@@ -246,10 +258,12 @@ class TestMultiTenantIsolation:
         )
         db_session.add_all([admin1, user2])
         await db_session.commit()
+        await db_session.refresh(admin1)
+        await db_session.refresh(user2)
         
         # Get auth token for tenant1 admin
         token = AuthService.create_access_token({
-            "sub": admin1.id,
+            "sub": admin1.id,  # No need to str() - handled in create_access_token
             "tenant_id": tenant1.id,
             "email": admin1.email,
             "role": admin1.role

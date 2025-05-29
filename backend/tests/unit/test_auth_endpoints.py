@@ -1,6 +1,6 @@
 # backend/tests/unit/test_auth_endpoints.py
-# backend/tests/unit/test_auth_endpoints.py
 import pytest
+import uuid
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -9,10 +9,6 @@ from app.models.models import User, Tenant, RefreshToken
 from app.auth.auth import AuthService
 
 @pytest.mark.asyncio
-class TestAuthEndpoints:
-from app.models.models import User, Tenant, RefreshToken
-from app.auth.auth import AuthService
-
 class TestAuthEndpoints:
     """Test suite for authentication endpoints."""
     
@@ -53,7 +49,7 @@ class TestAuthEndpoints:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == test_tenant.id
+        assert data["id"] == str(test_tenant.id)
         assert data["subdomain"] == test_tenant.subdomain
     
     async def test_get_nonexistent_tenant(self, client: AsyncClient):
@@ -83,7 +79,7 @@ class TestAuthEndpoints:
         assert data["username"] == "newuser"
         assert data["first_name"] == "New"
         assert data["last_name"] == "User"
-        assert data["tenant_id"] == test_tenant.id
+        assert data["tenant_id"] == str(test_tenant.id)
         assert data["role"] == "user"
         assert data["is_active"] is True
         assert data["is_verified"] is False
@@ -151,8 +147,8 @@ class TestAuthEndpoints:
         
         # Verify tokens are valid
         payload = AuthService.verify_token(data["access_token"])
-        assert payload["sub"] == test_user.id
-        assert payload["tenant_id"] == test_tenant.id
+        assert payload["sub"] == str(test_user.id)
+        assert payload["tenant_id"] == str(test_tenant.id)
     
     async def test_login_wrong_password(self, client: AsyncClient, test_tenant: Tenant, test_user: User):
         """Test login with wrong password."""
@@ -260,7 +256,7 @@ class TestAuthEndpoints:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == test_user.id
+        assert data["id"] == str(test_user.id)
         assert data["email"] == test_user.email
         assert data["username"] == test_user.username
     

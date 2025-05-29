@@ -1,7 +1,9 @@
 # backend/tests/unit/test_user_management.py
 import pytest
+import uuid
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 from app.models.models import User, Tenant
 
@@ -10,7 +12,8 @@ class TestUserManagement:
     
     async def test_list_users_as_admin(self, client: AsyncClient, admin_auth_headers: dict, test_tenant: Tenant, db_session: AsyncSession):
         """Test listing users as admin."""
-        # Create additional users
+        # Create additional users one by one to avoid bulk insert issues
+        users = []
         for i in range(3):
             user = User(
                 email=f"user{i}@example.com",
@@ -19,6 +22,9 @@ class TestUserManagement:
                 tenant_id=test_tenant.id
             )
             db_session.add(user)
+            await db_session.flush()  # Flush to get the ID
+            users.append(user)
+        
         await db_session.commit()
         
         response = await client.get(
@@ -32,7 +38,7 @@ class TestUserManagement:
         
         # Verify all users belong to same tenant
         for user in data:
-            assert user["tenant_id"] == test_tenant.id
+            assert user["tenant_id"] == str(test_tenant.id)
     
     async def test_list_users_as_regular_user(self, client: AsyncClient, auth_headers: dict):
         """Test that regular users cannot list all users."""
@@ -64,7 +70,7 @@ class TestUserManagement:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == test_user.id
+        assert data["id"] == str(test_user.id)
         assert data["email"] == test_user.email
     
     async def test_get_other_user_as_admin(self, client: AsyncClient, admin_auth_headers: dict, test_user: User):
@@ -76,7 +82,7 @@ class TestUserManagement:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == test_user.id
+        assert data["id"] == str(test_user.id)
     
     async def test_get_other_user_as_regular_user(self, client: AsyncClient, auth_headers: dict, admin_user: User):
         """Test regular user cannot view other users."""
@@ -94,6 +100,7 @@ class TestUserManagement:
         other_tenant = Tenant(name="Other Company", subdomain="other")
         db_session.add(other_tenant)
         await db_session.commit()
+        await db_session.refresh(other_tenant)
         
         other_user = User(
             email="other@example.com",
@@ -103,6 +110,7 @@ class TestUserManagement:
         )
         db_session.add(other_user)
         await db_session.commit()
+        await db_session.refresh(other_user)
         
         response = await client.get(
             f"/api/users/{other_user.id}",
@@ -148,16 +156,21 @@ class TestUserManagement:
     
     async def test_delete_user_as_admin(self, client: AsyncClient, admin_auth_headers: dict, test_user: User, db_session: AsyncSession):
         """Test admin can delete regular users."""
+        user_id = test_user.id
+        
         response = await client.delete(
-            f"/api/users/{test_user.id}",
+            f"/api/users/{user_id}",
             headers=admin_auth_headers
         )
         
         assert response.status_code == 200
         
         # Verify user is deleted
-        await db_session.refresh(db_session)
-        assert await db_session.get(User, test_user.id) is None
+        result = await db_session.execute(
+            select(User).filter(User.id == user_id)
+        )
+        deleted_user = result.scalars().first()
+        assert deleted_user is None
     
     async def test_delete_self(self, client: AsyncClient, admin_user: User, admin_auth_headers: dict):
         """Test users cannot delete themselves."""

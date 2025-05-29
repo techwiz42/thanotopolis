@@ -2,6 +2,7 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
 # Tenant Schemas
 class TenantCreate(BaseModel):
@@ -9,14 +10,13 @@ class TenantCreate(BaseModel):
     subdomain: str
 
 class TenantResponse(BaseModel):
-    id: str
+    id: UUID
     name: str
     subdomain: str
     is_active: bool
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # User Schemas
 class UserCreate(BaseModel):
@@ -32,7 +32,7 @@ class UserLogin(BaseModel):
     tenant_subdomain: str
 
 class UserResponse(BaseModel):
-    id: str
+    id: UUID
     email: str
     username: str
     first_name: Optional[str]
@@ -40,11 +40,10 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     is_verified: bool
-    tenant_id: str
+    tenant_id: UUID
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None

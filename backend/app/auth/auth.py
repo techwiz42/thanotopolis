@@ -1,4 +1,4 @@
-# auth.py
+# backend/app/auth/auth.py
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import os
 import secrets
+import uuid
 
 from app.models.models import User, RefreshToken, Tenant
 from app.db.database import get_db
@@ -35,17 +36,25 @@ class AuthService:
     def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
         to_encode = data.copy()
         if expires_delta:
-            expire = datetime.utcnow() + expires_delta
+            expire = datetime.now(timezone.utc) + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
+        
+        # Convert UUID objects to strings for JSON serialization
+        for key, value in list(to_encode.items()):
+            if hasattr(value, 'hex'):  # Check if it's a UUID
+                to_encode[key] = str(value)
+            elif isinstance(value, uuid.UUID):  # Explicit check for UUID objects
+                to_encode[key] = str(value)
+                
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt
     
     @staticmethod
     async def create_refresh_token(user_id: str, db: AsyncSession) -> str:
         token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         
         refresh_token = RefreshToken(
             token=token,
@@ -116,15 +125,9 @@ async def get_current_active_user(
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
-# Tenant context middleware
-class TenantContext:
-    def __init__(self):
-        self.tenant_id: Optional[str] = None
-        self.subdomain: Optional[str] = None
-
-tenant_context = TenantContext()
-
-async def get_tenant_from_request(request: Request, db: AsyncSession = Depends(get_db)) -> Optional[Tenant]:
+# Helper function to get tenant from request without creating a new DB session
+async def get_tenant_from_request(request: Request, db: AsyncSession) -> Optional[Tenant]:
+    """Get tenant from request headers or subdomain."""
     # Get tenant from subdomain
     host = request.headers.get("host", "")
     subdomain = host.split(".")[0] if "." in host else None
@@ -142,63 +145,6 @@ async def get_tenant_from_request(request: Request, db: AsyncSession = Depends(g
         )
         tenant = result.scalars().first()
         
-        if tenant:
-            tenant_context.tenant_id = tenant.id
-            tenant_context.subdomain = tenant.subdomain
-            return tenant
+        return tenant
     
     return None
-
-# schemas.py
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
-from datetime import datetime
-
-class TenantCreate(BaseModel):
-    name: str
-    subdomain: str
-
-class TenantResponse(BaseModel):
-    id: str
-    name: str
-    subdomain: str
-    is_active: bool
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-class UserCreate(BaseModel):
-    email: EmailStr
-    username: str
-    password: str = Field(..., min_length=8)
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
-    tenant_subdomain: str
-
-class UserResponse(BaseModel):
-    id: str
-    email: str
-    username: str
-    first_name: Optional[str]
-    last_name: Optional[str]
-    role: str
-    is_active: bool
-    is_verified: bool
-    tenant_id: str
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
