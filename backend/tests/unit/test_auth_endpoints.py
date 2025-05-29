@@ -1,9 +1,15 @@
 # backend/tests/unit/test_auth_endpoints.py
+# backend/tests/unit/test_auth_endpoints.py
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.models.models import User, Tenant, RefreshToken
+from app.auth.auth import AuthService
+
+@pytest.mark.asyncio
+class TestAuthEndpoints:
 from app.models.models import User, Tenant, RefreshToken
 from app.auth.auth import AuthService
 
