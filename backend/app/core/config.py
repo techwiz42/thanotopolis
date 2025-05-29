@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 # Determine env file path
 # DEV environment now lives on the swarmchat Digital Ocean droplet
-env_path = '/etc/cyberiad/.env' if os.getenv('ENV') == 'production' else '/home/peter/cyberiad_dev/backend/.env'
+env_path = '/home/peter/thanotopolis/backend/.env'
 load_dotenv(env_path)
 
 # Set up logger
