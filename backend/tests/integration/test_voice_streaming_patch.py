@@ -140,63 +140,92 @@ class TestVoiceStreamingEndpoints:
     @pytest.mark.asyncio
     async def test_websocket_audio_streaming_flow(self):
         """Test complete audio streaming flow"""
-        # Mock connection_health and buffer_manager
-        with patch('app.api.voice_streaming.connection_health') as mock_health, \
-             patch('app.core.websocket_queue.buffer_manager') as mock_buffer_manager:
+        # For this test, we need to patch the right handler method - the direct cause of the error
+        # "This method cannot be called from the event loop thread"
+        # It's coming from websockets.connect being called from within the event loop
+        
+        # First, create our own websocket connection method that doesn't cause event loop issues
+        async def mock_websocket_connect(*args, **kwargs):
+            # Create a mock websocket object
+            mock_ws = AsyncMock()
+            # Add a send method to simulate sending data
+            mock_ws.send = AsyncMock()
+            # Add a recv method to simulate receiving messages
+            mock_ws.recv = AsyncMock(side_effect=[
+                # Simulate a successful connection - first message will be from connect_to_deepgram
+                json.dumps({"type": "Ready"})
+            ])
+            return mock_ws
             
-            # Setup connection_health mock to prevent DB operations
-            mock_health._ensure_initialized = AsyncMock()
-            mock_health.enqueue_connection = AsyncMock(return_value="test-connection-id")
-            mock_health.disconnect = AsyncMock()
-            
-            with TestClient(app) as client:
-                # Mock the entire handler to simulate streaming
-                with patch('app.api.voice_streaming.DeepgramStreamingHandler') as MockHandler:
-                    mock_handler = AsyncMock()
+        # Mock the actual websockets.connect call
+        with patch('websockets.connect', mock_websocket_connect):
+            # Mock the connect_to_deepgram method to always return True
+            with patch('app.services.voice.deepgram_stt_service.DeepgramStreamingHandler.connect_to_deepgram', 
+                      new_callable=AsyncMock, return_value=True):
+                
+                # Mock connection_health and buffer_manager
+                with patch('app.api.voice_streaming.connection_health') as mock_health, \
+                     patch('app.core.websocket_queue.buffer_manager') as mock_buffer_manager:
                     
-                    # Simulate the handler sending transcription results
-                    async def mock_run(config):
-                        # Send ready message
-                        await mock_handler.client_ws.send_json({
-                            "type": "ready",
-                            "message": "Connected to Deepgram"
-                        })
-                        
-                        # Simulate receiving audio and sending transcription
-                        await asyncio.sleep(0.1)
-                        
-                        await mock_handler.client_ws.send_json({
-                            "type": "transcription",
-                            "transcript": "Hello world",
-                            "is_final": True,
-                            "speech_final": True
-                        })
+                    # Setup connection_health mock to prevent DB operations
+                    mock_health._ensure_initialized = AsyncMock()
+                    mock_health.enqueue_connection = AsyncMock(return_value="test-connection-id")
+                    mock_health.disconnect = AsyncMock()
                     
-                    mock_handler.run = mock_run
-                    mock_handler.stop = AsyncMock()
-                    MockHandler.return_value = mock_handler
-                    
-                    with client.websocket_connect("/api/ws/voice/streaming-stt") as websocket:
-                        # Inject the websocket into our mock
-                        mock_handler.client_ws = websocket
-                        
-                        # Send config
-                        websocket.send_json({
-                            "type": "config",
-                            "config": {"model": "nova-2"}
-                        })
-                        
-                        # Receive ready message
-                        response = websocket.receive_json()
-                        assert response["type"] == "ready"
-                        
-                        # Send audio data
-                        websocket.send_bytes(b"fake_audio_data")
-                        
-                        # Receive transcription
-                        response = websocket.receive_json()
-                        assert response["type"] == "transcription"
-                        assert response["transcript"] == "Hello world"
+                    with TestClient(app) as client:
+                        # Create a simple handler mock class that correctly responds
+                        class MockHandlerClass:
+                            def __init__(self, websocket, service):
+                                self.client_ws = websocket
+                                self.service = service
+                                self.deepgram_ws = None
+                                self.is_running = False
+                                self.tasks = []
+                                
+                            async def connect_to_deepgram(self, config):
+                                return True
+                                
+                            async def run(self, config):
+                                # Send ready message first
+                                await self.client_ws.send_json({
+                                    "type": "ready",
+                                    "message": "Connected to Deepgram"
+                                })
+                                
+                                # Wait for audio data then send transcript
+                                message = await self.client_ws.receive()
+                                if message.get("type") == "websocket.receive" and "bytes" in message:
+                                    await self.client_ws.send_json({
+                                        "type": "transcription",
+                                        "transcript": "Hello world",
+                                        "is_final": True,
+                                        "speech_final": True
+                                    })
+                            
+                            async def stop(self):
+                                self.is_running = False
+                                
+                        # Patch the handler class with our custom implementation
+                        with patch('app.api.voice_streaming.DeepgramStreamingHandler', MockHandlerClass):
+                            # Create websocket connection
+                            with client.websocket_connect("/api/ws/voice/streaming-stt") as websocket:
+                                # Send config message
+                                websocket.send_json({
+                                    "type": "config",
+                                    "config": {"model": "nova-2"}
+                                })
+                                
+                                # Receive ready message
+                                response = websocket.receive_json()
+                                assert response["type"] == "ready"
+                                
+                                # Send audio data
+                                websocket.send_bytes(b"fake_audio_data")
+                                
+                                # Receive transcription
+                                response = websocket.receive_json()
+                                assert response["type"] == "transcription"
+                                assert response["transcript"] == "Hello world"
     
     @pytest.mark.asyncio
     async def test_websocket_connection_limit(self):

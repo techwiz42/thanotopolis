@@ -4,12 +4,23 @@ import asyncio
 import json
 from unittest.mock import patch, Mock, AsyncMock
 from httpx import AsyncClient
-from fastapi import WebSocket
+from fastapi import FastAPI, WebSocket
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+from contextlib import asynccontextmanager
 
 from app.main import app
 from app.services.voice.deepgram_stt_service import deepgram_stt_service
+
+# Create a mock lifespan to prevent DB initialization
+@asynccontextmanager
+async def mock_lifespan(app: FastAPI):
+    # No DB initialization
+    yield
+    # No cleanup needed
+
+# Patch the app lifespan for all tests in this module
+app.router.lifespan_context = mock_lifespan
 
 
 class TestVoiceStreamingEndpoints:
@@ -51,45 +62,61 @@ class TestVoiceStreamingEndpoints:
     @pytest.mark.asyncio
     async def test_websocket_connection_success(self):
         """Test successful WebSocket connection and configuration"""
-        with TestClient(app) as client:
-            # Mock the Deepgram service
-            with patch('app.api.voice_streaming.deepgram_stt_service') as mock_service:
-                mock_service.api_key = "test_key"
+        # Patch database initialization
+        with patch('app.db.database.init_db'), \
+             patch('app.db.database.get_db'):
+            
+            # Mock connection_health and buffer_manager
+            with patch('app.api.voice_streaming.connection_health') as mock_health, \
+                 patch('app.core.websocket_queue.buffer_manager') as mock_buffer_manager:
                 
-                # Mock the handler
-                with patch('app.api.voice_streaming.DeepgramStreamingHandler') as MockHandler:
-                    mock_handler = AsyncMock()
-                    mock_handler.run = AsyncMock()
-                    MockHandler.return_value = mock_handler
-                    
-                    # Connect to WebSocket
-                    with client.websocket_connect("/api/ws/voice/streaming-stt") as websocket:
-                        # Send config
-                        websocket.send_json({
-                            "type": "config",
-                            "config": {
-                                "model": "nova-2",
-                                "language": "en-US"
-                            }
-                        })
+                # Setup connection_health mock to prevent DB operations
+                mock_health._ensure_initialized = AsyncMock()
+                mock_health.enqueue_connection = AsyncMock(return_value="test-connection-id")
+                mock_health.disconnect = AsyncMock()
+                
+                with TestClient(app) as client:
+                    # Mock the Deepgram service
+                    with patch('app.api.voice_streaming.deepgram_stt_service') as mock_service:
+                        mock_service.api_key = "test_key"
                         
-                        # Give async tasks time to run
-                        import time
-                        time.sleep(0.1)
-                        
-                        # Verify handler was created and run
-                        MockHandler.assert_called_once()
-                        mock_handler.run.assert_called_once()
+                        # Mock the handler
+                        with patch('app.api.voice_streaming.DeepgramStreamingHandler') as MockHandler:
+                            mock_handler = AsyncMock()
+                            mock_handler.run = AsyncMock()
+                            MockHandler.return_value = mock_handler
+                            
+                            # Connect to WebSocket
+                            with client.websocket_connect("/api/ws/voice/streaming-stt") as websocket:
+                                # Send config
+                                websocket.send_json({
+                                    "type": "config",
+                                    "config": {
+                                        "model": "nova-2",
+                                        "language": "en-US"
+                                    }
+                                })
+                                
+                                # Give async tasks time to run
+                                import time
+                                time.sleep(0.1)
+                                
+                                # Verify handler was created and run
+                                MockHandler.assert_called_once()
+                                mock_handler.run.assert_called_once()
     
-    @pytest.mark.skip(reason="Test causes DB connection issues in integration suite")
     @pytest.mark.asyncio
     async def test_websocket_invalid_config(self):
         """Test WebSocket with invalid configuration"""
         # Patch database initialization
-        with patch('app.db.database.init_db'):
-            # Mock the connection_health manager to prevent database access
-            with patch('app.api.voice_streaming.connection_health') as mock_health:
-                # Mock the enqueue_connection to return a valid connection ID
+        with patch('app.db.database.init_db'), \
+             patch('app.db.database.get_db'):
+            
+            # Mock connection_health and buffer_manager
+            with patch('app.api.voice_streaming.connection_health') as mock_health, \
+                 patch('app.core.websocket_queue.buffer_manager') as mock_buffer_manager:
+                
+                # Setup connection_health mock to prevent DB operations
                 mock_health._ensure_initialized = AsyncMock()
                 mock_health.enqueue_connection = AsyncMock(return_value="test-connection-id")
                 mock_health.disconnect = AsyncMock()
@@ -107,15 +134,18 @@ class TestVoiceStreamingEndpoints:
                         assert response["type"] == "error"
                         assert "Expected config message" in response["message"]
     
-    @pytest.mark.skip(reason="Test causes DB connection issues in integration suite")
     @pytest.mark.asyncio
     async def test_websocket_timeout_waiting_for_config(self):
         """Test WebSocket timeout when no config is sent"""
         # Patch database initialization
-        with patch('app.db.database.init_db'):
-            # Mock the connection_health manager to prevent database access
-            with patch('app.api.voice_streaming.connection_health') as mock_health:
-                # Mock the enqueue_connection to return a valid connection ID
+        with patch('app.db.database.init_db'), \
+             patch('app.db.database.get_db'):
+            
+            # Mock connection_health and buffer_manager
+            with patch('app.api.voice_streaming.connection_health') as mock_health, \
+                 patch('app.core.websocket_queue.buffer_manager') as mock_buffer_manager:
+                
+                # Setup connection_health mock to prevent DB operations
                 mock_health._ensure_initialized = AsyncMock()
                 mock_health.enqueue_connection = AsyncMock(return_value="test-connection-id")
                 mock_health.disconnect = AsyncMock()
@@ -130,53 +160,55 @@ class TestVoiceStreamingEndpoints:
                             assert response["type"] == "error"
                             assert "Timeout" in response["message"]
     
-    @pytest.mark.skip(reason="Test causes DB connection issues in integration suite")
+    @pytest.mark.skip(reason="Test implementation needs to be fixed to avoid coroutine issues")
     @pytest.mark.asyncio
     async def test_websocket_audio_streaming_flow(self):
         """Test complete audio streaming flow"""
         # Patch database initialization
-        with patch('app.db.database.init_db'):
-            # Mock the connection_health manager to prevent database access
-            with patch('app.api.voice_streaming.connection_health') as mock_health:
-                # Mock the enqueue_connection to return a valid connection ID
+        with patch('app.db.database.init_db'), \
+             patch('app.db.database.get_db'):
+            
+            # Mock connection_health and buffer_manager
+            with patch('app.api.voice_streaming.connection_health') as mock_health, \
+                 patch('app.core.websocket_queue.buffer_manager') as mock_buffer_manager:
+                
+                # Setup connection_health mock to prevent DB operations
                 mock_health._ensure_initialized = AsyncMock()
                 mock_health.enqueue_connection = AsyncMock(return_value="test-connection-id")
                 mock_health.disconnect = AsyncMock()
                 
                 with TestClient(app) as client:
-                    # Mock the entire handler to simulate streaming
-                    with patch('app.api.voice_streaming.DeepgramStreamingHandler') as MockHandler:
-                        mock_handler = AsyncMock()
-                        
-                        # Simulate the handler sending transcription results
-                        async def mock_run(config):
-                            # Send ready message
-                            await mock_handler.client_ws.send_json({
+                    # Directly patch the DeepgramStreamingHandler.run method to avoid coroutine not awaited issues
+                    with patch('app.api.voice_streaming.DeepgramStreamingHandler.run') as mock_run:
+                        # Create a function that will update the WebSocket connection
+                        async def send_messages(websocket):
+                            # First send ready message
+                            await websocket.send_json({
                                 "type": "ready",
                                 "message": "Connected to Deepgram"
                             })
                             
-                            # Simulate receiving audio and sending transcription
+                            # Wait a bit before sending transcription
                             await asyncio.sleep(0.1)
                             
-                            await mock_handler.client_ws.send_json({
+                            # Send transcription
+                            await websocket.send_json({
                                 "type": "transcription",
                                 "transcript": "Hello world",
                                 "is_final": True,
                                 "speech_final": True
                             })
+                            
+                            # Return to allow run() to complete
+                            return None
                         
-                        mock_handler.run = mock_run
-                        mock_handler.stop = AsyncMock()
-                        MockHandler.return_value = mock_handler
+                        # Set up our mock to call send_messages
+                        mock_run.side_effect = send_messages
                         
                         with client.websocket_connect("/api/ws/voice/streaming-stt") as websocket:
-                            # Inject the websocket into our mock
-                            mock_handler.client_ws = websocket
-                            
                             # Send config
                             websocket.send_json({
-                                "type": "config",
+                                "type": "config", 
                                 "config": {"model": "nova-2"}
                             })
                             
@@ -192,19 +224,23 @@ class TestVoiceStreamingEndpoints:
                             assert response["type"] == "transcription"
                             assert response["transcript"] == "Hello world"
     
-    @pytest.mark.skip(reason="Test causes DB connection issues in integration suite")
     @pytest.mark.asyncio
     async def test_websocket_connection_limit(self):
         """Test connection limit handling"""
         # Patch database initialization
-        with patch('app.db.database.init_db'):
-            with TestClient(app) as client:
-                # Mock connection health to simulate at capacity
-                with patch('app.api.voice_streaming.connection_health') as mock_health:
-                    mock_health._ensure_initialized = AsyncMock()
-                    mock_health.enqueue_connection = AsyncMock(return_value=None)
-                    mock_health.disconnect = AsyncMock()
-                    
+        with patch('app.db.database.init_db'), \
+             patch('app.db.database.get_db'):
+            
+            # Mock connection_health and buffer_manager
+            with patch('app.api.voice_streaming.connection_health') as mock_health, \
+                 patch('app.core.websocket_queue.buffer_manager') as mock_buffer_manager:
+                
+                # Setup connection_health mock to simulate capacity limit
+                mock_health._ensure_initialized = AsyncMock()
+                mock_health.enqueue_connection = AsyncMock(return_value=None)  # Return None to indicate at capacity
+                mock_health.disconnect = AsyncMock()
+                
+                with TestClient(app) as client:
                     with client.websocket_connect("/api/ws/voice/streaming-stt") as websocket:
                         response = websocket.receive_json()
                         assert response["type"] == "error"
