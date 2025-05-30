@@ -87,7 +87,7 @@ export default function Register() {
     try {
       const { confirmPassword, ...registerData } = formData
       await register(registerData)
-      router.push('/greeting')
+      router.push('/conversations')  // Changed from '/greeting' to '/conversations'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
     } finally {

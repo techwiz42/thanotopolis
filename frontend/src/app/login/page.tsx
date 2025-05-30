@@ -22,7 +22,7 @@ export default function Login() {
 
     try {
       await login(email, password)
-      router.push('/greeting')
+      router.push('/conversations')  // Changed from '/greeting' to '/conversations'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {

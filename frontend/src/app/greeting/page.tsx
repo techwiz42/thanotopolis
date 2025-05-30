@@ -1,11 +1,13 @@
+// frontend/src/app/greeting/page.tsx
 'use client'
 
 import React, { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 
-export default function Greeting() {
-  const { user, tenant } = useAuth()
+export default function Profile() {
+  const { user, organization } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
@@ -32,22 +34,35 @@ export default function Greeting() {
   return (
     <div className="bg-gray-100 py-6">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Greeting Card */}
+        {/* Back to Conversations link */}
+        <div className="mb-4">
+          <Link
+            href="/conversations"
+            className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700"
+          >
+            <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to Conversations
+          </Link>
+        </div>
+
+        {/* Profile Card */}
         <div className="bg-white overflow-hidden shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">
             <div className="text-center">
               <h2 className="text-3xl font-bold text-gray-900 mb-2">
-                {getGreeting()}, {user.first_name || user.username}! 👋
+                Your Profile
               </h2>
               <p className="text-lg text-gray-600 mb-8">
-                Welcome to Thanotopolis - Your secure multi-tenant platform
+                {getGreeting()}, {user.first_name || user.username}! 👋
               </p>
             </div>
 
             {/* User Info Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
               <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Profile</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h3>
                 <dl className="space-y-2">
                   <div className="flex justify-between">
                     <dt className="text-sm font-medium text-gray-600">Name:</dt>
@@ -101,7 +116,7 @@ export default function Greeting() {
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-sm font-medium text-gray-600">Tenant:</dt>
-                    <dd className="text-sm text-gray-900">{tenant}</dd>
+                    <dd className="text-sm text-gray-900">{organization}</dd>
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-sm font-medium text-gray-600">Member Since:</dt>
@@ -116,43 +131,46 @@ export default function Greeting() {
             {/* Action Buttons */}
             <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
               <button className="px-6 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 transition duration-300">
-                View Full Dashboard
+                Edit Profile
               </button>
               <button className="px-6 py-2 bg-gray-200 text-gray-800 font-medium rounded-md hover:bg-gray-300 transition duration-300">
-                Edit Profile
+                Change Password
               </button>
             </div>
 
             {/* Info Message */}
             <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-md">
               <p className="text-sm text-blue-800">
-                <span className="font-semibold">Note:</span> This is a greeting page that will be expanded with more features. 
-                You can access your dashboard, manage settings, and perform various actions based on your role.
+                <span className="font-semibold">Note:</span> This is your profile page where you can view and manage your account information. 
+                Profile editing features will be added in a future update.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Quick Actions */}
+        {/* Quick Stats */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white rounded-lg shadow p-6 text-center">
             <div className="text-blue-600 mb-3">
               <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
               </svg>
             </div>
-            <h4 className="font-semibold text-gray-900 mb-1">Tasks</h4>
-            <p className="text-sm text-gray-600">View and manage your tasks</p>
+            <h4 className="font-semibold text-gray-900 mb-1">Conversations</h4>
+            <p className="text-sm text-gray-600">View your chat history</p>
+            <Link href="/conversations" className="mt-2 inline-block text-blue-600 hover:text-blue-700 text-sm font-medium">
+              Go to Conversations →
+            </Link>
           </div>
 
           <div className="bg-white rounded-lg shadow p-6 text-center">
             <div className="text-green-600 mb-3">
               <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
             </div>
-            <h4 className="font-semibold text-gray-900 mb-1">Team</h4>
-            <p className="text-sm text-gray-600">Collaborate with your team</p>
+            <h4 className="font-semibold text-gray-900 mb-1">Activity Log</h4>
+            <p className="text-sm text-gray-600">Coming soon</p>
           </div>
 
           <div className="bg-white rounded-lg shadow p-6 text-center">
@@ -163,7 +181,7 @@ export default function Greeting() {
               </svg>
             </div>
             <h4 className="font-semibold text-gray-900 mb-1">Settings</h4>
-            <p className="text-sm text-gray-600">Configure your preferences</p>
+            <p className="text-sm text-gray-600">Manage preferences</p>
           </div>
         </div>
       </div>

@@ -19,20 +19,26 @@ describe('App Integration Tests', () => {
       return null;
     });
 
-    // Mock successful user fetch
-    fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => mockUser
-    });
+    // Mock successful user fetch and conversations fetch
+    fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockUser
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => []  // Empty conversations list
+      });
 
     render(<App />);
 
     // Should show loading state initially
     expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
 
-    // Should load user and show dashboard
+    // Should load user and show conversations page
     await waitFor(() => {
-      expect(screen.getByText(`Welcome, ${mockUser.first_name}!`)).toBeInTheDocument();
+      expect(screen.getByText('Conversations')).toBeInTheDocument();
+      expect(screen.getByText('Your conversations with AI agents')).toBeInTheDocument();
     });
   });
 
@@ -42,7 +48,7 @@ describe('App Integration Tests', () => {
     expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
   });
 
-  test('complete auth flow: register -> auto-login -> dashboard -> logout', async () => {
+  test('complete auth flow: register -> auto-login -> conversations -> logout', async () => {
     render(<App />);
     const user = userEvent.setup();
 
@@ -71,14 +77,18 @@ describe('App Integration Tests', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ ...mockUser, email: 'new@example.com' })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => []  // Empty conversations list
       });
 
     // Submit registration
     await user.click(screen.getByRole('button', { name: 'Register' }));
 
-    // Should show dashboard
+    // Should show conversations page
     await waitFor(() => {
-      expect(screen.getByText('Welcome, New!')).toBeInTheDocument();
+      expect(screen.getByText('Conversations')).toBeInTheDocument();
     });
 
     // Mock logout

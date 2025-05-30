@@ -1,3 +1,4 @@
+// frontend/src/components/ProtectedRoute.tsx
 'use client'
 
 import React, { useEffect } from 'react'
@@ -6,9 +7,10 @@ import { useAuth } from '@/contexts/AuthContext'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
+  redirectTo?: string
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, redirectTo = '/conversations' }) => {
   const { user, isLoading } = useAuth()
   const router = useRouter()
 

@@ -21,6 +21,10 @@ describe('Login Integration', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => mockUser
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => []  // Empty conversations list
       });
 
     render(<App />);
@@ -37,13 +41,14 @@ describe('Login Integration', () => {
     // Should show loading state
     expect(screen.getByText('Signing in...')).toBeInTheDocument();
 
-    // Should redirect to dashboard
+    // Should redirect to conversations page
     await waitFor(() => {
-      expect(screen.getByText(`Welcome, ${mockUser.first_name || mockUser.username}!`)).toBeInTheDocument();
+      expect(screen.getByText('Conversations')).toBeInTheDocument();
+      expect(screen.getByText('Your conversations with AI agents')).toBeInTheDocument();
     });
 
     // Verify API calls
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
     expect(fetch).toHaveBeenNthCalledWith(1, 
       'http://localhost:8000/api/auth/login',
       expect.objectContaining({
