@@ -89,7 +89,7 @@ def event_loop() -> Generator:
     loop.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 async def setup_test_database():
     """Ensure test database exists before any tests run."""
     await ensure_test_database_exists()

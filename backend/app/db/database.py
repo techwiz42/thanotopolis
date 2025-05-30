@@ -37,3 +37,14 @@ async def init_db():
     """Create all tables in the database."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+async def check_db_connection():
+    """Check if database connection is working."""
+    try:
+        # Try to execute a simple query
+        async with AsyncSessionLocal() as session:
+            await session.execute("SELECT 1")
+        return True
+    except Exception as e:
+        print(f"Database connection check failed: {e}")
+        return False

@@ -68,9 +68,9 @@ class TestAuthEndpoints:
                 "username": "newuser",
                 "password": "password123",
                 "first_name": "New",
-                "last_name": "User"
-            },
-            headers={"X-Tenant-ID": test_tenant.subdomain}
+                "last_name": "User",
+                "access_code": test_tenant.access_code
+            }
         )
         
         assert response.status_code == 200
@@ -91,9 +91,9 @@ class TestAuthEndpoints:
             json={
                 "email": test_user.email,
                 "username": "different_username",
-                "password": "password123"
-            },
-            headers={"X-Tenant-ID": test_tenant.subdomain}
+                "password": "password123",
+                "access_code": test_tenant.access_code
+            }
         )
         
         assert response.status_code == 400
@@ -106,16 +106,16 @@ class TestAuthEndpoints:
             json={
                 "email": "different@example.com",
                 "username": test_user.username,
-                "password": "password123"
-            },
-            headers={"X-Tenant-ID": test_tenant.subdomain}
+                "password": "password123",
+                "access_code": test_tenant.access_code
+            }
         )
         
         assert response.status_code == 400
         assert "already taken" in response.json()["detail"]
     
     async def test_register_without_tenant(self, client: AsyncClient):
-        """Test registration without tenant header."""
+        """Test registration without tenant information."""
         response = await client.post(
             "/api/auth/register",
             json={
@@ -146,9 +146,9 @@ class TestAuthEndpoints:
         assert data["token_type"] == "bearer"
         
         # Verify tokens are valid
-        payload = AuthService.verify_token(data["access_token"])
-        assert payload["sub"] == str(test_user.id)
-        assert payload["tenant_id"] == str(test_tenant.id)
+        payload = AuthService.decode_token(data["access_token"])
+        assert payload.sub == str(test_user.id)
+        assert payload.tenant_id == str(test_tenant.id)
     
     async def test_login_wrong_password(self, client: AsyncClient, test_tenant: Tenant, test_user: User):
         """Test login with wrong password."""
@@ -236,16 +236,23 @@ class TestAuthEndpoints:
         
         response = await client.post(
             "/api/auth/logout",
+            json={"refresh_token": token1},
             headers=auth_headers
         )
         
         assert response.status_code == 200
         
-        # Verify all refresh tokens are deleted
+        # Verify the specific refresh token is deleted
         result = await db_session.execute(
-            select(RefreshToken).filter(RefreshToken.user_id == test_user.id)
+            select(RefreshToken).filter(RefreshToken.token == token1)
         )
-        assert len(result.scalars().all()) == 0
+        assert result.scalars().first() is None
+        
+        # But other tokens remain
+        result = await db_session.execute(
+            select(RefreshToken).filter(RefreshToken.token == token2)
+        )
+        assert result.scalars().first() is not None
     
     async def test_get_current_user(self, client: AsyncClient, auth_headers: dict, test_user: User):
         """Test getting current user info."""

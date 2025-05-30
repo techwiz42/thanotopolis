@@ -133,6 +133,7 @@ class TestAuthenticationFlow:
         # Logout
         logout_response = await client.post(
             "/api/auth/logout",
+            json={"refresh_token": tokens["refresh_token"]},
             headers={
                 "Authorization": f"Bearer {tokens['access_token']}",
                 "X-Tenant-ID": test_tenant.subdomain
@@ -263,8 +264,8 @@ class TestMultiTenantIsolation:
         
         # Get auth token for tenant1 admin
         token = AuthService.create_access_token({
-            "sub": admin1.id,  # No need to str() - handled in create_access_token
-            "tenant_id": tenant1.id,
+            "sub": str(admin1.id),
+            "tenant_id": str(tenant1.id),
             "email": admin1.email,
             "role": admin1.role
         })

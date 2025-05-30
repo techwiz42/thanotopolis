@@ -50,11 +50,12 @@ class UserRegister(BaseModel):
     password: str = Field(..., min_length=8)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    access_code: str  # Only access code needed - org derived from this
+    access_code: Optional[str] = None  # Organization access code (optional)
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+    tenant_subdomain: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: UUID
@@ -79,6 +80,7 @@ class TokenResponse(BaseModel):
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
+@router.post("/tenants", response_model=OrganizationResponse, tags=["organizations"])
 @router.post("/organizations", response_model=OrganizationResponse, tags=["organizations"])
 async def create_organization(
     org_data: OrganizationCreate,
@@ -134,33 +136,56 @@ async def get_organization_by_access_code(
         "subdomain": organization.subdomain
     }
 
-@router.post("/auth/register", response_model=TokenResponse, tags=["auth"])
+@router.get("/tenants/{subdomain}", response_model=OrganizationResponse, tags=["organizations"])
+async def get_tenant_by_subdomain(
+    subdomain: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get tenant by subdomain."""
+    result = await db.execute(
+        select(Tenant).filter(Tenant.subdomain == subdomain)
+    )
+    tenant = result.scalars().first()
+    
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found"
+        )
+    
+    return tenant
+
+@router.post("/auth/register", response_model=UserResponse, tags=["auth"])
 async def register(
     register_data: UserRegister,
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    """Register a new user using organization access code."""
-    # Find organization by access code
-    result = await db.execute(
-        select(Tenant).filter(
-            Tenant.access_code == register_data.access_code,
-            Tenant.is_active == True
-        )
-    )
-    organization = result.scalars().first()
+    """Register a new user."""
+    # Try to get tenant from request header or use access code
+    tenant = await get_tenant_from_request(request, db)
     
-    if not organization:
+    if not tenant and hasattr(register_data, 'access_code'):
+        # Find organization by access code
+        result = await db.execute(
+            select(Tenant).filter(
+                Tenant.access_code == register_data.access_code,
+                Tenant.is_active == True
+            )
+        )
+        tenant = result.scalars().first()
+    
+    if not tenant:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid access code"
+            detail="Tenant not found"
         )
     
     # Check if email already exists in the organization
     result = await db.execute(
         select(User).filter(
             User.email == register_data.email,
-            User.tenant_id == organization.id
+            User.tenant_id == tenant.id
         )
     )
     existing_user = result.scalars().first()
@@ -175,7 +200,7 @@ async def register(
     result = await db.execute(
         select(User).filter(
             User.username == register_data.username,
-            User.tenant_id == organization.id
+            User.tenant_id == tenant.id
         )
     )
     existing_username = result.scalars().first()
@@ -195,7 +220,7 @@ async def register(
         hashed_password=hashed_password,
         first_name=register_data.first_name,
         last_name=register_data.last_name,
-        tenant_id=organization.id,
+        tenant_id=tenant.id,
         role="user",
         is_active=True,
         is_verified=False  # User needs to verify email
@@ -205,11 +230,29 @@ async def register(
     await db.commit()
     await db.refresh(new_user)
     
+    return new_user
+
+@router.post("/auth/register/token", response_model=TokenResponse, tags=["auth"])
+async def register_and_get_token(
+    register_data: UserRegister,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Register a new user and return tokens."""
+    # First register the user
+    new_user = await register(register_data, request, db)
+    
+    # Get the tenant
+    result = await db.execute(
+        select(Tenant).where(Tenant.id == new_user.tenant_id)
+    )
+    tenant = result.scalar_one()
+    
     # Create tokens
     access_token = AuthService.create_access_token(
         data={
             "sub": str(new_user.id),
-            "tenant_id": str(organization.id),
+            "tenant_id": str(tenant.id),
             "email": new_user.email,
             "role": new_user.role
         }
@@ -219,7 +262,7 @@ async def register(
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        organization_subdomain=organization.subdomain
+        organization_subdomain=tenant.subdomain
     )
 
 @router.post("/auth/login", response_model=TokenResponse, tags=["auth"])
@@ -228,12 +271,28 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     """Login user and return access/refresh tokens."""
-    # Find user by email across all organizations
-    result = await db.execute(
-        select(User).filter(
-            User.email == login_data.email
+    # If tenant_subdomain is provided, find the tenant
+    tenant = None
+    if login_data.tenant_subdomain:
+        result = await db.execute(
+            select(Tenant).filter(
+                Tenant.subdomain == login_data.tenant_subdomain,
+                Tenant.is_active == True
+            )
         )
-    )
+        tenant = result.scalars().first()
+        if not tenant:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid tenant"
+            )
+    
+    # Find user by email
+    query = select(User).filter(User.email == login_data.email)
+    if tenant:
+        query = query.filter(User.tenant_id == tenant.id)
+    
+    result = await db.execute(query)
     user = result.scalars().first()
     
     if not user or not AuthService.verify_password(login_data.password, user.hashed_password):
@@ -352,6 +411,7 @@ async def refresh_token(
     )
 
 @router.get("/auth/me", response_model=UserResponse, tags=["auth"])
+@router.get("/me", response_model=UserResponse, tags=["auth"])
 async def get_user_info(current_user: User = Depends(get_current_active_user)):
     """Get information about the currently logged in user."""
     return current_user
@@ -377,3 +437,188 @@ async def logout(
         await db.commit()
     
     return {"detail": "Successfully logged out"}
+
+@router.post("/auth/logout/all", tags=["auth"])
+async def logout_all_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Logout user from all sessions by invalidating all refresh tokens."""
+    # Delete all refresh tokens for the user
+    result = await db.execute(
+        select(RefreshToken).filter(RefreshToken.user_id == current_user.id)
+    )
+    tokens = result.scalars().all()
+    
+    for token in tokens:
+        await db.delete(token)
+    
+    await db.commit()
+    
+    return {"detail": "Successfully logged out from all sessions"}
+
+# User Management Endpoints
+def require_admin():
+    """Dependency to require admin role."""
+    async def admin_checker(current_user: User = Depends(get_current_active_user)) -> User:
+        if current_user.role not in ["admin", "super_admin"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required"
+            )
+        return current_user
+    return admin_checker
+
+def require_super_admin():
+    """Dependency to require super admin role."""
+    async def super_admin_checker(current_user: User = Depends(get_current_active_user)) -> User:
+        if current_user.role != "super_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized"
+            )
+        return current_user
+    return super_admin_checker
+
+@router.get("/users", response_model=list[UserResponse], tags=["users"])
+async def list_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin())
+):
+    """List all users in the current tenant (admin only)."""
+    result = await db.execute(
+        select(User).filter(User.tenant_id == current_user.tenant_id)
+    )
+    users = result.scalars().all()
+    return users
+
+@router.get("/users/{user_id}", response_model=UserResponse, tags=["users"])
+async def get_user(
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get a user by ID."""
+    # Regular users can only view their own profile
+    if current_user.role not in ["admin", "super_admin"] and str(current_user.id) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized"
+        )
+    
+    # Get user from database
+    result = await db.execute(
+        select(User).filter(
+            User.id == user_id,
+            User.tenant_id == current_user.tenant_id
+        )
+    )
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    return user
+
+@router.put("/users/{user_id}/role", response_model=UserResponse, tags=["users"])
+@router.patch("/users/{user_id}/role", response_model=UserResponse, tags=["users"])
+async def update_user_role(
+    user_id: UUID,
+    role: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    # Check if user is admin
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    """Update a user's role (admin only)."""
+    # Check if role is valid
+    if role not in ["user", "admin", "super_admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role"
+        )
+    
+    # Super admin required to promote to super_admin
+    if role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super admins can promote to super admin"
+        )
+    
+    # Get user to update
+    result = await db.execute(
+        select(User).filter(
+            User.id == user_id,
+            User.tenant_id == current_user.tenant_id
+        )
+    )
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Regular admins cannot modify super admins
+    if user.role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required"
+        )
+    
+    # Update role
+    user.role = role
+    await db.commit()
+    await db.refresh(user)
+    
+    return user
+
+@router.delete("/users/{user_id}", tags=["users"])
+async def delete_user(
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin())
+):
+    """Delete a user (admin only)."""
+    # Check if user is trying to delete self
+    if str(current_user.id) == str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+    
+    # Get user to delete
+    result = await db.execute(
+        select(User).filter(
+            User.id == user_id,
+            User.tenant_id == current_user.tenant_id
+        )
+    )
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Regular admins cannot delete super admins
+    if user.role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete super admin"
+        )
+    
+    # Delete user
+    await db.delete(user)
+    await db.commit()
+    
+    return {"detail": "User deleted successfully"}

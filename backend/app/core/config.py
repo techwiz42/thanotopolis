@@ -24,6 +24,7 @@ class Settings:
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key")
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     FRONTEND_URL: str = os.getenv("FRONTEND_URL")
 

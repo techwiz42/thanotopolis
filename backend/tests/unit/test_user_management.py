@@ -48,7 +48,7 @@ class TestUserManagement:
         )
         
         assert response.status_code == 403
-        assert "Not authorized" in response.json()["detail"]
+        assert "Admin access required" in response.json()["detail"]
     
     async def test_list_users_pagination(self, client: AsyncClient, admin_auth_headers: dict):
         """Test user list pagination."""
@@ -132,12 +132,12 @@ class TestUserManagement:
         data = response.json()
         assert data["role"] == "admin"
     
-    async def test_update_user_role_as_admin(self, client: AsyncClient, admin_auth_headers: dict, test_user: User):
-        """Test regular admin cannot update user roles."""
+    async def test_update_user_role_as_admin(self, client: AsyncClient, admin_auth_headers: dict, super_admin_user: User):
+        """Test regular admin cannot update super admin's role."""
         response = await client.patch(
-            f"/api/users/{test_user.id}/role",
+            f"/api/users/{super_admin_user.id}/role",
             headers=admin_auth_headers,
-            params={"role": "admin"}
+            params={"role": "user"}
         )
         
         assert response.status_code == 403
