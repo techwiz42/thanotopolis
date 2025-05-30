@@ -21,9 +21,10 @@ from app.schemas.schemas import (
 )
 from app.auth.auth import get_current_active_user, get_tenant_from_request
 
-router = APIRouter(prefix="/conversations", tags=["conversations"])
+# Important: Don't add /api prefix - it's already added in main.py
+router = APIRouter(tags=["conversations"])
 
-@router.post("/", response_model=ConversationResponse)
+@router.post("/conversations/", response_model=ConversationResponse)
 async def create_conversation(
     conversation_data: ConversationCreate,
     current_user: User = Depends(get_current_active_user),
@@ -97,7 +98,7 @@ async def create_conversation(
     # Load relationships for response
     return await get_conversation_with_details(conversation.id, db)
 
-@router.get("/", response_model=List[ConversationListResponse])
+@router.get("/conversations/", response_model=List[ConversationListResponse])
 async def list_conversations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -173,7 +174,7 @@ async def list_conversations(
     
     return items
 
-@router.get("/{conversation_id}", response_model=ConversationResponse)
+@router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
     conversation_id: UUID,
     current_user: User = Depends(get_current_active_user),
@@ -200,7 +201,7 @@ async def get_conversation(
     
     return await get_conversation_with_details(conversation_id, db)
 
-@router.post("/{conversation_id}/messages", response_model=MessageResponse)
+@router.post("/conversations/{conversation_id}/messages", response_model=MessageResponse)
 async def send_message(
     conversation_id: UUID,
     message_data: MessageCreate,
@@ -295,7 +296,7 @@ async def send_message(
         sender_type="user"
     )
 
-@router.get("/{conversation_id}/messages", response_model=List[MessageResponse])
+@router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
 async def get_messages(
     conversation_id: UUID,
     skip: int = Query(0, ge=0),
@@ -383,7 +384,7 @@ async def process_conversation(conversation_id: UUID, message_id: UUID, agent_ty
     else:
         return ("ASSISTANT", "This is the agent response")
 
-@router.patch("/{conversation_id}", response_model=ConversationResponse)
+@router.patch("/conversations/{conversation_id}", response_model=ConversationResponse)
 async def update_conversation(
     conversation_id: UUID,
     update_data: ConversationUpdate,
@@ -423,7 +424,7 @@ async def update_conversation(
     
     return await get_conversation_with_details(conversation_id, db)
 
-@router.delete("/{conversation_id}", response_model=dict)
+@router.delete("/conversations/{conversation_id}", response_model=dict)
 async def delete_conversation(
     conversation_id: UUID,
     current_user: User = Depends(get_current_active_user),
@@ -454,7 +455,7 @@ async def delete_conversation(
     
     return {"status": "success", "message": "Conversation deleted successfully"}
 
-@router.get("/{conversation_id}/messages/{message_id}", response_model=MessageResponse)
+@router.get("/conversations/{conversation_id}/messages/{message_id}", response_model=MessageResponse)
 async def get_message(
     conversation_id: UUID,
     message_id: UUID,
@@ -524,7 +525,7 @@ async def get_message(
         sender_type=sender_type
     )
 
-@router.delete("/{conversation_id}/messages/{message_id}", response_model=dict)
+@router.delete("/conversations/{conversation_id}/messages/{message_id}", response_model=dict)
 async def delete_message(
     conversation_id: UUID,
     message_id: UUID,
@@ -559,7 +560,7 @@ async def delete_message(
     
     return {"status": "success", "message": "Message deleted successfully"}
 
-@router.delete("/{conversation_id}/messages", response_model=dict)
+@router.delete("/conversations/{conversation_id}/messages", response_model=dict)
 async def clear_messages(
     conversation_id: UUID,
     current_user: User = Depends(get_current_active_user),
@@ -583,7 +584,7 @@ async def clear_messages(
     
     return {"status": "success", "message": "All messages cleared successfully"}
 
-@router.post("/{conversation_id}/agents")
+@router.post("/conversations/{conversation_id}/agents", response_model=dict)
 async def add_agent(
     conversation_id: UUID,
     agent_data: ConversationAgentAdd,
@@ -634,7 +635,7 @@ async def add_agent(
         "configuration": agent_data.configuration
     }
 
-@router.get("/{conversation_id}/agents", response_model=List[dict])
+@router.get("/conversations/{conversation_id}/agents", response_model=List[dict])
 async def get_agents(
     conversation_id: UUID,
     current_user: User = Depends(get_current_active_user),
@@ -669,7 +670,7 @@ async def get_agents(
         for agent in agents
     ]
 
-@router.delete("/{conversation_id}/agents/{agent_id}", response_model=dict)
+@router.delete("/conversations/{conversation_id}/agents/{agent_id}", response_model=dict)
 async def remove_agent(
     conversation_id: UUID,
     agent_id: UUID,
@@ -704,7 +705,7 @@ async def remove_agent(
     
     return {"status": "success", "message": "Agent removed successfully"}
 
-@router.get("/search", response_model=List[ConversationListResponse])
+@router.get("/conversations/search", response_model=List[ConversationListResponse])
 async def search_conversations(
     q: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
@@ -749,7 +750,7 @@ async def search_conversations(
         for conv in conversations
     ]
 
-@router.get("/{conversation_id}/export", response_model=dict)
+@router.get("/conversations/{conversation_id}/export", response_model=dict)
 async def export_conversation(
     conversation_id: UUID,
     current_user: User = Depends(get_current_active_user),
@@ -826,6 +827,7 @@ async def export_conversation(
             "metadata": metadata
         })
     
+    # Changed thread_id to match the test expectations
     return {
         "thread_id": str(conversation.id),
         "title": conversation.title,
@@ -834,7 +836,7 @@ async def export_conversation(
         "messages": formatted_messages
     }
 
-@router.get("/{conversation_id}/stats", response_model=dict)
+@router.get("/conversations/{conversation_id}/stats", response_model=dict)
 async def get_conversation_stats(
     conversation_id: UUID,
     current_user: User = Depends(get_current_active_user),

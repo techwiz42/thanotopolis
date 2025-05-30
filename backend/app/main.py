@@ -4,41 +4,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import uvicorn
-import logging
 
-from app.db.database import init_db, check_db_connection
+from app.db.database import init_db
 from app.api.auth import router as auth_router
-from app.api.conversations import router as conversation_router
+from app.api.voice_streaming import router as voice_streaming_router
+from app.api.websockets import router as websockets_router
+from app.api.conversations import router as conversations_router
 from app.core.config import settings
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Starting up...")
-    
-    # Check database connection
-    if await check_db_connection():
-        logger.info("Database connection successful")
-    else:
-        logger.error("Failed to connect to database")
-    
-    # Initialize database tables
     await init_db()
-    logger.info("Database initialized")
-    
     yield
-    
     # Shutdown
-    logger.info("Shutting down...")
+    # Clean up voice streaming handlers if any are active
+    try:
+        from app.api.voice_streaming import shutdown_all_handlers
+        await shutdown_all_handlers()
+    except Exception as e:
+        print(f"Error shutting down voice handlers: {e}")
 
 # Create FastAPI app
 app = FastAPI(
-    title="Thanotopolis Auth & Conversation API",
+    title="Thanotopolis Auth API",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -55,48 +45,38 @@ app.add_middleware(
 # Health check
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    db_healthy = await check_db_connection()
-    return {
-        "status": "healthy" if db_healthy else "unhealthy",
-        "service": "thanotopolis-api",
-        "database": "connected" if db_healthy else "disconnected"
-    }
+    return {"status": "healthy", "service": "thanotopolis-auth"}
 
 # Root endpoint
 @app.get("/")
 async def root():
-    """Root endpoint with API information."""
     return {
-        "message": "Thanotopolis API",
+        "message": "Thanotopolis Auth API",
         "version": "1.0.0",
         "docs": "/docs",
         "endpoints": {
             "auth": "/api/auth",
-            "conversations": "/api/conversations",
-            "health": "/health"
+            "voice": {
+                "streaming_stt": "ws://localhost:8000/api/ws/voice/streaming-stt",
+                "status": "/api/voice/stt/status"
+            },
+            "websockets": {
+                "conversations": "ws://localhost:8000/api/ws/conversations/{conversation_id}",
+                "notifications": "ws://localhost:8000/api/ws/notifications"
+            }
         }
     }
 
 # Include routers
 app.include_router(auth_router, prefix="/api")
-app.include_router(conversation_router)
-
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler for unhandled exceptions."""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"}
-    )
+app.include_router(voice_streaming_router, prefix="/api")
+app.include_router(websockets_router, prefix="/api")
+app.include_router(conversations_router, prefix="/api")
 
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
-        log_level="info"
+        reload=True
     )
