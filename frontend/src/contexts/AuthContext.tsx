@@ -39,8 +39,7 @@ interface RegisterData {
   password: string
   first_name?: string
   last_name?: string
-  organization_subdomain: string
-  access_code: string
+  access_code: string  // Only access code needed - org derived from this
 }
 
 // Auth Context
@@ -84,7 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchUser = async (accessToken: string, organizationSubdomain: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/me`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'X-Tenant-ID': organizationSubdomain
@@ -149,8 +148,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error(error.detail || 'Registration failed')
     }
 
-    // Auto-login after registration
-    await login(data.email, data.password)
+    const authResponse = await response.json()
+    const { access_token, refresh_token, token_type, organization_subdomain } = authResponse
+    
+    const authTokens = { access_token, refresh_token, token_type }
+    setTokens(authTokens)
+    setOrganization(organization_subdomain)
+    
+    localStorage.setItem('tokens', JSON.stringify(authTokens))
+    localStorage.setItem('organization', organization_subdomain)
+    
+    await fetchUser(access_token, organization_subdomain)
   }
 
   const logout = () => {
@@ -159,8 +167,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${tokens.access_token}`,
-          'X-Tenant-ID': organization || ''
-        }
+          'X-Tenant-ID': organization || '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          refresh_token: tokens.refresh_token
+        })
       }).catch(console.error)
     }
 

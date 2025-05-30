@@ -50,10 +50,6 @@ export default function Greeting() {
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Profile</h3>
                 <dl className="space-y-2">
                   <div className="flex justify-between">
-                    <dt className="text-sm font-medium text-gray-600">Organization:</dt>
-                    <dd className="text-sm text-gray-900">{organization}</dd>
-                  </div>
-                  <div className="flex justify-between">
                     <dt className="text-sm font-medium text-gray-600">Name:</dt>
                     <dd className="text-sm text-gray-900">
                       {user.first_name && user.last_name 

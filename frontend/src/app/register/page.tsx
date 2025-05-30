@@ -6,12 +6,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 
-interface Organization {
-  id: string
-  name: string
-  subdomain: string
-}
-
 export default function Register() {
   const [formData, setFormData] = useState({
     email: '',
@@ -20,33 +14,49 @@ export default function Register() {
     confirmPassword: '',
     first_name: '',
     last_name: '',
-    organization_subdomain: '',
     access_code: ''
   })
-  const [organizations, setOrganizations] = useState<Organization[]>([])
+  const [organizationInfo, setOrganizationInfo] = useState<{
+    name: string;
+    subdomain: string;
+  } | null>(null)
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isValidatingCode, setIsValidatingCode] = useState(false)
   
   const { register } = useAuth()
   const router = useRouter()
 
+  // Validate access code when it changes
   useEffect(() => {
-    // Fetch available organizations
-    const fetchOrganizations = async () => {
+    const validateAccessCode = async () => {
+      if (formData.access_code.length < 6) {
+        setOrganizationInfo(null)
+        return
+      }
+
+      setIsValidatingCode(true)
       try {
-        const response = await fetch('/api/organizations')
+        const response = await fetch(`/api/organizations/${formData.access_code}/info`)
         if (response.ok) {
-          const orgs = await response.json()
-          setOrganizations(orgs)
+          const orgInfo = await response.json()
+          setOrganizationInfo(orgInfo)
+        } else {
+          setOrganizationInfo(null)
         }
       } catch (error) {
-        console.error('Failed to fetch organizations:', error)
+        console.error('Failed to validate access code:', error)
+        setOrganizationInfo(null)
+      } finally {
+        setIsValidatingCode(false)
       }
     }
-    fetchOrganizations()
-  }, [])
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const debounceTimer = setTimeout(validateAccessCode, 500)
+    return () => clearTimeout(debounceTimer)
+  }, [formData.access_code])
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData(prev => ({
       ...prev,
       [e.target.name]: e.target.value
@@ -64,11 +74,6 @@ export default function Register() {
 
     if (formData.password.length < 8) {
       setError('Password must be at least 8 characters')
-      return
-    }
-
-    if (!formData.organization_subdomain) {
-      setError('Please select an organization')
       return
     }
 
@@ -112,33 +117,6 @@ export default function Register() {
           )}
           <div className="space-y-4">
             <div>
-              <label htmlFor="organization_subdomain" className="block text-sm font-medium text-gray-700">
-                Organization
-              </label>
-              <select
-                id="organization_subdomain"
-                name="organization_subdomain"
-                required
-                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                value={formData.organization_subdomain}
-                onChange={handleChange}
-              >
-                <option value="">Select an organization</option>
-                {organizations.map(org => (
-                  <option key={org.id} value={org.subdomain}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Don't see your organization?{' '}
-                <Link href="/organizations/new" className="text-blue-600 hover:text-blue-500">
-                  Create one here
-                </Link>
-              </p>
-            </div>
-
-            <div>
               <label htmlFor="access_code" className="block text-sm font-medium text-gray-700">
                 Organization Access Code
               </label>
@@ -152,6 +130,27 @@ export default function Register() {
                 onChange={handleChange}
                 placeholder="Enter the code provided by your organization"
               />
+              {isValidatingCode && (
+                <p className="mt-1 text-xs text-gray-500">Validating code...</p>
+              )}
+              {organizationInfo && (
+                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-md">
+                  <p className="text-xs text-green-800">
+                    You're joining: <strong>{organizationInfo.name}</strong> ({organizationInfo.subdomain})
+                  </p>
+                </div>
+              )}
+              {!organizationInfo && formData.access_code.length >= 6 && !isValidatingCode && (
+                <p className="mt-1 text-xs text-red-600">
+                  Invalid access code. Please check with your organization admin.
+                </p>
+              )}
+              <p className="mt-1 text-xs text-gray-500">
+                Don't have an access code?{' '}
+                <Link href="/organizations/new" className="text-blue-600 hover:text-blue-500">
+                  Create an organization
+                </Link>
+              </p>
             </div>
             
             <div className="grid grid-cols-2 gap-4">
@@ -250,7 +249,7 @@ export default function Register() {
           <div>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !organizationInfo}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? 'Creating account...' : 'Register'}
@@ -266,6 +265,17 @@ export default function Register() {
             </p>
           </div>
         </form>
+
+        {/* Demo credentials reminder */}
+        <div className="mt-6 p-4 bg-blue-50 rounded-md">
+          <p className="text-sm text-blue-800 font-medium">Demo Access Code:</p>
+          <p className="text-xs text-blue-700 mt-1">
+            Use access code: <strong>DEMO123</strong>
+          </p>
+          <p className="text-xs text-blue-600 mt-2">
+            This will register you in the demo organization.
+          </p>
+        </div>
       </div>
     </div>
   )

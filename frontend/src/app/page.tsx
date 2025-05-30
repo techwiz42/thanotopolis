@@ -1,4 +1,4 @@
-// frontend/src/app/login/page.tsx
+// frontend/src/app/page.tsx
 'use client'
 
 import React, { useState } from 'react'
@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 
-export default function Login() {
+export default function Home() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -35,10 +35,10 @@ export default function Login() {
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Sign in to your account
+            Welcome to Thanotopolis
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Or{' '}
+            Sign in to access your account or{' '}
             <Link href="/register" className="font-medium text-blue-600 hover:text-blue-500">
               create a new account
             </Link>
@@ -81,6 +81,14 @@ export default function Login() {
             </div>
           </div>
 
+          <div className="flex items-center justify-between">
+            <div className="text-sm">
+              <a href="#" className="font-medium text-blue-600 hover:text-blue-500">
+                Forgot your password?
+              </a>
+            </div>
+          </div>
+
           <div>
             <button
               type="submit"
@@ -113,9 +121,6 @@ export default function Login() {
           <p className="text-xs text-blue-700 mt-1">
             Email: demo@example.com<br />
             Password: demo123
-          </p>
-          <p className="text-xs text-blue-600 mt-2">
-            For new demo users - Organization: demo, Access Code: DEMO123
           </p>
         </div>
       </div>

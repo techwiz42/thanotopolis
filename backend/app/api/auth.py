@@ -7,12 +7,15 @@ from uuid import UUID
 
 from app.db.database import get_db
 from app.models.models import User, Tenant, RefreshToken
+# Import schemas
 from app.schemas.schemas import (
     UserRegister, 
     UserLogin, 
     TokenResponse, 
     RefreshTokenRequest,
-    UserResponse
+    UserResponse,
+    OrganizationCreate,
+    OrganizationResponse
 )
 from app.auth.auth import (
     AuthService, 
@@ -23,17 +26,98 @@ from app.auth.auth import (
 
 router = APIRouter()
 
-@router.post("/auth/register", response_model=TokenResponse, tags=["auth"])
-async def register(
-    register_data: UserRegister,
-    request: Request,
+# Schema definitions (these would normally be in schemas.py)
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional
+
+class OrganizationCreate(BaseModel):
+    name: str
+    subdomain: str
+
+class OrganizationResponse(BaseModel):
+    id: UUID
+    name: str
+    subdomain: str
+    access_code: str
+    is_active: bool
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class UserRegister(BaseModel):
+    email: EmailStr
+    username: str
+    password: str = Field(..., min_length=8)
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    access_code: str  # Only access code needed - org derived from this
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserResponse(BaseModel):
+    id: UUID
+    email: str
+    username: str
+    first_name: Optional[str]
+    last_name: Optional[str]
+    role: str
+    is_active: bool
+    is_verified: bool
+    tenant_id: UUID
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    organization_subdomain: str
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+@router.post("/organizations", response_model=OrganizationResponse, tags=["organizations"])
+async def create_organization(
+    org_data: OrganizationCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    """Register a new user in an existing organization."""
-    # Verify organization exists and access code is valid
+    """Create a new organization."""
+    # Check if subdomain already exists
+    result = await db.execute(
+        select(Tenant).filter(Tenant.subdomain == org_data.subdomain)
+    )
+    existing = result.scalars().first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization subdomain already exists"
+        )
+    
+    # Create new organization
+    new_org = Tenant(
+        name=org_data.name,
+        subdomain=org_data.subdomain
+    )
+    
+    db.add(new_org)
+    await db.commit()
+    await db.refresh(new_org)
+    
+    return new_org
+
+@router.get("/organizations/{access_code}/info", tags=["organizations"])
+async def get_organization_by_access_code(
+    access_code: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get organization info by access code (for registration flow)."""
     result = await db.execute(
         select(Tenant).filter(
-            Tenant.subdomain == register_data.organization_subdomain,
+            Tenant.access_code == access_code,
             Tenant.is_active == True
         )
     )
@@ -42,10 +126,31 @@ async def register(
     if not organization:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Organization not found"
+            detail="Invalid access code or organization not found"
         )
     
-    if organization.access_code != register_data.access_code:
+    return {
+        "name": organization.name,
+        "subdomain": organization.subdomain
+    }
+
+@router.post("/auth/register", response_model=TokenResponse, tags=["auth"])
+async def register(
+    register_data: UserRegister,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Register a new user using organization access code."""
+    # Find organization by access code
+    result = await db.execute(
+        select(Tenant).filter(
+            Tenant.access_code == register_data.access_code,
+            Tenant.is_active == True
+        )
+    )
+    organization = result.scalars().first()
+    
+    if not organization:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid access code"

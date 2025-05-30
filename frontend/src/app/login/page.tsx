@@ -9,7 +9,6 @@ import { useAuth } from '@/contexts/AuthContext'
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [organization, setOrganization] = useState('')
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   
@@ -22,7 +21,7 @@ export default function Login() {
     setIsSubmitting(true)
 
     try {
-      await login(email, password, organization)
+      await login(email, password)
       router.push('/greeting')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
@@ -53,19 +52,6 @@ export default function Login() {
           )}
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
-              <label htmlFor="organization" className="sr-only">Organization</label>
-              <input
-                id="organization"
-                name="organization"
-                type="text"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Organization subdomain"
-                value={organization}
-                onChange={(e) => setOrganization(e.target.value)}
-              />
-            </div>
-            <div>
               <label htmlFor="email" className="sr-only">Email address</label>
               <input
                 id="email"
@@ -73,7 +59,7 @@ export default function Login() {
                 type="email"
                 autoComplete="email"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -92,6 +78,14 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="text-sm">
+              <a href="#" className="font-medium text-blue-600 hover:text-blue-500">
+                Forgot your password?
+              </a>
             </div>
           </div>
 
@@ -120,6 +114,15 @@ export default function Login() {
             </p>
           </div>
         </form>
+
+        {/* Demo credentials reminder */}
+        <div className="mt-6 p-4 bg-blue-50 rounded-md">
+          <p className="text-sm text-blue-800 font-medium">Demo Credentials:</p>
+          <p className="text-xs text-blue-700 mt-1">
+            Email: demo@example.com<br />
+            Password: demo123
+          </p>
+        </div>
       </div>
     </div>
   )
