@@ -181,6 +181,9 @@ class ConversationResponse(BaseModel):
     participants: Optional[List[ParticipantResponse]] = []
     recent_messages: Optional[List[MessageResponse]] = []
     
+    # For backward compatibility
+    owner_id: Optional[UUID] = None
+    
     model_config = ConfigDict(from_attributes=True)
 
 class ConversationListResponse(BaseModel):

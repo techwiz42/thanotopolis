@@ -1,12 +1,16 @@
 # backend/app/models/models.py
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint, Text, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import Index, text
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.sql import func
+from sqlalchemy import JSON
 from datetime import datetime
 import uuid
 import secrets
 import enum
+import json
 
 Base = declarative_base()
 
@@ -143,6 +147,18 @@ class Message(Base):
     # Metadata for additional info (JSON string)
     additional_data = Column(Text, nullable=True)
     
+    # Alias for compatibility
+    @property
+    def message_metadata(self):
+        if self.additional_data:
+            if isinstance(self.additional_data, str):
+                try:
+                    return json.loads(self.additional_data)
+                except:
+                    return None
+            return self.additional_data
+        return None
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
@@ -208,4 +224,38 @@ class ConversationParticipant(Base):
     # Unique constraint
     __table_args__ = (
         UniqueConstraint('conversation_id', 'participant_id', name='_conversation_participant_uc'),
+    )
+
+class DocumentEmbedding(Base):
+    __tablename__ = "document_embeddings"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True)
+    
+    # Content and embedding
+    content = Column(Text, nullable=False)
+    embedding = Column(Vector(1536))  # Use smaller dimension size for testing compatibility
+    
+    # Metadata
+    source_type = Column(String, nullable=False, default="document")  # document, message, url
+    source = Column(String, nullable=False)  # filename, message_id, url
+    chunk_index = Column(Integer, default=0)
+    total_chunks = Column(Integer, default=1)
+    
+    # Additional metadata as JSON
+    additional_data = Column(JSON, default={})
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    owner = relationship("User", foreign_keys=[owner_id])
+    conversation = relationship("Conversation", foreign_keys=[conversation_id])
+    
+    # Indexes for performance (skip vector index for testing)
+    __table_args__ = (
+        Index('idx_embeddings_owner_id', 'owner_id'),
+        Index('idx_embeddings_conversation_id', 'conversation_id'),
+        Index('idx_embeddings_source_type', 'source_type'),
     )

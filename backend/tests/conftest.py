@@ -10,6 +10,7 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 import os
 import sys
+from unittest.mock import patch, MagicMock
 
 # Set test environment
 os.environ["TESTING"] = "1"

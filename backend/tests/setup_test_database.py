@@ -49,9 +49,14 @@ async def create_test_database():
         engine = create_async_engine(test_dsn)
         
         async with engine.begin() as conn:
-            # Create uuid-ossp extension if needed
+            # Create needed extensions
             await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
-            print("Extensions created/verified.")
+            try:
+                await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
+                print("pgvector extension created/verified.")
+            except Exception as e:
+                print(f"Warning: Could not create pgvector extension. Some tests may fail: {e}")
+            print("Extensions setup complete.")
         
         await engine.dispose()
         
