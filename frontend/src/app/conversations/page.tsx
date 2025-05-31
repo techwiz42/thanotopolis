@@ -1,21 +1,25 @@
-// src/app/conversations/page.tsx
+// Alternative version without alert-dialog
+// src/app/conversations/page.tsx (simplified version)
 'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { conversationService } from '@/services/conversations';
 import { Conversation } from '@/types/conversation';
-import { Plus, MessageSquare, Users, Clock } from 'lucide-react';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Loader2, MessageSquare, Plus, Users, Calendar, Trash2 } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
 
 export default function ConversationsPage() {
-  const { token } = useAuth();
   const router = useRouter();
+  const { token, user } = useAuth();
+  const { toast } = useToast();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -23,64 +27,86 @@ export default function ConversationsPage() {
       return;
     }
 
-    loadConversations();
+    fetchConversations();
   }, [token, router]);
 
-  const loadConversations = async () => {
+  const fetchConversations = async () => {
+    if (!token) return;
+
     try {
       setIsLoading(true);
-      const response = await conversationService.getConversations(token!);
-      setConversations(response.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load conversations');
+      const response = await conversationService.getConversations(token);
+      setConversations(response.conversations || []);
+    } catch (error) {
+      console.error('Error fetching conversations:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load conversations',
+        variant: 'destructive',
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleDeleteConversation = async (conversationId: string) => {
+    if (!token) return;
+
+    // Simple confirmation using browser's confirm dialog
+    if (!window.confirm('Are you sure you want to delete this conversation? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setDeletingId(conversationId);
+      await conversationService.deleteConversation(conversationId, token);
+      toast({
+        title: 'Success',
+        description: 'Conversation deleted successfully',
+      });
+      // Remove from local state
+      setConversations(conversations.filter(conv => conv.id !== conversationId));
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete conversation',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    
-    if (diffMins < 60) return `${diffMins} minutes ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)} hours ago`;
-    if (diffMins < 10080) return `${Math.floor(diffMins / 1440)} days ago`;
-    
-    return date.toLocaleDateString();
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading conversations...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-          {error}
-        </div>
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+        <span className="ml-2 text-gray-600">Loading conversations...</span>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="container mx-auto p-4">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Conversations</h1>
+        <h1 className="text-3xl font-bold">My Conversations</h1>
         <Button 
           onClick={() => router.push('/conversations/new')}
-          className="flex items-center"
+          className="flex items-center gap-2"
         >
-          <Plus className="mr-2 h-4 w-4" />
+          <Plus className="h-4 w-4" />
           New Conversation
         </Button>
       </div>
@@ -88,51 +114,78 @@ export default function ConversationsPage() {
       {conversations.length === 0 ? (
         <Card>
           <CardContent className="text-center py-12">
-            <MessageSquare className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No conversations</h3>
-            <p className="mt-1 text-sm text-gray-500">Get started by creating a new conversation.</p>
-            <div className="mt-6">
-              <Button onClick={() => router.push('/conversations/new')}>
-                <Plus className="mr-2 h-4 w-4" />
-                New Conversation
-              </Button>
-            </div>
+            <MessageSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No conversations yet</h3>
+            <p className="text-gray-600 mb-4">Start a new conversation to get started</p>
+            <Button 
+              onClick={() => router.push('/conversations/new')}
+              className="flex items-center gap-2 mx-auto"
+            >
+              <Plus className="h-4 w-4" />
+              Create Your First Conversation
+            </Button>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {conversations.map((conversation) => (
-            <Card 
-              key={conversation.id}
-              className="hover:shadow-lg transition-shadow cursor-pointer"
-              onClick={() => router.push(`/conversations/${conversation.id}`)}
-            >
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
+            <Card key={conversation.id} className="hover:shadow-lg transition-shadow">
+              <CardHeader>
+                <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <h3 className="text-lg font-medium text-gray-900 mb-1">
+                    <CardTitle className="text-lg line-clamp-1">
                       {conversation.title}
-                    </h3>
+                    </CardTitle>
                     {conversation.description && (
-                      <p className="text-sm text-gray-500 line-clamp-2 mb-3">
+                      <CardDescription className="mt-1 line-clamp-2">
                         {conversation.description}
-                      </p>
+                      </CardDescription>
                     )}
-                    <div className="flex items-center text-xs text-gray-500 space-x-4">
-                      <div className="flex items-center">
-                        <Clock className="mr-1 h-3 w-3" />
-                        {formatDate(conversation.updated_at || conversation.created_at)}
-                      </div>
-                      {conversation.participants && conversation.participants.length > 0 && (
-                        <div className="flex items-center">
-                          <Users className="mr-1 h-3 w-3" />
-                          {conversation.participants.length + 1} participants
-                        </div>
-                      )}
-                    </div>
                   </div>
-                  <MessageSquare className="h-5 w-5 text-gray-400 ml-2 flex-shrink-0" />
+                  {conversation.owner_id === user?.id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDeleteConversation(conversation.id);
+                      }}
+                      disabled={deletingId === conversation.id}
+                      className="ml-2 text-red-500 hover:text-red-700 hover:bg-red-50"
+                    >
+                      {deletingId === conversation.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  )}
                 </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col gap-2 text-sm text-gray-600">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-4 w-4" />
+                    <span>{formatDate(conversation.created_at)}</span>
+                  </div>
+                  {conversation.participant_count !== undefined && (
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      <span>{conversation.participant_count} participant{conversation.participant_count !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
+                  {conversation.is_privacy_enabled && (
+                    <div className="text-purple-600 font-medium">
+                      Privacy Mode Enabled
+                    </div>
+                  )}
+                </div>
+                <Link href={`/conversations/${conversation.id}${conversation.is_privacy_enabled ? '?privacy=true' : ''}`}>
+                  <Button className="w-full mt-4" variant="outline">
+                    Open Conversation
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
           ))}

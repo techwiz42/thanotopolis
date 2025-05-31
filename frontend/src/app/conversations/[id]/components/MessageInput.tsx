@@ -229,7 +229,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
           value={message}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? "Messaging disabled" : "Type your message..."}
+          placeholder={disabled ? "Message input temporarily unavailable" : "Type your message..."}
           className="flex-grow min-h-[80px] max-h-[200px] resize-none pr-24 pl-4"
           disabled={disabled}
         />

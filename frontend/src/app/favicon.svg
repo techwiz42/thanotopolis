@@ -1,0 +1,14 @@
+<!-- frontend/src/app/favicon.svg -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="#FACC15">
+  <!-- Background circle - slate-600 -->
+  <circle cx="24" cy="24" r="23" fill="#475569" stroke="#CBD5E1" stroke-width="2"/>
+  
+  <!-- Central sun disk - gold -->
+  <circle cx="24" cy="24" r="5"/>
+  
+  <!-- Left wing - gold -->
+  <path d="M19 24 Q16 20 12 20 Q8 20 4 22 Q2 23 2 24 Q2 25 4 26 Q8 28 12 28 Q16 28 19 24"/>
+  
+  <!-- Right wing - gold -->
+  <path d="M29 24 Q32 20 36 20 Q40 20 44 22 Q46 23 46 24 Q46 25 44 26 Q40 28 36 28 Q32 28 29 24"/>
+</svg>

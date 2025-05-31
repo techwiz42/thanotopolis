@@ -4,7 +4,6 @@
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { MainLayout } from '@/components/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -126,7 +125,7 @@ export default function ConversationPage() {
       toast({
         title: "Participant Management",
         description: response.message,
-        variant: response.message.includes('already') ? "default" : undefined
+        variant: undefined
       });
     
       setEmail('');
@@ -237,106 +236,115 @@ export default function ConversationPage() {
   // Using the websocket hook
   const { sendMessage, sendTypingStatus, isConnected } = useWebSocket(wsConfig);
 
+  // Debug logging for MessageInput disabled state
+  useEffect(() => {
+    console.log('MessageInput Debug:', {
+      isConnected,
+      hasUser: !!user,
+      userEmail: user?.email,
+      hasParticipantSession: !!participantStorage.getSession(conversationId),
+      participantSession: participantStorage.getSession(conversationId),
+      isDisabled: !isConnected || (!user && !participantStorage.getSession(conversationId))
+    });
+  }, [isConnected, user, conversationId]);
+
   if (isLoading || messagesLoading) {
     return (
-      <MainLayout>
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
-          <span className="ml-2 text-gray-600">Loading conversation...</span>
-        </div>
-      </MainLayout>
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+        <span className="ml-2 text-gray-600">Loading conversation...</span>
+      </div>
     );
   }
 
   if (error || !conversation) {
     return (
-      <MainLayout>
-        <div className="text-red-500 py-8 text-center">
-          {error || 'Conversation not found'}
-        </div>
-      </MainLayout>
+      <div className="text-red-500 py-8 text-center">
+        {error || 'Conversation not found'}
+      </div>
     );
   }
 
   return (
-    <MainLayout title={conversation.title}>
-      <div className="container mx-auto p-4 space-y-4">
-        {conversation.owner_id === user?.id && (
-          <div className="flex items-center space-x-4 w-full">
-            <Button
-              variant="outline"
-              onClick={() => router.push('/conversations')}
-              className="flex items-center"
-            >
-              <ChevronLeft className="mr-2 h-4 w-4" />
-              Back to Conversations
+    <div className="container mx-auto p-4 space-y-4">
+      {/* Optional: Show conversation title */}
+      <h1 className="text-2xl font-semibold">{conversation.title}</h1>
+      
+      {conversation.owner_id === user?.id && (
+        <div className="flex items-center space-x-4 w-full">
+          <Button
+            variant="outline"
+            onClick={() => router.push('/conversations')}
+            className="flex items-center"
+          >
+            <ChevronLeft className="mr-2 h-4 w-4" />
+            Back to Conversations
+          </Button>
+
+          <div className="flex space-x-2 flex-grow">
+            <Input
+              type="email"
+              placeholder="Enter participant email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="flex-grow"
+            />
+            <Button onClick={handleAddParticipant}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Invite Participant
             </Button>
-
-            <div className="flex space-x-2 flex-grow">
-              <Input
-                type="email"
-                placeholder="Enter participant email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="flex-grow"
-              />
-              <Button onClick={handleAddParticipant}>
-                <UserPlus className="mr-2 h-4 w-4" />
-                Invite Participant
-              </Button>
-            </div>
           </div>
-        )}
-        
-        <div className="h-[calc(100vh-200px)]">
-          <Card className="h-full">
-            <CardContent className="h-full p-0">
-              <div className="flex flex-col h-full">
-                <div
-                  ref={scrollContainerRef}
-                  className="flex-1 min-h-0 overflow-y-auto scroll-smooth"
-                >
-                  <MessageList messages={messages} />
-                  <div ref={messagesEndRef} />
-                </div>
-
-                <div className="flex-shrink-0 p-4 border-t">
-                  {!hideAwaitingMessage && messages.length > 0 && (
-                    <div className="text-sm text-gray-500 mb-2 flex items-center">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Awaiting input...
-                    </div>
-                  )}
-
-                  <TypingIndicator typingStates={typingStates} />
-                  
-                  {Object.entries(streamingState).map(([agentType, state]) => (
-                    state.active && (
-                      <StreamingIndicator
-                        key={agentType}
-                        agentType={agentType}
-                        streamingContent={state.tokens}
-                        isActive={state.active}
-                      />
-                    )
-                  ))}
-                  
-                  <MessageInput
-                    onSendMessage={(content: string, metadata?: MessageMetadata) => {
-                      sendMessage(content, metadata);
-                      requestAnimationFrame(() => scrollToBottom(true));
-                    }}
-                    onTypingStatus={sendTypingStatus}
-                    disabled={!isConnected || (!user && !participantStorage.getSession(conversationId))}
-                    conversationId={conversationId}
-                    isPrivacyEnabled={isPrivacyEnabled}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
+      )}
+      
+      <div className="h-[calc(100vh-200px)]">
+        <Card className="h-full">
+          <CardContent className="h-full p-0">
+            <div className="flex flex-col h-full">
+              <div
+                ref={scrollContainerRef}
+                className="flex-1 min-h-0 overflow-y-auto scroll-smooth"
+              >
+                <MessageList messages={messages} />
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="flex-shrink-0 p-4 border-t">
+                {!hideAwaitingMessage && messages.length > 0 && (
+                  <div className="text-sm text-gray-500 mb-2 flex items-center">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Awaiting input...
+                  </div>
+                )}
+
+                <TypingIndicator typingStates={typingStates} />
+                
+                {Object.entries(streamingState).map(([agentType, state]) => (
+                  state.active && (
+                    <StreamingIndicator
+                      key={agentType}
+                      agentType={agentType}
+                      streamingContent={state.tokens}
+                      isActive={state.active}
+                    />
+                  )
+                ))}
+                
+                <MessageInput
+                  onSendMessage={(content: string, metadata?: MessageMetadata) => {
+                    sendMessage(content, metadata);
+                    requestAnimationFrame(() => scrollToBottom(true));
+                  }}
+                  onTypingStatus={sendTypingStatus}
+                  disabled={!isConnected || (!user && !participantStorage.getSession(conversationId))}
+                  conversationId={conversationId}
+                  isPrivacyEnabled={isPrivacyEnabled}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </MainLayout>
+    </div>
   );
 }

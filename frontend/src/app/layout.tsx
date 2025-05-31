@@ -2,12 +2,15 @@
 import './globals.css'
 import React from 'react'
 import { AuthProvider } from '@/contexts/AuthContext'
-import { ToastProvider } from '@/components/ui/use-toast'
 import MainLayout from '@/components/MainLayout'
+import { ToastProvider } from '@/components/ui/use-toast'
 
 export const metadata = {
   title: 'Thanotopolis',
   description: 'Manage your afterlife affairs',
+  icons: {
+    icon: '/favicon.svg',
+  },
 }
 
 export default function RootLayout({

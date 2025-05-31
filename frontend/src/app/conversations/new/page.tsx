@@ -4,68 +4,131 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { conversationService } from '@/services/conversations';
+import { Loader2, Plus, X } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import { ArrowLeft } from 'lucide-react';
+import { conversationService } from '@/services/conversations';
 
 export default function NewConversationPage() {
-  const { token } = useAuth();
   const router = useRouter();
+  const { user, token } = useAuth();
   const { toast } = useToast();
+  
+  // Generate default title with username and timestamp
+  const generateDefaultTitle = () => {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric', 
+      year: 'numeric' 
+    });
+    const timeStr = now.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+    return `${user?.name || user?.email || 'User'} - ${dateStr} ${timeStr}`;
+  };
+
+  const [title, setTitle] = useState(generateDefaultTitle());
+  const [description, setDescription] = useState('');
+  const [participantEmails, setParticipantEmails] = useState<string[]>([]);
+  const [currentEmail, setCurrentEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    title: '',
-    description: ''
-  });
+  const [isPrivacyEnabled, setIsPrivacyEnabled] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!formData.title.trim()) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please enter a title for the conversation',
-        variant: 'destructive'
-      });
-      return;
+  const handleAddEmail = () => {
+    const trimmedEmail = currentEmail.trim();
+    if (trimmedEmail && !participantEmails.includes(trimmedEmail)) {
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (emailRegex.test(trimmedEmail)) {
+        setParticipantEmails([...participantEmails, trimmedEmail]);
+        setCurrentEmail('');
+      } else {
+        toast({
+          title: "Invalid Email",
+          description: "Please enter a valid email address",
+          variant: "destructive"
+        });
+      }
     }
+  };
 
+  const handleRemoveEmail = (emailToRemove: string) => {
+    setParticipantEmails(participantEmails.filter(email => email !== emailToRemove));
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddEmail();
+    }
+  };
+
+  const handleCreateConversation = async () => {
     if (!token) {
       toast({
-        title: 'Authentication Error',
-        description: 'You must be logged in to create conversations',
-        variant: 'destructive'
+        title: "Authentication Error",
+        description: "You must be logged in to create a conversation",
+        variant: "destructive"
       });
-      router.push('/login');
       return;
     }
 
+    setIsLoading(true);
+
     try {
-      setIsLoading(true);
-      const response = await conversationService.createConversation(
-        {
-          title: formData.title.trim(),
-          description: formData.description.trim() || undefined
-        },
-        token
-      );
+      // Create the conversation
+      const conversationData = {
+        title: title.trim() || generateDefaultTitle(),
+        description: description.trim(),
+        is_privacy_enabled: isPrivacyEnabled
+      };
+
+      const response = await conversationService.createConversation(conversationData, token);
+      const conversationId = response.data.id;
+
+      // Add participants if any
+      if (participantEmails.length > 0) {
+        // Add participants one by one (you might want to create a batch endpoint)
+        for (const email of participantEmails) {
+          try {
+            await conversationService.addParticipant(conversationId, { email }, token);
+          } catch (error) {
+            console.error(`Failed to add participant ${email}:`, error);
+            toast({
+              title: "Warning",
+              description: `Failed to add participant: ${email}`,
+              variant: "destructive"
+            });
+          }
+        }
+      }
+
+      // TODO: Add all available agents to the conversation
+      // This will be implemented based on your agent management system
+      // For now, we'll just add a comment indicating where this should go
+      
+      // await conversationService.addAgentsToConversation(conversationId, token);
 
       toast({
-        title: 'Success',
-        description: 'Conversation created successfully'
+        title: "Success",
+        description: "Conversation created successfully",
       });
 
       // Navigate to the new conversation
-      router.push(`/conversations/${response.data.id}`);
+      const privacyParam = isPrivacyEnabled ? '?privacy=true' : '';
+      router.push(`/conversations/${conversationId}${privacyParam}`);
     } catch (error) {
+      console.error('Error creating conversation:', error);
       toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to create conversation',
-        variant: 'destructive'
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to create conversation",
+        variant: "destructive"
       });
     } finally {
       setIsLoading(false);
@@ -73,92 +136,107 @@ export default function NewConversationPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-6">
-        <Button
-          variant="ghost"
-          onClick={() => router.push('/conversations')}
-          className="mb-4"
-        >
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Conversations
-        </Button>
-        
-        <h1 className="text-2xl font-bold text-gray-900">Create New Conversation</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          Start a new AI-powered conversation with multiple participants
-        </p>
-      </div>
-
+    <div className="container mx-auto p-4 max-w-2xl">
       <Card>
-        <CardContent className="p-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label 
-                htmlFor="title" 
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Title *
-              </label>
+        <CardHeader>
+          <CardTitle>Create New Conversation</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="title">Title</Label>
+            <Input
+              id="title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Enter conversation title"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="description">Description (Optional)</Label>
+            <Textarea
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Enter conversation description"
+              rows={3}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Participants</Label>
+            <div className="flex gap-2">
               <Input
-                id="title"
-                type="text"
-                placeholder="Enter conversation title"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                disabled={isLoading}
-                className="w-full"
-                autoFocus
+                value={currentEmail}
+                onChange={(e) => setCurrentEmail(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Enter participant email"
+                type="email"
               />
-            </div>
-
-            <div>
-              <label 
-                htmlFor="description" 
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Description (optional)
-              </label>
-              <Textarea
-                id="description"
-                placeholder="Enter a brief description of this conversation"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                disabled={isLoading}
-                rows={4}
-                className="w-full"
-              />
-            </div>
-
-            <div className="pt-4 flex gap-3">
-              <Button
-                type="submit"
-                disabled={isLoading || !formData.title.trim()}
-                className="flex-1"
-              >
-                {isLoading ? 'Creating...' : 'Create Conversation'}
-              </Button>
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => router.push('/conversations')}
-                disabled={isLoading}
+                onClick={handleAddEmail}
+                disabled={!currentEmail.trim()}
               >
-                Cancel
+                <Plus className="h-4 w-4" />
               </Button>
             </div>
-          </form>
+            
+            {participantEmails.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {participantEmails.map((email) => (
+                  <div
+                    key={email}
+                    className="flex items-center justify-between bg-gray-100 rounded px-3 py-1"
+                  >
+                    <span className="text-sm">{email}</span>
+                    <button
+                      onClick={() => handleRemoveEmail(email)}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-          <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-            <h3 className="text-sm font-medium text-blue-900 mb-2">
-              What happens next?
-            </h3>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li>• You'll be taken to your new conversation</li>
-              <li>• You can invite participants via email</li>
-              <li>• AI agents will help facilitate the discussion</li>
-              <li>• All messages are saved and can be searched</li>
-            </ul>
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="privacy"
+              checked={isPrivacyEnabled}
+              onChange={(e) => setIsPrivacyEnabled(e.target.checked)}
+              className="h-4 w-4"
+            />
+            <Label htmlFor="privacy" className="cursor-pointer">
+              Enable privacy mode for this conversation
+            </Label>
+          </div>
+
+          <div className="flex gap-2 pt-4">
+            <Button
+              variant="outline"
+              onClick={() => router.push('/conversations')}
+              disabled={isLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateConversation}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Conversation'
+              )}
+            </Button>
           </div>
         </CardContent>
       </Card>
