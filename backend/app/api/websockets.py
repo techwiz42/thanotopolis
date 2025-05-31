@@ -1,20 +1,24 @@
 # backend/app/api/websockets.py
 from fastapi import APIRouter, WebSocket, Depends, HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
-from sqlalchemy import select, update, and_, or_, desc
+from sqlalchemy import select, update, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Set, Optional, List, Union
+from typing import Dict, Set, Optional, List, Union, Any
 from uuid import UUID, uuid4
 from datetime import datetime
 import json
 import asyncio
 import logging
 import traceback
+
 from app.auth.auth import get_current_user, get_tenant_from_request
 from app.core.config import settings
+from app.core.buffer_manager import buffer_manager
 from app.db.database import get_db
-from app.models.models import User, Tenant
-
+from app.models.models import (
+    User, Tenant, Message, Conversation, ConversationAgent, 
+    ConversationUser, MessageType
+)
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -160,7 +164,8 @@ async def _handle_user_message(
     db: AsyncSession,
     conversation_id: UUID,
     user: User,
-    content: str
+    content: str,
+    metadata: Optional[Dict[str, Any]] = None
 ) -> None:
     """Process and broadcast user message"""
     try:
@@ -203,14 +208,38 @@ async def _handle_user_message(
             await connection_manager.broadcast(conversation_id, users_message)
             return
         
-        # Broadcast regular message
-        broadcast_message = {
+        # Save the user message to database first
+        user_message = Message(
+            id=UUID(message_id),
+            conversation_id=conversation_id,
+            user_id=user.id,
+            content=content,
+            message_type=MessageType.TEXT,
+            additional_data=json.dumps(metadata) if metadata else None
+        )
+        db.add(user_message)
+        
+        # Update conversation timestamp
+        from sqlalchemy import select, update as sql_update
+        await db.execute(
+            sql_update(Conversation)
+            .where(Conversation.id == conversation_id)
+            .values(updated_at=func.now())
+        )
+        
+        await db.commit()
+        await db.refresh(user_message)
+        
+        # Broadcast user message to all participants
+        user_broadcast_message = {
             "type": "message",
             "content": content,
             "id": message_id,
             "identifier": user.email,
             "is_owner": True,
             "email": user.email,
+            "sender_name": f"{user.first_name} {user.last_name}".strip() or user.username,
+            "sender_type": "user",
             "timestamp": datetime.utcnow().isoformat(),
             "user_metadata": {
                 "username": user.username,
@@ -219,17 +248,97 @@ async def _handle_user_message(
             }
         }
         
-        await connection_manager.broadcast(conversation_id, broadcast_message)
+        await connection_manager.broadcast(conversation_id, user_broadcast_message)
         
-        # Here you would typically save the message to database
-        # For now, we'll just log it
-        logger.info(f"Message from {user.email} in conversation {conversation_id}: {content[:50]}...")
+        # Add message to buffer for context
+        await buffer_manager.add_message(
+            conversation_id=conversation_id,
+            message=content,
+            sender_id=str(user.id),
+            sender_type="user",
+            owner_id=user.id,
+            metadata=metadata
+        )
+        
+        # All messages are processed by MODERATOR by default
+        agent_type = "MODERATOR"
+        
+        # Check if conversation has a specific MODERATOR configuration
+        moderator_query = select(ConversationAgent).where(
+            ConversationAgent.conversation_id == conversation_id,
+            ConversationAgent.agent_type == "MODERATOR",
+            ConversationAgent.is_active == True
+        )
+        moderator_result = await db.execute(moderator_query)
+        moderator_config = moderator_result.scalar_one_or_none()
+        
+        # If no MODERATOR is explicitly configured, add one
+        if not moderator_config:
+            new_moderator = ConversationAgent(
+                conversation_id=conversation_id,
+                agent_type="MODERATOR",
+                is_active=True,
+                configuration=None
+            )
+            db.add(new_moderator)
+            await db.commit()
+        
+        # Process with agent
+        agent_response = await process_conversation(conversation_id, UUID(message_id), agent_type, db)
+        
+        if agent_response:
+            response_agent_type, response_content = agent_response
+            
+            # Save agent response to database
+            agent_message_id = str(uuid4())
+            agent_message = Message(
+                id=UUID(agent_message_id),
+                conversation_id=conversation_id,
+                agent_type=response_agent_type,
+                content=response_content,
+                message_type=MessageType.TEXT
+            )
+            db.add(agent_message)
+            await db.commit()
+            await db.refresh(agent_message)
+            
+            # Add agent message to buffer
+            await buffer_manager.add_message(
+                conversation_id=conversation_id,
+                message=response_content,
+                sender_id=response_agent_type,
+                sender_type="agent",
+                owner_id=user.id,  # Use the conversation owner for context
+                metadata={"agent_type": response_agent_type}
+            )
+            
+            # Broadcast agent response to all participants
+            agent_broadcast_message = {
+                "type": "message",
+                "content": response_content,
+                "id": agent_message_id,
+                "identifier": response_agent_type,
+                "is_owner": False,
+                "email": f"{response_agent_type.lower()}@thanotopolis.local",
+                "sender_name": response_agent_type,
+                "sender_type": "agent",
+                "timestamp": datetime.utcnow().isoformat(),
+                "agent_metadata": {
+                    "agent_type": response_agent_type
+                }
+            }
+            
+            await connection_manager.broadcast(conversation_id, agent_broadcast_message)
+            
+            logger.info(f"Agent {response_agent_type} responded to message in conversation {conversation_id}")
+        
+        logger.info(f"Processed message from {user.email} in conversation {conversation_id}")
         
     except Exception as e:
         logger.error(f"Error handling message: {e}")
         logger.error(traceback.format_exc())
         
-        # Send error message
+        # Send error message to user
         error_message = {
             "type": "error",
             "content": "Failed to process message",
