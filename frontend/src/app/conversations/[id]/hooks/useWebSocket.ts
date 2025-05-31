@@ -25,104 +25,147 @@ export const useWebSocket = ({
     onToken
 }: UseWebSocketProps) => {
     const [wsConnected, setWsConnected] = useState(false);
+    const [connectionError, setConnectionError] = useState<string | null>(null);
     const mountedRef = useRef(true);
     const unsubscribeRef = useRef<(() => void) | null>(null);
+    const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const retryCountRef = useRef(0);
+    const maxRetries = 3;
 
-const connect = useCallback(async () => {
-    if (!mountedRef.current) return;
+    const connect = useCallback(async () => {
+        if (!mountedRef.current) return;
 
-    try {
-        const participantSession = participantStorage.getSession(conversationId);
-        console.log('Participant session:', participantSession);
+        try {
+            console.log('=== WebSocket Connection Attempt ===');
+            console.log('Conversation ID:', conversationId);
+            console.log('Has Token:', !!token);
+            console.log('User ID:', userId);
+            console.log('User Email:', userEmail);
 
-        const connectionToken = participantSession?.token || token;
-        const connectionId = participantSession?.email || userId || token;
+            const participantSession = participantStorage.getSession(conversationId);
+            console.log('Participant session:', participantSession);
 
-        if (!connectionToken || !connectionId) {
-            console.error('No valid connection credentials found');
-            return;
-        }
+            // Determine connection credentials
+            const connectionToken = participantSession?.token || token;
+            const connectionId = participantSession?.email || userId || userEmail || token;
 
-        await websocketService.connect(
-            conversationId,
-            connectionToken,
-            connectionId
-        );
+            console.log('Connection Token Available:', !!connectionToken);
+            console.log('Connection ID Available:', !!connectionId);
 
-        if (mountedRef.current) {
-            setWsConnected(true);
-            console.log('WebSocket connected successfully');
+            if (!connectionToken || !connectionId) {
+                const error = 'No valid connection credentials found';
+                console.error(error);
+                setConnectionError(error);
+                setWsConnected(false);
+                return;
+            }
 
-            const unsubscribe = websocketService.subscribe((message: WebSocketMessage) => {
-                if (!mountedRef.current) return;
+            // Clear any previous errors
+            setConnectionError(null);
 
-                switch (message.type) {
-                    case 'message': {
-                        // Preserve HTML content from agents
-                        const messageContent = message.content;
+            await websocketService.connect(
+                conversationId,
+                connectionToken,
+                connectionId
+            );
 
-                        // If this is from DOCUMENTSEARCH agent and contains HTML, make sure it's preserved
-                        if (message.agent_type === 'DOCUMENTSEARCH' && /<[a-z][\s\S]*>/i.test(message.content)) {
-                            console.log('Preserving HTML format in document search message');
-                            // Ensure no accidental markdown-style links
-                            // This ensures the backend HTML is preserved exactly as-is
+            if (mountedRef.current) {
+                setWsConnected(true);
+                retryCountRef.current = 0; // Reset retry count on successful connection
+                console.log('WebSocket connected successfully');
+
+                const unsubscribe = websocketService.subscribe((message: WebSocketMessage) => {
+                    if (!mountedRef.current) return;
+
+                    console.log('WebSocket message received:', message.type, message);
+
+                    switch (message.type) {
+                        case 'message': {
+                            // Preserve HTML content from agents
+                            const messageContent = message.content;
+
+                            // If this is from DOCUMENTSEARCH agent and contains HTML, make sure it's preserved
+                            if (message.agent_type === 'DOCUMENTSEARCH' && /<[a-z][\s\S]*>/i.test(message.content)) {
+                                console.log('Preserving HTML format in document search message');
+                                // Ensure no accidental markdown-style links
+                                // This ensures the backend HTML is preserved exactly as-is
+                            }
+
+                            const transformedMessage: Message = {
+                                id: message.id || crypto.randomUUID(),
+                                content: messageContent,
+                                sender: {
+                                    identifier: message.identifier,
+                                    is_owner: message.is_owner || false,
+                                    name: message.agent_type || message.name || '',
+                                    email: message.email || '',
+                                    type: message.agent_type ? 'agent' : 'user',
+                                    message_metadata: message.message_metadata || undefined
+                                },
+                                timestamp: message.timestamp,
+                                message_metadata: message.message_metadata || undefined,
+                                agent_type: message.agent_type  // Add agent_type to top level for easier access
+                            };
+                            onMessage(transformedMessage);
+                            break;
                         }
-
-                        const transformedMessage: Message = {
-                            id: message.id || crypto.randomUUID(),
-                            content: messageContent,
-                            sender: {
-                                identifier: message.identifier,
-                                is_owner: message.is_owner || false,
-                                name: message.agent_type || message.name || '',
-                                email: message.email || '',
-                                type: message.agent_type ? 'agent' : 'user',
-                                message_metadata: message.message_metadata || undefined
-                            },
-                            timestamp: message.timestamp,
-                            message_metadata: message.message_metadata || undefined,
-                            agent_type: message.agent_type  // Add agent_type to top level for easier access
-                        };
-                        onMessage(transformedMessage);
-                        break;
-                    }
-                    case 'typing_status': {
-                        onTypingStatus(message);
-                        break;
-                    }
-                    case 'token': {
-                        if (onToken) {
-                            onToken(message);
+                        case 'typing_status': {
+                            onTypingStatus(message);
+                            break;
                         }
-                        break;
+                        case 'token': {
+                            if (onToken) {
+                                onToken(message);
+                            }
+                            break;
+                        }
                     }
-                }
-            });
+                });
 
-            unsubscribeRef.current = unsubscribe;
+                unsubscribeRef.current = unsubscribe;
+            }
+        } catch (error) {
+            console.error('WebSocket connection error:', error);
+            setConnectionError(error instanceof Error ? error.message : 'Connection failed');
+            setWsConnected(false);
+
+            // Retry logic with exponential backoff
+            if (retryCountRef.current < maxRetries && mountedRef.current) {
+                retryCountRef.current++;
+                const retryDelay = Math.pow(2, retryCountRef.current) * 1000; // 2s, 4s, 8s
+                console.log(`Retrying connection in ${retryDelay}ms (attempt ${retryCountRef.current}/${maxRetries})`);
+                
+                retryTimeoutRef.current = setTimeout(() => {
+                    if (mountedRef.current) {
+                        connect();
+                    }
+                }, retryDelay);
+            }
         }
-    } catch (error) {
-        console.error('WebSocket connection error:', error);
-        setWsConnected(false);
-    }
-}, [conversationId, token, userId, onMessage, onTypingStatus, onToken]);
+    }, [conversationId, token, userId, userEmail, onMessage, onTypingStatus, onToken]);
 
     const sendMessage = useCallback((
         content: string, 
         messageMetadata?: MessageMetadata
     ) => {
-
-    console.log('useWebSocket sendMessage FULL CONTEXT:', {
-        content,
-        messageMetadata,
-        contentType: typeof content,
-        metadataType: typeof messageMetadata,
-        metadataKeys: messageMetadata ? Object.keys(messageMetadata) : null,
-        metadataStringified: JSON.stringify(messageMetadata)
-    });
+        console.log('useWebSocket sendMessage FULL CONTEXT:', {
+            content,
+            messageMetadata,
+            contentType: typeof content,
+            metadataType: typeof messageMetadata,
+            metadataKeys: messageMetadata ? Object.keys(messageMetadata) : null,
+            metadataStringified: JSON.stringify(messageMetadata),
+            wsConnected,
+            isServiceConnected: websocketService.isConnected
+        });
 
         if (!websocketService.isConnected) {
             console.error('Cannot send message: WebSocket not connected');
+            // Try to reconnect if not connected
+            if (!wsConnected) {
+                console.log('Attempting to reconnect...');
+                connect();
+            }
             return;
         }
 
@@ -150,7 +193,7 @@ const connect = useCallback(async () => {
         } catch (error) {
             console.error('Error sending message:', error);
         }
-    }, [conversationId, userEmail]);
+    }, [conversationId, userEmail, wsConnected, connect]);
 
     const sendTypingStatus = useCallback((isTyping: boolean) => {
         if (!websocketService.isConnected) {
@@ -179,22 +222,55 @@ const connect = useCallback(async () => {
 
         return () => {
             mountedRef.current = false;
+            if (retryTimeoutRef.current) {
+                clearTimeout(retryTimeoutRef.current);
+            }
             if (unsubscribeRef.current) {
                 unsubscribeRef.current();
             }
         };
     }, [connect]);
 
+    // Enhanced participation check
     const isAllowedToParticipate = useCallback(() => {
-        return wsConnected && (
-            userEmail || 
-            participantStorage.isParticipant(conversationId)
-        );
-    }, [wsConnected, userEmail, conversationId]);
+        // Check if we have valid authentication
+        const hasValidAuth = !!token || !!participantStorage.getSession(conversationId);
+        
+        // Check if we have user identification
+        const hasUserIdentification = !!userEmail || !!participantStorage.isParticipant(conversationId);
+        
+        console.log('=== Participation Check ===');
+        console.log('WebSocket Connected:', wsConnected);
+        console.log('Has Valid Auth:', hasValidAuth);
+        console.log('Has User Identification:', hasUserIdentification);
+        console.log('Connection Error:', connectionError);
+        console.log('Final Result:', wsConnected && hasValidAuth && hasUserIdentification);
+        
+        return wsConnected && hasValidAuth && hasUserIdentification;
+    }, [wsConnected, token, userEmail, conversationId, connectionError]);
+
+    // Debug logging
+    useEffect(() => {
+        const debugInfo = {
+            wsConnected,
+            hasToken: !!token,
+            hasUserId: !!userId,
+            hasUserEmail: !!userEmail,
+            hasParticipantSession: !!participantStorage.getSession(conversationId),
+            participantSession: participantStorage.getSession(conversationId),
+            connectionError,
+            isAllowedToParticipate: isAllowedToParticipate(),
+            websocketServiceConnected: websocketService.isConnected
+        };
+        
+        console.log('=== WebSocket Hook Debug Info ===', debugInfo);
+    }, [wsConnected, token, userId, userEmail, conversationId, connectionError, isAllowedToParticipate]);
 
     return {
         sendMessage,
         sendTypingStatus,
-        isConnected: isAllowedToParticipate()
+        isConnected: isAllowedToParticipate(),
+        connectionError,
+        wsConnected
     };
 };

@@ -1,4 +1,4 @@
-// src/app/conversations/page.tsx
+// src/app/conversations/page.tsx - Updated layout section
 'use client';
 
 import React, { useEffect, useState } from 'react';
@@ -163,7 +163,8 @@ export default function ConversationsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        // CHANGED: Single column layout instead of multi-column grid
+        <div className="max-w-4xl mx-auto space-y-4">
           {conversations.map((conversation) => (
             <Card key={conversation.id} className="hover:shadow-lg transition-shadow">
               <CardHeader>
@@ -200,23 +201,25 @@ export default function ConversationsPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-col gap-2 text-sm text-gray-600">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="h-4 w-4" />
-                    <span>{formatDate(conversation.created_at)}</span>
-                  </div>
-                  {conversation.participant_count !== undefined && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex flex-col gap-2 text-sm text-gray-600">
                     <div className="flex items-center gap-2">
-                      <Users className="h-4 w-4" />
-                      <span>{conversation.participant_count} participant{conversation.participant_count !== 1 ? 's' : ''}</span>
+                      <Calendar className="h-4 w-4" />
+                      <span>{formatDate(conversation.created_at)}</span>
                     </div>
-                  )}
+                    {conversation.participant_count !== undefined && (
+                      <div className="flex items-center gap-2">
+                        <Users className="h-4 w-4" />
+                        <span>{conversation.participant_count} participant{conversation.participant_count !== 1 ? 's' : ''}</span>
+                      </div>
+                    )}
+                  </div>
+                  <Link href={`/conversations/${conversation.id}`}>
+                    <Button variant="outline" className="w-full sm:w-auto">
+                      Open Conversation
+                    </Button>
+                  </Link>
                 </div>
-                <Link href={`/conversations/${conversation.id}`}>
-                  <Button className="w-full mt-4" variant="outline">
-                    Open Conversation
-                  </Button>
-                </Link>
               </CardContent>
             </Card>
           ))}

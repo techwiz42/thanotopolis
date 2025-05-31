@@ -1,4 +1,4 @@
-// src/app/conversations/[id]/page.tsx
+// src/app/conversations/[id]/page.tsx - Updated disabled logic section
 'use client';
 
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
@@ -230,19 +230,40 @@ export default function ConversationPage() {
   }), [conversationId, token, user?.id, user?.email, handleMessage, handleTypingStatus, handleTokenMessage]);
 
   // Using the websocket hook
-  const { sendMessage, sendTypingStatus, isConnected } = useWebSocket(wsConfig);
+  const { sendMessage, sendTypingStatus, isConnected, connectionError, wsConnected } = useWebSocket(wsConfig);
 
-  // Debug logging for MessageInput disabled state
+  // Enhanced debug logging for MessageInput disabled state
   useEffect(() => {
-    console.log('MessageInput Debug:', {
-      isConnected,
-      hasUser: !!user,
-      userEmail: user?.email,
-      hasParticipantSession: !!participantStorage.getSession(conversationId),
-      participantSession: participantStorage.getSession(conversationId),
-      isDisabled: !isConnected || (!user && !participantStorage.getSession(conversationId))
-    });
-  }, [isConnected, user, conversationId]);
+    const participantSession = participantStorage.getSession(conversationId);
+    
+    // Updated disabled logic - more permissive
+    const hasAuth = !!token || !!participantSession;
+    const hasIdentification = !!user?.email || !!participantSession?.email;
+    const isMessageInputDisabled = !isConnected || !hasAuth || !hasIdentification;
+    
+    console.log('=== Enhanced MessageInput Debug ===');
+    console.log('WebSocket Connected:', wsConnected);
+    console.log('IsConnected (final):', isConnected);
+    console.log('Connection Error:', connectionError);
+    console.log('Has Token:', !!token);
+    console.log('Has User:', !!user);
+    console.log('User Email:', user?.email);
+    console.log('Has Participant Session:', !!participantSession);
+    console.log('Participant Session:', participantSession);
+    console.log('Has Auth:', hasAuth);
+    console.log('Has Identification:', hasIdentification);
+    console.log('Is Message Input Disabled:', isMessageInputDisabled);
+    console.log('================================');
+  }, [isConnected, wsConnected, connectionError, user, conversationId, token]);
+
+  // Compute disabled state
+  const isMessageInputDisabled = useMemo(() => {
+    const participantSession = participantStorage.getSession(conversationId);
+    const hasAuth = !!token || !!participantSession;
+    const hasIdentification = !!user?.email || !!participantSession?.email;
+    
+    return !isConnected || !hasAuth || !hasIdentification;
+  }, [isConnected, token, user?.email, conversationId]);
 
   if (isLoading || messagesLoading) {
     return (
@@ -293,6 +314,15 @@ export default function ConversationPage() {
         </div>
       )}
       
+      {/* Show connection status for debugging */}
+      {connectionError && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
+          <p className="text-sm text-yellow-800">
+            Connection issue: {connectionError}
+          </p>
+        </div>
+      )}
+      
       <div className="h-[calc(100vh-200px)]">
         <Card className="h-full">
           <CardContent className="h-full p-0">
@@ -332,9 +362,16 @@ export default function ConversationPage() {
                     requestAnimationFrame(() => scrollToBottom(true));
                   }}
                   onTypingStatus={sendTypingStatus}
-                  disabled={!isConnected || (!user && !participantStorage.getSession(conversationId))}
+                  disabled={isMessageInputDisabled}
                   conversationId={conversationId}
                 />
+                
+                {/* Debug info for development */}
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="mt-2 text-xs text-gray-400">
+                    WS: {wsConnected ? '✓' : '✗'} | Connected: {isConnected ? '✓' : '✗'} | Disabled: {isMessageInputDisabled ? '✓' : '✗'}
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>

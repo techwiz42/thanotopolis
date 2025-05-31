@@ -1,5 +1,5 @@
 # backend/app/api/websockets.py
-from fastapi import APIRouter, WebSocket, Depends, HTTPException
+from fastapi import APIRouter, WebSocket, Depends, HTTPException, Query
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from sqlalchemy import select, update, and_, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,7 @@ import json
 import asyncio
 import logging
 import traceback
-from app.auth.auth import get_current_user, get_tenant_from_request
+from app.auth.auth import AuthService
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.models import User, Tenant
@@ -85,7 +85,8 @@ class ConnectionManager:
     async def _send_message(self, websocket: WebSocket, message: dict, conn_id: str):
         """Send a message to a specific websocket"""
         try:
-            await websocket.send_json(message)
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json(message)
         except Exception as e:
             logger.error(f"Error sending message to connection {conn_id}: {e}")
     
@@ -102,21 +103,29 @@ class ConnectionManager:
 # Create singleton instance
 connection_manager = ConnectionManager()
 
-async def authenticate_websocket(token: str, db: AsyncSession) -> Optional[User]:
-    """Authenticate a WebSocket connection"""
+async def authenticate_websocket_user(token: str, db: AsyncSession) -> Optional[User]:
+    """Authenticate a WebSocket connection using JWT token"""
     try:
-        # This is a simplified version - you'd use your actual auth system
-        from app.auth.auth import AuthService
-        payload = AuthService.verify_token(token)
-        user_id = payload.get("sub")
+        # Verify and decode the token
+        token_data = AuthService.decode_token(token)
+        user_id = token_data.sub
         
         if not user_id:
             return None
         
+        # Get user from database
         result = await db.execute(
-            select(User).filter(User.id == user_id)
+            select(User).where(User.id == user_id, User.is_active == True)
         )
-        return result.scalars().first()
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            logger.warning(f"User not found or inactive for token: {user_id}")
+            return None
+            
+        logger.info(f"WebSocket user authenticated: {user.email}")
+        return user
+        
     except Exception as e:
         logger.error(f"WebSocket authentication error: {e}")
         return None
@@ -160,7 +169,8 @@ async def _handle_user_message(
     db: AsyncSession,
     conversation_id: UUID,
     user: User,
-    content: str
+    content: str,
+    message_metadata: Optional[dict] = None
 ) -> None:
     """Process and broadcast user message"""
     try:
@@ -212,6 +222,7 @@ async def _handle_user_message(
             "is_owner": True,
             "email": user.email,
             "timestamp": datetime.utcnow().isoformat(),
+            "message_metadata": message_metadata,
             "user_metadata": {
                 "username": user.username,
                 "first_name": user.first_name,
@@ -222,7 +233,6 @@ async def _handle_user_message(
         await connection_manager.broadcast(conversation_id, broadcast_message)
         
         # Here you would typically save the message to database
-        # For now, we'll just log it
         logger.info(f"Message from {user.email} in conversation {conversation_id}: {content[:50]}...")
         
     except Exception as e:
@@ -241,7 +251,7 @@ async def _handle_user_message(
 async def websocket_endpoint(
     websocket: WebSocket,
     conversation_id: UUID,
-    token: str,
+    token: str = Query(...),
     db: AsyncSession = Depends(get_db)
 ):
     """Main WebSocket endpoint for conversations"""
@@ -253,8 +263,8 @@ async def websocket_endpoint(
         await websocket.accept()
         logger.info(f"WebSocket connection accepted for conversation {conversation_id}")
         
-        # Authenticate
-        user = await authenticate_websocket(token, db)
+        # Authenticate user
+        user = await authenticate_websocket_user(token, db)
         if not user:
             logger.error("WebSocket authentication failed")
             await websocket.send_json({
@@ -266,6 +276,9 @@ async def websocket_endpoint(
             return
         
         logger.info(f"User {user.email} authenticated for WebSocket")
+        
+        # TODO: Add conversation access verification here
+        # You might want to check if the user has access to this conversation
         
         # Register connection
         connection_id = await connection_manager.connect(websocket, conversation_id, user.email)
@@ -300,8 +313,9 @@ async def websocket_endpoint(
                 
                 if message_type == "message":
                     content = message.get("content")
+                    message_metadata = message.get("message_metadata")
                     if content:
-                        await _handle_user_message(db, conversation_id, user, content)
+                        await _handle_user_message(db, conversation_id, user, content, message_metadata)
                 
                 elif message_type == "typing_status":
                     is_typing = message.get("is_typing", False)
@@ -360,7 +374,8 @@ async def websocket_endpoint(
             await connection_manager.broadcast(conversation_id, leave_message)
         
         try:
-            await websocket.close()
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.close()
         except:
             pass
         
@@ -385,7 +400,7 @@ async def get_active_users(
 @router.websocket("/ws/notifications")
 async def websocket_notifications(
     websocket: WebSocket,
-    token: str,
+    token: str = Query(...),
     db: AsyncSession = Depends(get_db)
 ):
     """WebSocket endpoint for user-specific notifications"""
@@ -393,7 +408,7 @@ async def websocket_notifications(
         await websocket.accept()
         
         # Authenticate
-        user = await authenticate_websocket(token, db)
+        user = await authenticate_websocket_user(token, db)
         if not user:
             await websocket.close(code=4001, reason="Authentication failed")
             return
@@ -419,6 +434,7 @@ async def websocket_notifications(
     
     finally:
         try:
-            await websocket.close()
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.close()
         except:
             pass
