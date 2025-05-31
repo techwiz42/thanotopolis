@@ -7,6 +7,7 @@ from typing import List, Optional
 from uuid import UUID
 import json
 import uuid
+import logging
 
 from app.db.database import get_db
 from app.models.models import (
@@ -21,6 +22,9 @@ from app.schemas.schemas import (
 )
 from app.auth.auth import get_current_active_user, get_tenant_from_request
 
+# Set up logger
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 @router.post("/", response_model=ConversationResponse)
@@ -30,72 +34,99 @@ async def create_conversation(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new conversation."""
-    # Create the conversation
-    conversation = Conversation(
-        tenant_id=current_user.tenant_id,
-        title=conversation_data.title,
-        description=conversation_data.description,
-        created_by_user_id=current_user.id
-    )
-    db.add(conversation)
-    await db.flush()  # Get the conversation ID
-    
-    # Add the creator as a participant
-    creator_participant = ConversationUser(
-        conversation_id=conversation.id,
-        user_id=current_user.id
-    )
-    db.add(creator_participant)
-    
-    # Add requested users
-    for user_id in conversation_data.user_ids:
-        if user_id != current_user.id:  # Skip if already added
-            # Verify user exists and is in same tenant
-            user_result = await db.execute(
-                select(User).where(
-                    User.id == user_id,
-                    User.tenant_id == current_user.tenant_id,
-                    User.is_active == True
-                )
-            )
-            user = user_result.scalar_one_or_none()
-            if user:
-                conv_user = ConversationUser(
-                    conversation_id=conversation.id,
-                    user_id=user_id
-                )
-                db.add(conv_user)
-    
-    # Add requested agents
-    for agent_type in conversation_data.agent_types:
-        conv_agent = ConversationAgent(
+    try:
+        logger.info(f"Creating conversation for user {current_user.id} with data: {conversation_data}")
+        
+        # Create the conversation
+        conversation = Conversation(
+            tenant_id=current_user.tenant_id,
+            title=conversation_data.title,
+            description=conversation_data.description,
+            created_by_user_id=current_user.id
+        )
+        db.add(conversation)
+        await db.flush()  # Get the conversation ID
+        
+        logger.info(f"Created conversation {conversation.id} with title: {conversation.title}")
+        
+        # Add the creator as a participant
+        creator_participant = ConversationUser(
             conversation_id=conversation.id,
-            agent_type=agent_type
+            user_id=current_user.id,
+            is_active=True
         )
-        db.add(conv_agent)
-    
-    # Add requested participants
-    for participant_id in conversation_data.participant_ids:
-        # Verify participant exists and is in same tenant
-        participant_result = await db.execute(
-            select(Participant).where(
-                Participant.id == participant_id,
-                Participant.tenant_id == current_user.tenant_id
-            )
-        )
-        participant = participant_result.scalar_one_or_none()
-        if participant:
-            conv_participant = ConversationParticipant(
+        db.add(creator_participant)
+        
+        # Add requested users (with safe defaults)
+        user_ids = getattr(conversation_data, 'user_ids', None) or []
+        for user_id in user_ids:
+            if user_id != current_user.id:  # Skip if already added
+                # Verify user exists and is in same tenant
+                user_result = await db.execute(
+                    select(User).where(
+                        User.id == user_id,
+                        User.tenant_id == current_user.tenant_id,
+                        User.is_active == True
+                    )
+                )
+                user = user_result.scalar_one_or_none()
+                if user:
+                    conv_user = ConversationUser(
+                        conversation_id=conversation.id,
+                        user_id=user_id,
+                        is_active=True
+                    )
+                    db.add(conv_user)
+                    logger.info(f"Added user {user_id} to conversation {conversation.id}")
+        
+        # Add requested agents (with safe defaults)
+        agent_types = getattr(conversation_data, 'agent_types', None) or []
+        for agent_type in agent_types:
+            conv_agent = ConversationAgent(
                 conversation_id=conversation.id,
-                participant_id=participant_id
+                agent_type=agent_type,
+                is_active=True
             )
-            db.add(conv_participant)
-    
-    await db.commit()
-    await db.refresh(conversation)
-    
-    # Load relationships for response
-    return await get_conversation_with_details(conversation.id, db)
+            db.add(conv_agent)
+            logger.info(f"Added agent {agent_type} to conversation {conversation.id}")
+        
+        # Add requested participants (with safe defaults)
+        participant_ids = getattr(conversation_data, 'participant_ids', None) or []
+        for participant_id in participant_ids:
+            # Verify participant exists and is in same tenant
+            participant_result = await db.execute(
+                select(Participant).where(
+                    Participant.id == participant_id,
+                    Participant.tenant_id == current_user.tenant_id
+                )
+            )
+            participant = participant_result.scalar_one_or_none()
+            if participant:
+                conv_participant = ConversationParticipant(
+                    conversation_id=conversation.id,
+                    participant_id=participant_id,
+                    is_active=True
+                )
+                db.add(conv_participant)
+                logger.info(f"Added participant {participant_id} to conversation {conversation.id}")
+        
+        # Commit all changes
+        await db.commit()
+        await db.refresh(conversation)
+        
+        logger.info(f"Successfully saved conversation {conversation.id} to database")
+        
+        # Load relationships for response
+        result = await get_conversation_with_details(conversation.id, db)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error creating conversation: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create conversation: {str(e)}"
+        )
 
 @router.get("/", response_model=List[ConversationListResponse])
 async def list_conversations(

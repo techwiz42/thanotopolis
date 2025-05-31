@@ -11,11 +11,9 @@ import { Loader2, ChevronLeft, UserPlus } from 'lucide-react';
 
 import MessageList from '@/app/conversations/[id]/components/MessageList';
 import MessageInput from '@/app/conversations/[id]/components/MessageInput';
-// These components now exist
 import { TypingIndicator } from '@/app/conversations/[id]/components/TypingIndicator';
 import { StreamingIndicator } from '@/app/conversations/[id]/components/StreamingIndicator';
 
-// These hooks now exist
 import { useConversation } from '@/app/conversations/[id]/hooks/useConversation';
 import { useWebSocket } from '@/app/conversations/[id]/hooks/useWebSocket';
 import { useMessageLoader } from '@/app/conversations/[id]/hooks/useMessageLoader';

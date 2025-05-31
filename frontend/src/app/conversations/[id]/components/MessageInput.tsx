@@ -71,7 +71,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
             size: response.data.metadata.size,
             text_length: response.data.metadata.text_length,
             chunk_count: response.data.metadata.chunk_count,
-            is_file: true  // Add this flag to indicate it's a file
+            is_file: true
         };
 
         // Format the file content with simple text display
@@ -228,7 +228,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder={disabled ? "Message input temporarily unavailable" : "Type your message..."}
-          className="flex-grow min-h-[80px] max-h-[200px] resize-none pr-24 pl-4"
+          className="flex-grow min-h-[80px] max-h-[200px] resize-none pr-20 pl-4"
           disabled={disabled}
         />
         <div className="absolute right-12 bottom-2 flex items-center gap-2">

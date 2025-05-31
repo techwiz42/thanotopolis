@@ -1,7 +1,7 @@
 // src/services/api.ts
 
 // Use the proxy through Next.js to avoid CORS issues
-const API_BASE_URL = '';
+const API_BASE_URL = '/api';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
@@ -9,10 +9,16 @@ interface RequestOptions extends RequestInit {
 }
 
 class ApiService {
-  private baseUrl: string;
+  baseUrl: string;
+  defaults: {
+    baseURL: string;
+  };
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
+    this.defaults = {
+      baseURL: baseUrl
+    };
   }
 
   private async request<T>(
@@ -29,7 +35,7 @@ class ApiService {
     }
 
     // Get organization from localStorage if not provided
-    const organization = tenantId || localStorage.getItem('organization') || '';
+    const organization = tenantId || (typeof localStorage !== 'undefined' ? localStorage.getItem('organization') : '') || '';
 
     const finalHeaders: Record<string, string> = {
       'Content-Type': 'application/json',

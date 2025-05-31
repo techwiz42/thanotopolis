@@ -1,115 +1,412 @@
 // src/services/conversations.ts
 import { api } from './api';
-import { Conversation, ConversationListResponse, MessageResponse, ParticipantResponse } from '@/types/conversation';
 
-interface CreateConversationData {
+export interface ConversationCreateData {
   title: string;
   description?: string;
-  // Removed is_privacy_enabled
+  user_ids?: string[];
+  agent_types?: string[];
+  participant_ids?: string[];
 }
 
-interface AddParticipantData {
-  email: string;
+export interface ConversationUpdateData {
+  title?: string;
+  description?: string;
+  status?: string;
 }
 
-// Response wrapper for some endpoints that need it
-interface ConversationResponseWrapper<T> {
-  data: T;
-  message?: string;
+export interface MessageCreateData {
+  content: string;
+  message_type?: 'text' | 'file' | 'image' | 'system';
+  metadata?: Record<string, any>;
+  mention?: string;
+}
+
+export interface ConversationResponse {
+  id: string;
+  title: string;
+  description?: string;
+  status: string;
+  created_at: string;
+  updated_at?: string;
+  owner_id: string;
+  tenant_id: string;
+  created_by_user_id: string;
+  users: any[];
+  agents: any[];
+  participants: any[];
+  recent_messages: any[];
+}
+
+export interface MessageResponse {
+  id: string;
+  conversation_id: string;
+  content: string;
+  message_type: string;
+  user_id?: string;
+  agent_type?: string;
+  participant_id?: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+  updated_at?: string;
+  sender_name?: string;
+  sender_type?: string;
+}
+
+export interface ConversationListResponse {
+  id: string;
+  title: string;
+  description?: string;
+  status: string;
+  created_at: string;
+  updated_at?: string;
+  last_message?: MessageResponse;
+  participant_count: number;
+  message_count: number;
 }
 
 export const conversationService = {
-  // Get all conversations for the authenticated user
-  getConversations: async (token: string): Promise<ConversationListResponse> => {
-    const response = await api.get<ConversationListResponse>('/api/conversations', {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    return response.data;
-  },
-
-  // Get a specific conversation by ID
-  getConversation: async (conversationId: string, token: string): Promise<ConversationResponseWrapper<Conversation>> => {
-    const response = await api.get<Conversation>(`/api/conversations/${conversationId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    // Wrap the response to match expected format
-    return { data: response.data };
-  },
-
-  // Create a new conversation - backend returns conversation directly
-  createConversation: async (data: CreateConversationData, token: string): Promise<Conversation> => {
-    const response = await api.post<Conversation>('/api/conversations', data, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    // Backend returns conversation directly, not wrapped in data
-    return response.data;
-  },
-
-  // Get messages for a conversation
-  getMessages: async (conversationId: string, token: string): Promise<ConversationResponseWrapper<MessageResponse[]>> => {
-    const response = await api.get<MessageResponse[]>(`/api/conversations/${conversationId}/messages`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    return { data: response.data };
-  },
-
-  // Add a participant to a conversation
-  addParticipant: async (conversationId: string, data: AddParticipantData, token: string): Promise<ConversationResponseWrapper<ParticipantResponse>> => {
-    const response = await api.post<ParticipantResponse>(
-      `/api/conversations/${conversationId}/participants`, 
-      data,
-      {
-        headers: { Authorization: `Bearer ${token}` }
+  // Conversation CRUD
+  async createConversation(data: ConversationCreateData, token: string): Promise<ConversationResponse> {
+    try {
+      console.log('=== CREATE CONVERSATION DEBUG ===');
+      console.log('Sending conversation creation request:', data);
+      console.log('Token (first 20 chars):', token?.substring(0, 20) + '...');
+      console.log('API base URL:', api.defaults.baseURL);
+      console.log('Full URL will be:', `${api.defaults.baseURL}/conversations`);
+      
+      const response = await api.post('/conversations', data, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('Raw API response:', response);
+      console.log('Response data:', response.data);
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+      
+      return response.data;
+      
+    } catch (error: any) {
+      console.error('=== CONVERSATION CREATION ERROR ===');
+      console.error('Error object:', error);
+      console.error('Error message:', error.message);
+      
+      if (error.response) {
+        console.error('Error response status:', error.response.status);
+        console.error('Error response data:', error.response.data);
+        console.error('Error response headers:', error.response.headers);
+        console.error('Request URL that failed:', error.config?.url);
+        console.error('Full request config:', error.config);
+        
+        // Check if we got HTML instead of JSON
+        if (typeof error.response.data === 'string' && error.response.data.includes('<!DOCTYPE')) {
+          throw new Error(`API returned HTML instead of JSON. This usually means the API endpoint doesn't exist or the server isn't running. Status: ${error.response.status}`);
+        }
+        
+        throw new Error(error.response.data?.detail || error.response.data?.message || `API Error: ${error.response.status}`);
+      } else if (error.request) {
+        console.error('No response received:', error.request);
+        throw new Error('No response from server - check if the backend is running');
+      } else {
+        console.error('Request setup error:', error.message);
+        throw new Error(error.message);
       }
-    );
-    return { data: response.data };
+    }
   },
 
-  // Get participants for a conversation
-  getParticipants: async (conversationId: string, token: string): Promise<ConversationResponseWrapper<ParticipantResponse[]>> => {
-    const response = await api.get<ParticipantResponse[]>(`/api/conversations/${conversationId}/participants`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    return { data: response.data };
-  },
-
-  // Remove a participant from a conversation
-  removeParticipant: async (conversationId: string, participantId: string, token: string): Promise<ConversationResponseWrapper<void>> => {
-    const response = await api.delete<void>(
-      `/api/conversations/${conversationId}/participants/${participantId}`,
-      {
-        headers: { Authorization: `Bearer ${token}` }
+  async getConversations(token: string): Promise<ConversationListResponse[]> {
+    try {
+      console.log('=== GET CONVERSATIONS DEBUG ===');
+      console.log('Making request to /conversations endpoint');
+      console.log('Token (first 20 chars):', token?.substring(0, 20) + '...');
+      console.log('API base URL:', api.defaults.baseURL);
+      console.log('Full URL will be:', `${api.defaults.baseURL}/conversations`);
+      
+      const response = await fetch('/api/conversations', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
       }
-    );
-    return { data: response.data };
-  },
-
-  // Update conversation details
-  updateConversation: async (conversationId: string, data: Partial<CreateConversationData>, token: string): Promise<Conversation> => {
-    const response = await api.put<Conversation>(
-      `/api/conversations/${conversationId}`,
-      data,
-      {
-        headers: { Authorization: `Bearer ${token}` }
+      
+      const data = await response.json();
+      console.log('Raw conversations response:', response);
+      console.log('Response data:', data);
+      console.log('Response status:', response.status);
+      
+      return data;
+    } catch (error: any) {
+      console.error('=== GET CONVERSATIONS ERROR ===');
+      console.error('Error object:', error);
+      console.error('Error message:', error.message);
+      
+      if (error.response) {
+        console.error('Error response status:', error.response.status);
+        console.error('Error response data:', error.response.data);
+        console.error('Request URL that failed:', error.config?.url);
+        
+        // Check if we got HTML instead of JSON
+        if (typeof error.response.data === 'string' && error.response.data.includes('<!DOCTYPE')) {
+          throw new Error(`API returned HTML instead of JSON. This usually means the API endpoint doesn't exist or the server isn't running. Status: ${error.response.status}`);
+        }
       }
-    );
-    return response.data;
+      
+      throw error;
+    }
   },
 
-  // Delete a conversation
-  deleteConversation: async (conversationId: string, token: string): Promise<{status: string, message: string}> => {
-    const response = await api.delete<{status: string, message: string}>(
-      `/api/conversations/${conversationId}`,
-      {
-        headers: { Authorization: `Bearer ${token}` }
+  async getConversation(conversationId: string, token: string): Promise<{ data: ConversationResponse }> {
+    try {
+      const response = await api.get(`/conversations/${conversationId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return {
+        data: response.data
+      };
+    } catch (error) {
+      console.error('Error fetching conversation:', error);
+      throw error;
+    }
+  },
+
+  async updateConversation(conversationId: string, data: ConversationUpdateData, token: string): Promise<ConversationResponse> {
+    try {
+      const response = await api.patch(`/conversations/${conversationId}`, data, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error updating conversation:', error);
+      throw error;
+    }
+  },
+
+  async deleteConversation(conversationId: string, token: string): Promise<{ status: string; message: string }> {
+    try {
+      const response = await api.delete(`/conversations/${conversationId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+      throw error;
+    }
+  },
+
+  async searchConversations(query: string, token: string): Promise<ConversationListResponse[]> {
+    try {
+      const response = await api.get('/conversations/search', {
+        params: { q: query },
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data || [];
+    } catch (error) {
+      console.error('Error searching conversations:', error);
+      throw error;
+    }
+  },
+
+  // Message operations
+  async getMessages(conversationId: string, token: string, skip = 0, limit = 50): Promise<{ data: MessageResponse[] }> {
+    try {
+      const response = await api.get(`/conversations/${conversationId}/messages`, {
+        params: { skip, limit },
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return {
+        data: response.data || []
+      };
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+      throw error;
+    }
+  },
+
+  async sendMessage(conversationId: string, data: MessageCreateData, token: string): Promise<MessageResponse> {
+    try {
+      const response = await api.post(`/conversations/${conversationId}/messages`, data, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error sending message:', error);
+      throw error;
+    }
+  },
+
+  async getMessage(conversationId: string, messageId: string, token: string): Promise<MessageResponse> {
+    try {
+      const response = await api.get(`/conversations/${conversationId}/messages/${messageId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching message:', error);
+      throw error;
+    }
+  },
+
+  async deleteMessage(conversationId: string, messageId: string, token: string): Promise<{ status: string; message: string }> {
+    try {
+      const response = await api.delete(`/conversations/${conversationId}/messages/${messageId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      throw error;
+    }
+  },
+
+  async clearMessages(conversationId: string, token: string): Promise<{ status: string; message: string }> {
+    try {
+      const response = await api.delete(`/conversations/${conversationId}/messages`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error clearing messages:', error);
+      throw error;
+    }
+  },
+
+  // Agent operations
+  async addAgent(conversationId: string, agentData: { agent_type: string; configuration?: Record<string, any> }, token: string): Promise<{ id: string; agent_type: string; configuration?: Record<string, any> }> {
+    try {
+      const response = await api.post(`/conversations/${conversationId}/agents`, agentData, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error adding agent:', error);
+      throw error;
+    }
+  },
+
+  async getAgents(conversationId: string, token: string): Promise<Array<{ id: string; agent_type: string; configuration?: Record<string, any>; added_at: string }>> {
+    try {
+      const response = await api.get(`/conversations/${conversationId}/agents`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching agents:', error);
+      throw error;
+    }
+  },
+
+  async removeAgent(conversationId: string, agentId: string, token: string): Promise<{ status: string; message: string }> {
+    try {
+      const response = await api.delete(`/conversations/${conversationId}/agents/${agentId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error removing agent:', error);
+      throw error;
+    }
+  },
+
+  // Participant operations (Note: Backend doesn't seem to have these endpoints, you may need to implement them)
+  async addParticipant(conversationId: string, participantData: { email: string }, token: string): Promise<{ message: string }> {
+    try {
+      // This endpoint might not exist in your backend - you may need to implement it
+      // or handle participant addition differently
+      const response = await api.post(`/conversations/${conversationId}/participants`, participantData, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return {
+        message: 'Participant added successfully'
+      };
+    } catch (error) {
+      console.error('Error adding participant:', error);
+      if (error.response?.status === 404) {
+        throw new Error('Participant endpoint not implemented yet');
       }
-    );
-    return response.data;
+      if (error.response?.data?.detail) {
+        throw new Error(error.response.data.detail);
+      }
+      throw error;
+    }
   },
 
-  // Add agents to conversation (placeholder for future implementation)
-  addAgentsToConversation: async (conversationId: string, token: string): Promise<ConversationResponseWrapper<void>> => {
-    // TODO: Implement based on your agent management system
-    return { data: undefined, message: 'Agent addition not yet implemented' };
+  // Utility operations
+  async exportConversation(conversationId: string, token: string): Promise<{ thread_id: string; title: string; description?: string; created_at: string; messages: any[] }> {
+    try {
+      const response = await api.get(`/conversations/${conversationId}/export`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error exporting conversation:', error);
+      throw error;
+    }
+  },
+
+  async getConversationStats(conversationId: string, token: string): Promise<{ message_count: number; created_at: string; last_message_at?: string; agents_used: string[]; status: string; title: string }> {
+    try {
+      const response = await api.get(`/conversations/${conversationId}/stats`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching conversation stats:', error);
+      throw error;
+    }
   }
 };

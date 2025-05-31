@@ -30,7 +30,7 @@ export default function NewConversationPage() {
       hour: '2-digit', 
       minute: '2-digit' 
     });
-    return `${user?.first_name || user?.username || user?.email || 'User'} - ${dateStr} ${timeStr}`;
+    return `${user?.username || user?.email || 'User'} - ${dateStr} ${timeStr}`;
   };
 
   const [title, setTitle] = useState(generateDefaultTitle());
@@ -91,25 +91,17 @@ export default function NewConversationPage() {
       
       const conversation = await conversationService.createConversation(conversationData, token);
       
-      console.log('Create conversation response:', conversation);
-      console.log('Conversation ID:', conversation?.id);
-      
-      // Backend now returns conversation directly (not wrapped in data)
-      if (!conversation || !conversation.id) {
-        console.error('Invalid conversation response:', conversation);
-        throw new Error('Invalid response from server - missing conversation ID');
-      }
+      console.log('Conversation creation response:', conversation);
       
       const conversationId = conversation.id;
-      console.log('Successfully extracted conversation ID:', conversationId);
+      console.log('Extracted conversation ID:', conversationId);
 
       // Add participants if any
       if (participantEmails.length > 0) {
-        console.log('Adding participants:', participantEmails);
+        // Add participants one by one (you might want to create a batch endpoint)
         for (const email of participantEmails) {
           try {
             await conversationService.addParticipant(conversationId, { email }, token);
-            console.log(`Successfully added participant: ${email}`);
           } catch (error) {
             console.error(`Failed to add participant ${email}:`, error);
             toast({
@@ -127,9 +119,7 @@ export default function NewConversationPage() {
       });
 
       // Navigate to the new conversation
-      console.log('Navigating to:', `/conversations/${conversationId}`);
       router.push(`/conversations/${conversationId}`);
-      
     } catch (error) {
       console.error('Error creating conversation:', error);
       toast({

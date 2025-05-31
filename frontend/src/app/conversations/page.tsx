@@ -9,7 +9,7 @@ import { conversationService } from '@/services/conversations';
 import { Conversation } from '@/types/conversation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, MessageSquare, Plus, Users, Calendar, Trash2 } from 'lucide-react';
+import { Loader2, MessageSquare, Plus, Users, Calendar, Trash2, RotateCcw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 export default function ConversationsPage() {
@@ -29,13 +29,34 @@ export default function ConversationsPage() {
     fetchConversations();
   }, [token, router]);
 
+  // Refresh conversations when the page comes into focus
+  useEffect(() => {
+    const handleFocus = () => {
+      if (token) {
+        console.log('Page focused, refreshing conversations...');
+        fetchConversations();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [token]);
+
   const fetchConversations = async () => {
     if (!token) return;
 
     try {
       setIsLoading(true);
+      console.log('Fetching conversations with token:', token?.substring(0, 10) + '...');
+      
       const response = await conversationService.getConversations(token);
-      setConversations(response.conversations || []);
+      console.log('Conversations response:', response);
+      
+      // Backend returns array directly, not wrapped in { conversations: [...] }
+      const conversationsList = Array.isArray(response) ? response : (response.conversations || []);
+      console.log('Setting conversations:', conversationsList);
+      
+      setConversations(conversationsList);
     } catch (error) {
       console.error('Error fetching conversations:', error);
       toast({
@@ -100,14 +121,30 @@ export default function ConversationsPage() {
   return (
     <div className="container mx-auto p-4">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">My Conversations</h1>
-        <Button 
-          onClick={() => router.push('/conversations/new')}
-          className="flex items-center gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          New Conversation
-        </Button>
+        <div>
+          <h1 className="text-3xl font-bold">{user?.username || 'My'} Conversations</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {conversations.length} conversation{conversations.length !== 1 ? 's' : ''} found
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button 
+            onClick={fetchConversations}
+            variant="outline"
+            className="flex items-center gap-2"
+            disabled={isLoading}
+          >
+            <RotateCcw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button 
+            onClick={() => router.push('/conversations/new')}
+            className="flex items-center gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            New Conversation
+          </Button>
+        </div>
       </div>
 
       {conversations.length === 0 ? (
