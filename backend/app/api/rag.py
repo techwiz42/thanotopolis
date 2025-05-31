@@ -167,7 +167,7 @@ async def ingest_thread_history(
     try:
         # Verify thread ownership
         from sqlalchemy import select
-        from app.models.domain.models import Thread
+        from app.models.models import Conversation as Thread
         
         thread_result = await db.execute(
             select(Thread).where(

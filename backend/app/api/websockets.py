@@ -3,7 +3,7 @@ from fastapi import APIRouter, WebSocket, Depends, HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from sqlalchemy import select, update, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Set, Optional, List, Union, Any
+from typing import Dict, Set, Optional, List, Union, Any, Tuple
 from uuid import UUID, uuid4
 from datetime import datetime
 import json
@@ -18,13 +18,78 @@ from app.db.database import get_db
 from app.models.models import (
     User, Tenant, Message, Conversation, ConversationAgent, 
     ConversationUser, MessageType
-)
+    )
+from app.agents.agent_manager import agent_manager
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Connection tracking
 active_connections: Dict[UUID, Set[WebSocket]] = {}
 connection_lock = asyncio.Lock()
+
+async def process_conversation(
+    conversation_id: UUID,
+    message_id: UUID,
+    default_agent_type: str,
+    db: AsyncSession
+) -> Optional[Tuple[str, str]]:
+    """
+    Process a conversation message through the MODERATOR agent.
+    
+    All messages are routed to the MODERATOR agent, which will select
+    the appropriate specialist agent(s) and coordinate collaboration as needed.
+    
+    Args:
+        conversation_id: The conversation UUID
+        message_id: The message UUID to process
+        default_agent_type: Default agent type (should be "MODERATOR")
+        db: Database session
+        
+    Returns:
+        Tuple of (agent_type, response_content) or None if processing fails
+    """
+    try:
+        # Get the message content from the database
+        message_query = select(Message).where(Message.id == message_id)
+        message_result = await db.execute(message_query)
+        message = message_result.scalar_one_or_none()
+        
+        if not message:
+            logger.error(f"Message {message_id} not found")
+            return None
+            
+        message_content = message.content
+        
+        # Get the conversation to find the owner
+        conversation_query = select(Conversation).where(Conversation.id == conversation_id)
+        conversation_result = await db.execute(conversation_query)
+        conversation = conversation_result.scalar_one_or_none()
+        
+        if not conversation:
+            logger.error(f"Conversation {conversation_id} not found")
+            return None
+        
+        # Process the conversation using the agent manager
+        # The agent_manager now discovers all agents dynamically
+        # and routes everything through the MODERATOR
+        agent_type, response = await agent_manager.process_conversation(
+            message=message_content,
+            conversation_agents=[],  # Ignored - agents discovered dynamically
+            agents_config={},       # Ignored - agents use default config
+            mention=None,           # Ignored - no mention routing
+            db=db,
+            thread_id=str(conversation_id),
+            owner_id=conversation.owner_id,
+            response_callback=None  # No streaming for regular websocket messages
+        )
+        
+        return agent_type, response
+        
+    except Exception as e:
+        logger.error(f"Error processing conversation {conversation_id}: {e}")
+        logger.error(traceback.format_exc())
+        return None
 
 class ConnectionManager:
     """Manages WebSocket connections for conversations"""
@@ -208,7 +273,35 @@ async def _handle_user_message(
             await connection_manager.broadcast(conversation_id, users_message)
             return
         
-        # Save the user message to database first
+        # Check if conversation exists first
+        from sqlalchemy import select
+        conversation_query = select(Conversation).where(Conversation.id == conversation_id)
+        conversation_result = await db.execute(conversation_query)
+        conversation = conversation_result.scalar_one_or_none()
+        
+        if not conversation:
+            # If conversation doesn't exist, just broadcast without saving to DB
+            logger.warning(f"Conversation {conversation_id} not found - message will not be saved to database")
+            user_broadcast_message = {
+                "type": "message",
+                "content": content,
+                "id": message_id,
+                "identifier": user.email,
+                "is_owner": True,
+                "email": user.email,
+                "sender_name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                "sender_type": "user",
+                "timestamp": datetime.utcnow().isoformat(),
+                "user_metadata": {
+                    "username": user.username,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name
+                }
+            }
+            await connection_manager.broadcast(conversation_id, user_broadcast_message)
+            return
+            
+        # Save the user message to database
         user_message = Message(
             id=UUID(message_id),
             conversation_id=conversation_id,
@@ -220,7 +313,7 @@ async def _handle_user_message(
         db.add(user_message)
         
         # Update conversation timestamp
-        from sqlalchemy import select, update as sql_update
+        from sqlalchemy import update as sql_update
         await db.execute(
             sql_update(Conversation)
             .where(Conversation.id == conversation_id)
@@ -283,54 +376,56 @@ async def _handle_user_message(
             db.add(new_moderator)
             await db.commit()
         
-        # Process with agent
-        agent_response = await process_conversation(conversation_id, UUID(message_id), agent_type, db)
-        
-        if agent_response:
-            response_agent_type, response_content = agent_response
+        # Only process with agent if conversation exists
+        if conversation:
+            # Process with agent
+            agent_response = await process_conversation(conversation_id, UUID(message_id), agent_type, db)
             
-            # Save agent response to database
-            agent_message_id = str(uuid4())
-            agent_message = Message(
-                id=UUID(agent_message_id),
-                conversation_id=conversation_id,
-                agent_type=response_agent_type,
-                content=response_content,
-                message_type=MessageType.TEXT
-            )
-            db.add(agent_message)
-            await db.commit()
-            await db.refresh(agent_message)
-            
-            # Add agent message to buffer
-            await buffer_manager.add_message(
-                conversation_id=conversation_id,
-                message=response_content,
-                sender_id=response_agent_type,
-                sender_type="agent",
-                owner_id=user.id,  # Use the conversation owner for context
-                metadata={"agent_type": response_agent_type}
-            )
-            
-            # Broadcast agent response to all participants
-            agent_broadcast_message = {
-                "type": "message",
-                "content": response_content,
-                "id": agent_message_id,
-                "identifier": response_agent_type,
-                "is_owner": False,
-                "email": f"{response_agent_type.lower()}@thanotopolis.local",
-                "sender_name": response_agent_type,
-                "sender_type": "agent",
-                "timestamp": datetime.utcnow().isoformat(),
-                "agent_metadata": {
-                    "agent_type": response_agent_type
+            if agent_response:
+                response_agent_type, response_content = agent_response
+                
+                # Save agent response to database
+                agent_message_id = str(uuid4())
+                agent_message = Message(
+                    id=UUID(agent_message_id),
+                    conversation_id=conversation_id,
+                    agent_type=response_agent_type,
+                    content=response_content,
+                    message_type=MessageType.TEXT
+                )
+                db.add(agent_message)
+                await db.commit()
+                await db.refresh(agent_message)
+                
+                # Add agent message to buffer
+                await buffer_manager.add_message(
+                    conversation_id=conversation_id,
+                    message=response_content,
+                    sender_id=response_agent_type,
+                    sender_type="agent",
+                    owner_id=user.id,  # Use the conversation owner for context
+                    metadata={"agent_type": response_agent_type}
+                )
+                
+                # Broadcast agent response to all participants
+                agent_broadcast_message = {
+                    "type": "message",
+                    "content": response_content,
+                    "id": agent_message_id,
+                    "identifier": response_agent_type,
+                    "is_owner": False,
+                    "email": f"{response_agent_type.lower()}@thanotopolis.local",
+                    "sender_name": response_agent_type,
+                    "sender_type": "agent",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "agent_metadata": {
+                        "agent_type": response_agent_type
+                    }
                 }
-            }
-            
-            await connection_manager.broadcast(conversation_id, agent_broadcast_message)
-            
-            logger.info(f"Agent {response_agent_type} responded to message in conversation {conversation_id}")
+                
+                await connection_manager.broadcast(conversation_id, agent_broadcast_message)
+                
+                logger.info(f"Agent {response_agent_type} responded to message in conversation {conversation_id}")
         
         logger.info(f"Processed message from {user.email} in conversation {conversation_id}")
         

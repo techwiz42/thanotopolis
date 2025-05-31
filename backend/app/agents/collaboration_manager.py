@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 from agents import Agent, Runner, RunConfig, ModelSettings
 
 from app.core.config import settings
-from app.services.agents.agent_interface import agent_interface
+# agent_manager will be imported dynamically to avoid circular imports
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +274,10 @@ class CollaborationManager:
                 return
 
             # Get the primary agent instance
-            primary_agent = agent_interface.get_agent(session.thread_id, session.primary_agent_name)
+            # Import here to avoid circular imports
+            from app.agents.agent_manager import agent_manager
+            
+            primary_agent = agent_manager.get_agent(session.primary_agent_name)
             if not primary_agent:
                 logger.error(f"Primary agent {session.primary_agent_name} not found")
                 session.status = CollaborationStatus.FAILED
@@ -302,7 +305,8 @@ class CollaborationManager:
                         agent=primary_agent,
                         query=session.query,
                         is_primary=True,
-                        thread_id=session.thread_id
+                        thread_id=session.thread_id,
+                        streaming_callback=streaming_callback
                     ),
                     timeout=self.INDIVIDUAL_AGENT_TIMEOUT
                 )
@@ -321,7 +325,7 @@ class CollaborationManager:
                         logger.warning(f"Collaborating agent {collab_agent_name} not available")
                         continue
                         
-                    collab_agent = agent_interface.get_agent(session.thread_id, collab_agent_name)
+                    collab_agent = agent_manager.get_agent(collab_agent_name)
                     if not collab_agent:
                         logger.warning(f"Collaborating agent {collab_agent_name} not found")
                         continue
@@ -333,7 +337,8 @@ class CollaborationManager:
                             agent=collab_agent,
                             query=session.query,
                             is_primary=False,
-                            thread_id=session.thread_id
+                            thread_id=session.thread_id,
+                            streaming_callback=streaming_callback
                         ),
                         name=f"supporting-{collab_agent_name}-{session.collab_id}"
                     )
@@ -436,7 +441,8 @@ class CollaborationManager:
         agent: Agent,
         query: str,
         is_primary: bool,
-        thread_id: Optional[str] = None
+        thread_id: Optional[str] = None,
+        streaming_callback: Optional[Callable[[str], Awaitable[None]]] = None
     ) -> Tuple[str, str]:
         """
         Get response from a single agent for collaboration.

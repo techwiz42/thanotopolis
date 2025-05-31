@@ -19,9 +19,9 @@ from agents import (
 
 from openai import AsyncOpenAI
 from app.core.config import settings
-from app.services.agents.base_agent import BaseAgent
-from app.services.agents.common_context import CommonAgentContext
-from app.services.agents.agent_interface import agent_interface
+from app.agents.base_agent import BaseAgent
+from app.agents.common_context import CommonAgentContext
+from app.agents.agent_interface import agent_interface
 
 logger = logging.getLogger(__name__)
 

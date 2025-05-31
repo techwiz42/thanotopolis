@@ -113,6 +113,22 @@ async def log_requests(request: Request, call_next):
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     logger.warning(f"🔍 404 Not Found: {request.method} {request.url.path}")
+    
+    # Check if this is a custom HTTP exception with a detail
+    if hasattr(exc, "detail"):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": str(exc.detail)}
+        )
+    
+    # Pattern match for user endpoints
+    if "/api/users/" in request.url.path:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "User not found"}
+        )
+    
+    # Default response for path not found
     return JSONResponse(
         status_code=404,
         content={

@@ -1,11 +1,23 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TypedDict
 import logging
 from agents import Agent, WebSearchTool, function_tool, ModelSettings, RunContextWrapper
 from agents.run_context import RunContextWrapper
 from app.core.config import settings
-from app.services.agents.base_agent import BaseAgent
+from app.agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
+
+# Define typed return types
+class SearchResult(TypedDict):
+    title: str
+    content: str
+    url: Optional[str]
+    
+class KeyInformation(TypedDict, total=False):
+    text_length: str
+    summary: str
+    # Allow dynamic keys based on extraction_targets
+    general_information: Optional[str]
 
 class WebSearchAgent(BaseAgent):
     """
@@ -151,7 +163,7 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
         context: RunContextWrapper, 
         original_query: Optional[str] = None, 
         focus_area: Optional[str] = None
-    ) -> List[str]:
+    ) -> List:
         """
         Refine a search query into more effective search terms.
         
@@ -198,7 +210,7 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
     def synthesize_information(
         self, 
         context: RunContextWrapper,
-        search_results: Optional[List[Dict[str, Any]]] = None, 
+        search_results: Optional[List[SearchResult]] = None, 
         focus_question: Optional[str] = None
     ) -> str:
         """
@@ -257,7 +269,7 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
         context: RunContextWrapper,
         text: Optional[str] = None, 
         extraction_targets: Optional[List[str]] = None
-    ) -> Dict[str, str]:
+    ) -> KeyInformation:
         """
         Extract specific information from a text based on targeted extraction criteria.
         
@@ -275,14 +287,14 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
         
         logger.info(f"Extracting information with {len(extraction_targets)} targets")
         
-        results = {}
+        results: KeyInformation = {
+            "text_length": str(len(text)),
+            "summary": "A brief summary of the text would appear here."
+        }
         
         # Process the text to extract the requested information types
         for target in extraction_targets:
             results[target] = f"Extracted {target} would appear here based on analysis of the provided text."
-        
-        results["text_length"] = str(len(text))
-        results["summary"] = "A brief summary of the text would appear here."
         
         return results
 

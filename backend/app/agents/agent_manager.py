@@ -14,13 +14,12 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.buffer_manager import buffer_manager
 from app.core.input_sanitizer import input_sanitizer
-from app.services.rag.query_service import rag_query_service
-from app.services.agents.agent_interface import agent_interface
-from app.services.agents.collaboration_manager import collaboration_manager
-from app.services.agents.common_context import CommonAgentContext
-from app.services.agents.base_agent import BaseAgent
-from app.models.domain.models import Message, ThreadAgent, ThreadParticipant
-from app.services.agents.agent_calculator_tool import AgentCalculatorTool
+from app.services.rag.pgvector_query_service import pgvector_query_service
+from app.agents.collaboration_manager import collaboration_manager
+from app.agents.common_context import CommonAgentContext
+from app.agents.base_agent import BaseAgent
+from app.models.models import Message, ConversationAgent as ThreadAgent, ConversationUser as ThreadParticipant
+from app.agents.agent_calculator_tool import AgentCalculatorTool
 
 logger = logging.getLogger(__name__)
 MODEL = settings.DEFAULT_AGENT_MODEL
@@ -28,8 +27,12 @@ MAX_TURNS = settings.MAX_TURNS
 
 class AgentManager:
     def __init__(self):
-        # Initialize base agents - these are templates that will be copied for each conversation
-        self._initialize_agents()
+        # Storage for dynamically discovered agents
+        self.discovered_agents: Dict[str, Agent] = {}
+        self.agent_descriptions: Dict[str, str] = {}
+        
+        # Initialize agents by scanning the filesystem
+        self._discover_agents()
 
         # Initialize collaboration manager
         self.collaboration_manager = collaboration_manager
@@ -38,102 +41,71 @@ class AgentManager:
         # Resource management configuration
         self.LLM_TIMEOUT = 120  # Timeout for LLM operations in seconds
 
-    def _initialize_agents(self) -> None:
-        """Dynamically discover and initialize all available base agents."""
+    def _discover_agents(self) -> None:
+        """Dynamically discover all available agents by scanning the app/agents/ directory."""
         try:
             # Get the directory containing agent classes
             agents_dir = os.path.dirname(os.path.abspath(__file__))
-            logger.info(f"Looking for agents in directory: {agents_dir}")
+            logger.info(f"Scanning for agents in directory: {agents_dir}")
 
             # Track discovered agents
             discovered_agents = []
 
             # Iterate through all Python files in the agents directory
             for filename in os.listdir(agents_dir):
-                if filename.endswith('_agent.py') and filename != 'base_agent.py':
-                    module_name = filename[:-3]
+                if filename.endswith('_agent.py') or filename.endswith('agent.py'):
+                    # Skip base_agent.py and __init__.py
+                    if filename in ['base_agent.py', '__init__.py']:
+                        continue
+                        
+                    module_name = filename[:-3]  # Remove .py extension
                     try:
                         # Log every import attempt for debugging
-                        logger.info(f"Attempting to import module: {module_name}")
+                        logger.info(f"Attempting to import agent module: {module_name}")
                         
                         # Import the module using absolute import
-                        full_module_name = f'app.services.agents.{module_name}'
+                        full_module_name = f'app.agents.{module_name}'
                         module = importlib.import_module(full_module_name)
                         
                         # Log successful module import
                         logger.info(f"Successfully imported module: {full_module_name}")
 
-                        # Look for singleton instance variables (like moderator_agent)
+                        # Look for singleton instance variables first (like moderator_agent)
                         agent_var_name = module_name.replace('_agent', '_agent')
                         if hasattr(module, agent_var_name):
                             agent = getattr(module, agent_var_name)
-                            if isinstance(agent, Agent):
+                            if isinstance(agent, BaseAgent):
                                 agent_type = agent.name.replace('Agent', '').strip().upper()
-                                
-                                # Ensure tools is properly initialized
-                                if not hasattr(agent, 'tools') or agent.tools is None:
-                                    agent.tools = []
-                                    logger.info(f"Initialized empty tools list for agent: {agent_type}")
-                                
-                                # Ensure input_guardrails is initialized
-                                if not hasattr(agent, 'input_guardrails') or agent.input_guardrails is None:
-                                    agent.input_guardrails = []
-                                
-                                # Ensure output_guardrails is initialized
-                                if not hasattr(agent, 'output_guardrails') or agent.output_guardrails is None:
-                                    agent.output_guardrails = []
-                                
-                                # Ensure handoffs is initialized
-                                if not hasattr(agent, 'handoffs') or agent.handoffs is None:
-                                    agent.handoffs = []
-                                
-                                # Register with agent interface as base agent
-                                agent_interface.register_base_agent(agent_type, agent)
+                                self._register_agent(agent_type, agent)
                                 discovered_agents.append(agent_type)
-                                logger.info(f"Successfully loaded agent: {agent_type}")
-                        else:
-                            # Find all classes in the module that inherit from Agent
-                            for name, obj in inspect.getmembers(module):
-                                if (inspect.isclass(obj) and name.endswith('Agent') and 
-                                    name != 'BaseAgent' and name != 'Agent'):
+                                logger.info(f"Successfully loaded singleton agent: {agent_type}")
+                                continue
+                        
+                        # Find all classes in the module that inherit from BaseAgent
+                        for name, obj in inspect.getmembers(module):
+                            if (inspect.isclass(obj) and 
+                                name.endswith('Agent') and 
+                                name not in ['BaseAgent', 'Agent'] and
+                                self._is_base_agent_subclass(obj)):
+                                
+                                # Initialize the agent
+                                try:
+                                    agent_instance = obj()
+                                    agent_type = name.replace('Agent', '').strip().upper()
                                     
-                                    # Check inheritance
-                                    is_agent = False
-                                    for base in obj.__mro__:
-                                        if base.__name__ == 'BaseAgent' or base.__name__ == 'Agent':
-                                            is_agent = True
-                                            break
+                                    self._register_agent(agent_type, agent_instance)
+                                    discovered_agents.append(agent_type)
+                                    logger.info(f"Successfully initialized agent: {agent_type}")
+                                except Exception as init_error:
+                                    # Try to determine if this is a schema error
+                                    error_message = str(init_error)
+                                    if "additionalProperties should not be set" in error_message or "schema" in error_message.lower():
+                                        logger.warning(f"Schema error initializing agent {name}: {init_error}")
+                                        logger.warning(f"Agent {name} will be unavailable due to schema compatibility issues")
+                                    else:
+                                        logger.error(f"Error initializing agent {name}: {init_error}")
+                                        logger.error(traceback.format_exc())
                                     
-                                    if is_agent:
-                                        # Initialize the agent
-                                        try:
-                                            agent_instance = obj()
-                                            agent_type = name.replace('Agent', '').strip().upper()
-                                            
-                                            # Ensure tools is properly initialized
-                                            if not hasattr(agent_instance, 'tools') or agent_instance.tools is None:
-                                                agent_instance.tools = []
-                                                logger.info(f"Initialized empty tools list for agent: {agent_type}")
-                                            
-                                            # Ensure input_guardrails is initialized
-                                            if not hasattr(agent_instance, 'input_guardrails') or agent_instance.input_guardrails is None:
-                                                agent_instance.input_guardrails = []
-                                            
-                                            # Ensure output_guardrails is initialized
-                                            if not hasattr(agent_instance, 'output_guardrails') or agent_instance.output_guardrails is None:
-                                                agent_instance.output_guardrails = []
-                                            
-                                            # Ensure handoffs is initialized
-                                            if not hasattr(agent_instance, 'handoffs') or agent_instance.handoffs is None:
-                                                agent_instance.handoffs = []
-                                            
-                                            # Register with agent interface as base agent
-                                            agent_interface.register_base_agent(agent_type, agent_instance)
-                                            discovered_agents.append(agent_type)
-                                            logger.info(f"Successfully initialized agent: {agent_type}")
-                                        except Exception as init_error:
-                                            logger.error(f"Error initializing agent {name}: {init_error}")
-                                            logger.error(traceback.format_exc())
                     except ImportError as ie:
                         logger.error(f"Import error for module {module_name}: {ie}")
                         logger.error(traceback.format_exc())
@@ -147,30 +119,72 @@ class AgentManager:
             logger.info(f"Agent discovery complete, found {len(discovered_agents)} agents")
             logger.info(f"Agent types: {discovered_agents}")
 
-            # Verify required agents are available - with more flexible error handling
+            # Verify required agents are available
             if not discovered_agents:
                 logger.error("No agents were discovered!")
                 raise RuntimeError("No agents were discovered")
                 
-            # Make the MODERATOR requirement conditional
+            # Make the MODERATOR requirement conditional but warn if missing
             if 'MODERATOR' not in discovered_agents:
                 logger.warning("MODERATOR agent is missing, some functionality may be limited")
                 
-            logger.info(f"Successfully initialized {len(discovered_agents)} base agents")
+            logger.info(f"Successfully discovered {len(discovered_agents)} agents")
 
         except Exception as e:
-            logger.error(f"Error initializing agents: {e}")
+            logger.error(f"Error discovering agents: {e}")
             logger.error(traceback.format_exc())
-            # Let the original error propagate with more details
             raise RuntimeError(f"Failed to initialize agent system: {str(e)}")
 
+    def _is_base_agent_subclass(self, obj) -> bool:
+        """Check if a class is a subclass of BaseAgent."""
+        try:
+            # Check inheritance chain
+            for base in obj.__mro__:
+                if base.__name__ == 'BaseAgent':
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _register_agent(self, agent_type: str, agent: Agent) -> None:
+        """Register an agent with proper initialization."""
+        # Ensure tools is properly initialized
+        if not hasattr(agent, 'tools') or agent.tools is None:
+            agent.tools = []
+            logger.info(f"Initialized empty tools list for agent: {agent_type}")
+        
+        # Ensure input_guardrails is initialized
+        if not hasattr(agent, 'input_guardrails') or agent.input_guardrails is None:
+            agent.input_guardrails = []
+        
+        # Ensure output_guardrails is initialized
+        if not hasattr(agent, 'output_guardrails') or agent.output_guardrails is None:
+            agent.output_guardrails = []
+        
+        # Ensure handoffs is initialized
+        if not hasattr(agent, 'handoffs') or agent.handoffs is None:
+            agent.handoffs = []
+        
+        # Store the agent
+        self.discovered_agents[agent_type] = agent
+        
+        # Store description if available
+        if hasattr(agent, 'description') and agent.description:
+            self.agent_descriptions[agent_type] = str(agent.description)
+        else:
+            self.agent_descriptions[agent_type] = f"{agent_type} agent"
+
     def get_agent_descriptions(self) -> Dict[str, str]:
-        """Get descriptions for all available base agents."""
-        return agent_interface.get_agent_descriptions()
+        """Get descriptions for all discovered agents."""
+        return self.agent_descriptions.copy()
 
     def get_available_agents(self) -> List[str]:
-        """Get list of all available base agent types."""
-        return agent_interface.get_agent_types()
+        """Get list of all discovered agent types."""
+        return list(self.discovered_agents.keys())
+
+    def get_agent(self, agent_type: str) -> Optional[Agent]:
+        """Get an agent instance by type."""
+        return self.discovered_agents.get(agent_type.upper())
 
     def _resolve_agent_name(self, requested_name: str, available_agents: List[str]) -> str:
         """
@@ -314,11 +328,12 @@ class AgentManager:
                     logger.error(f"Error retrieving conversation history: {e}")
                     logger.error(traceback.format_exc())
 
-            # Get RAG context if available (keep this unchanged)
-            if owner_id:
+            # Get RAG context if available
+            if owner_id and db:
                 try:
-                    context.rag_results = await rag_query_service.query_knowledge(
-                        owner_id=str(owner_id),
+                    context.rag_results = await pgvector_query_service.query_knowledge(
+                        db=db,
+                        owner_id=owner_id,
                         query_text=message,
                         k=10
                     )
@@ -327,17 +342,8 @@ class AgentManager:
                     logger.error(f"Error retrieving RAG context: {e}")
                     logger.error(traceback.format_exc())
 
-            # Add available agents to context (keep this unchanged)
-            if thread_id:
-                # Get agent types for this conversation
-                agent_types = agent_interface.get_agent_types(thread_id)
-
-                # Get descriptions for these agent types
-                all_descriptions = self.get_agent_descriptions()
-                context.available_agents = {
-                    agent_type: all_descriptions.get(agent_type, f"{agent_type} agent")
-                    for agent_type in agent_types
-                }
+            # Add available agents to context
+            context.available_agents = self.get_agent_descriptions()
 
             return context
 
@@ -350,68 +356,47 @@ class AgentManager:
         self,
         message: str,
         context: CommonAgentContext,
-        thread_id: str,
-        mention: Optional[str] = None
+        thread_id: str
     ) -> str:
         """
         Select the appropriate agent to handle the message.
+        All messages are routed through the MODERATOR agent for selection.
         
         Args:
             message: The user's query message
             context: The conversation context
             thread_id: The thread identifier for this conversation
-            mention: Optional mentioned agent
             
         Returns:
             The primary agent type for handling the query
         """
         try:
-            # Get available agent types for this thread
-            available_agents = agent_interface.get_agent_types(thread_id)
+            # Get available agent types
+            available_agents = self.get_available_agents()
             
             # Handle empty agent list
             if not available_agents:
                 logger.error("No agents available for selection")
                 raise ValueError("No agents available for selection")
             
-            # 1. If there's an explicit mention and it's valid, use that agent directly
-            if mention:
-                # Try exact match first
-                normalized_mention = mention.upper()
-                if normalized_mention in available_agents:
-                    logger.info(f"Using explicitly mentioned agent: {normalized_mention}")
-                    context.selected_agent = normalized_mention
-                    return normalized_mention
-                    
-                # Try more flexible matching if not an exact match
-                for agent_name in available_agents:
-                    if agent_name.upper().startswith(normalized_mention) or normalized_mention in agent_name.upper():
-                        logger.info(f"Using fuzzy-matched mentioned agent: {agent_name} (from '{mention}')")
-                        context.selected_agent = agent_name
-                        return agent_name
-                        
-                # If still no match, log warning and fall through to automated selection
-                logger.warning(f"Mentioned agent '{mention}' not found in available agents: {available_agents}")
-            
-            # 2. Use the moderator to make a SINGLE agent selection attempt - with timeout protection
+            # Always use the MODERATOR agent for selection
             if "MODERATOR" in available_agents:
-                moderator = agent_interface.get_agent(thread_id, "MODERATOR")
+                moderator = self.get_agent("MODERATOR")
                 
                 if moderator:
                     try:
-                        # Use a direct tool call first with a strict timeout
+                        # Use a direct tool call with timeout protection
                         select_tool = next((t for t in moderator.tools 
                                            if hasattr(t, 'name') and t.name == 'select_agent'), None)
                         
                         if select_tool and hasattr(select_tool, 'on_invoke_tool'):
                             try:
-                                # Use asyncio.wait_for to add a timeout on the tool call
+                                # Call with strict timeout to prevent hangs
                                 tool_input = json.dumps({
                                     "query": message,
                                     "available_agents": ",".join(available_agents)
                                 })
                                 
-                                # Call with strict timeout to prevent hangs
                                 result_str = await asyncio.wait_for(
                                     select_tool.on_invoke_tool(context, tool_input), 
                                     timeout=5.0  # 5 second timeout
@@ -435,7 +420,7 @@ class AgentManager:
                                         context.is_agent_selection = True
                                         context.selected_agent = primary_agent
                                         
-                                        logger.info(f"Selected primary agent: {primary_agent} with collaborators: {supporting_agents}")
+                                        logger.info(f"MODERATOR selected primary agent: {primary_agent} with collaborators: {supporting_agents}")
                                         return primary_agent
                                 except json.JSONDecodeError:
                                     logger.warning(f"Could not parse agent selection result: {result_str}")
@@ -447,28 +432,13 @@ class AgentManager:
                         logger.error(f"Error using moderator for agent selection: {e}")
                         logger.error(traceback.format_exc())
             
-            # 3. Fallback selection: if we couldn't use moderator's tool, make a simple selection
-            # based on query keywords if possible
-            query_keywords = message.lower().split()
-            for agent in available_agents:
-                # Skip MODERATOR for keyword matching
-                if agent == "MODERATOR":
-                    continue
-                    
-                # Check if agent type keywords appear in the query
-                agent_name_keywords = agent.lower().split('_')
-                if any(keyword in query_keywords for keyword in agent_name_keywords):
-                    logger.info(f"Selected agent {agent} based on keyword match")
-                    context.selected_agent = agent
-                    return agent
-            
-            # 4. Fallback to MODERATOR if available
+            # Fallback: use MODERATOR if available, otherwise first agent
             if "MODERATOR" in available_agents:
                 logger.info("Using fallback selection: MODERATOR")
                 context.selected_agent = "MODERATOR"
                 return "MODERATOR"
             
-            # 5. Last resort: use first available agent
+            # Last resort: use first available agent
             first_agent = available_agents[0]
             logger.warning(f"Using first available agent as last resort: {first_agent}")
             context.selected_agent = first_agent
@@ -479,7 +449,7 @@ class AgentManager:
             logger.error(traceback.format_exc())
             
             # Find a fallback agent
-            available_agents = agent_interface.get_agent_types(thread_id)
+            available_agents = self.get_available_agents()
             if "MODERATOR" in available_agents:
                 return "MODERATOR"
             elif available_agents:
@@ -490,9 +460,9 @@ class AgentManager:
     async def process_conversation(
         self,
         message: str,
-        conversation_agents: List[str],
-        agents_config: Dict[str, Any],
-        mention: Optional[str] = None,
+        conversation_agents: List[str],  # This parameter is now ignored
+        agents_config: Dict[str, Any],   # This parameter is now ignored
+        mention: Optional[str] = None,   # This parameter is now ignored
         db: Optional[Any] = None,
         thread_id: Optional[str] = None,
         owner_id: Optional[UUID] = None,
@@ -501,14 +471,14 @@ class AgentManager:
         """
         Process a user message with the appropriate agent.
 
-        This method uses the Agent SDK's built-in handoff mechanism to route
-        queries to the appropriate specialist agent, with proper conversation isolation.
+        All messages are routed through the MODERATOR agent, which will select
+        the appropriate specialist agent or combination of agents to respond.
 
         Args:
             message: The user's message
-            conversation_agents: List of available agent types for this conversation
-            agents_config: Configuration for the agents
-            mention: Optional mentioned agent
+            conversation_agents: IGNORED - agents are discovered dynamically
+            agents_config: IGNORED - agents use default configuration
+            mention: IGNORED - no mention routing
             db: Optional database session
             thread_id: Optional thread ID
             owner_id: Optional owner ID
@@ -538,14 +508,9 @@ class AgentManager:
             if not thread_id:
                 thread_id = f"anonymous_{id(message)}"  # Generate a temporary ID if none provided
                 logger.warning(f"No thread ID provided, using generated ID: {thread_id}")
-                
-            # Normalize agent types
-            normalized_agents = [agent.upper() for agent in conversation_agents]
-            
-            # Set up conversation-specific agents
-            agent_interface.setup_conversation(thread_id, normalized_agents)
            
-            available_agents = agent_interface.get_agent_types(thread_id)
+            # Get all available agents (discovered dynamically)
+            available_agents = self.get_available_agents()
 
             # Prepare the context for processing - use original message for RAG retrieval
             context = await self._prepare_context(
@@ -566,15 +531,14 @@ class AgentManager:
             primary_agent_type = await self._select_agent(
                 message=message,  # Using original for agent selection is safe
                 context=context,
-                thread_id=thread_id,
-                mention=mention
+                thread_id=thread_id
             )
             
-            # Get the conversation-specific agent instance
-            primary_agent = agent_interface.get_agent(thread_id, primary_agent_type)
+            # Get the agent instance
+            primary_agent = self.get_agent(primary_agent_type)
             
             if not primary_agent:
-                logger.error(f"Could not find agent {primary_agent_type} for conversation {thread_id}")
+                logger.error(f"Could not find agent {primary_agent_type}")
                 return "MODERATOR", "I encountered an error processing your request: Agent not available"
                 
             # PHASE 2: RESPONSE GENERATION
@@ -811,7 +775,7 @@ class AgentManager:
             if not collaborators:
                 logger.warning("Collaboration requested but no collaborators specified")
                 # Fall back to standard agent response
-                primary_agent = agent_interface.get_agent(thread_id, primary_agent_type)
+                primary_agent = self.get_agent(primary_agent_type)
                 if not primary_agent:
                     raise ValueError(f"Primary agent {primary_agent_type} not found")
                 # Apply calculator normalization to the already-sanitized message
@@ -828,13 +792,11 @@ class AgentManager:
                 )
                 return result.final_output
 
-            # Removed collaboration notification message
-
             # Initiate collaboration through the collaboration manager - using sanitized message
             collab_id = await self.collaboration_manager.initiate_collaboration(
                 query=message,  # This is already the sanitized and wrapped message
                 primary_agent_name=primary_agent_type,
-                available_agents=agent_interface.get_agent_types(thread_id),
+                available_agents=self.get_available_agents(),
                 collaborating_agents=collaborators,
                 thread_id=thread_id,
                 streaming_callback=response_callback
