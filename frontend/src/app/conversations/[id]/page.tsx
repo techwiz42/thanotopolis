@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -40,7 +40,6 @@ interface TypingState {
 export default function ConversationPage() {
   const params = useParams();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { token, user } = useAuth();
   const { toast } = useToast();
   const conversationId = params.id as string;
@@ -48,7 +47,6 @@ export default function ConversationPage() {
   const [hideAwaitingMessage, setHideAwaitingMessage] = useState<boolean>(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [email, setEmail] = useState('');
-  const isPrivacyEnabled: boolean = searchParams.get('privacy') === 'true';
   
   // Streaming tokens handling
   const { streamingState, handleToken, resetStreamingForAgent } = useStreamingTokens();
@@ -338,7 +336,6 @@ export default function ConversationPage() {
                   onTypingStatus={sendTypingStatus}
                   disabled={!isConnected || (!user && !participantStorage.getSession(conversationId))}
                   conversationId={conversationId}
-                  isPrivacyEnabled={isPrivacyEnabled}
                 />
               </div>
             </div>

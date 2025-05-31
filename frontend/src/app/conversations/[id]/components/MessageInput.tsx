@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useEffect, useRef, ChangeEvent, DragEvent } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-import { Send, EyeOff, Paperclip, Loader2 } from 'lucide-react';
+import { Send, Paperclip, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/services/api';
 import { useToast } from '@/components/ui/use-toast';
@@ -13,15 +13,13 @@ export interface MessageInputProps {
   onTypingStatus?: (isTyping: boolean) => void;
   disabled?: boolean;
   conversationId: string;
-  isPrivacyEnabled?: boolean;
 }
 
 const MessageInput: React.FC<MessageInputProps> = ({ 
   onSendMessage,
   onTypingStatus,
   disabled = false,
-  conversationId,
-  isPrivacyEnabled
+  conversationId
 }: MessageInputProps) => {
   const [message, setMessage] = useState('');
   const [messageMetadata, setMessageMetadata] = useState<MessageMetadata | null>(null);
@@ -254,11 +252,6 @@ const MessageInput: React.FC<MessageInputProps> = ({
               <Paperclip className="h-4 w-4 text-gray-500" />
             )}
           </Button>
-          {isPrivacyEnabled && (
-            <div className="bg-purple-100 p-2 rounded-full">
-              <EyeOff className="h-4 w-4 text-purple-600" />
-            </div>
-          )}
         </div>
         <Button 
           onClick={handleSend}

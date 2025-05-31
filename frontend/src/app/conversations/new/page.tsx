@@ -30,7 +30,7 @@ export default function NewConversationPage() {
       hour: '2-digit', 
       minute: '2-digit' 
     });
-    return `${user?.name || user?.email || 'User'} - ${dateStr} ${timeStr}`;
+    return `${user?.first_name || user?.username || user?.email || 'User'} - ${dateStr} ${timeStr}`;
   };
 
   const [title, setTitle] = useState(generateDefaultTitle());
@@ -38,7 +38,6 @@ export default function NewConversationPage() {
   const [participantEmails, setParticipantEmails] = useState<string[]>([]);
   const [currentEmail, setCurrentEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isPrivacyEnabled, setIsPrivacyEnabled] = useState(false);
 
   const handleAddEmail = () => {
     const trimmedEmail = currentEmail.trim();
@@ -85,19 +84,32 @@ export default function NewConversationPage() {
       // Create the conversation
       const conversationData = {
         title: title.trim() || generateDefaultTitle(),
-        description: description.trim(),
-        is_privacy_enabled: isPrivacyEnabled
+        description: description.trim()
       };
 
-      const response = await conversationService.createConversation(conversationData, token);
-      const conversationId = response.data.id;
+      console.log('Creating conversation with data:', conversationData);
+      
+      const conversation = await conversationService.createConversation(conversationData, token);
+      
+      console.log('Create conversation response:', conversation);
+      console.log('Conversation ID:', conversation?.id);
+      
+      // Backend now returns conversation directly (not wrapped in data)
+      if (!conversation || !conversation.id) {
+        console.error('Invalid conversation response:', conversation);
+        throw new Error('Invalid response from server - missing conversation ID');
+      }
+      
+      const conversationId = conversation.id;
+      console.log('Successfully extracted conversation ID:', conversationId);
 
       // Add participants if any
       if (participantEmails.length > 0) {
-        // Add participants one by one (you might want to create a batch endpoint)
+        console.log('Adding participants:', participantEmails);
         for (const email of participantEmails) {
           try {
             await conversationService.addParticipant(conversationId, { email }, token);
+            console.log(`Successfully added participant: ${email}`);
           } catch (error) {
             console.error(`Failed to add participant ${email}:`, error);
             toast({
@@ -109,20 +121,15 @@ export default function NewConversationPage() {
         }
       }
 
-      // TODO: Add all available agents to the conversation
-      // This will be implemented based on your agent management system
-      // For now, we'll just add a comment indicating where this should go
-      
-      // await conversationService.addAgentsToConversation(conversationId, token);
-
       toast({
         title: "Success",
         description: "Conversation created successfully",
       });
 
       // Navigate to the new conversation
-      const privacyParam = isPrivacyEnabled ? '?privacy=true' : '';
-      router.push(`/conversations/${conversationId}${privacyParam}`);
+      console.log('Navigating to:', `/conversations/${conversationId}`);
+      router.push(`/conversations/${conversationId}`);
+      
     } catch (error) {
       console.error('Error creating conversation:', error);
       toast({
@@ -201,19 +208,6 @@ export default function NewConversationPage() {
                 ))}
               </div>
             )}
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="privacy"
-              checked={isPrivacyEnabled}
-              onChange={(e) => setIsPrivacyEnabled(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <Label htmlFor="privacy" className="cursor-pointer">
-              Enable privacy mode for this conversation
-            </Label>
           </div>
 
           <div className="flex gap-2 pt-4">

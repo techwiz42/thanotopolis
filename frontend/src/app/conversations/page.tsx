@@ -1,5 +1,4 @@
-// Alternative version without alert-dialog
-// src/app/conversations/page.tsx (simplified version)
+// src/app/conversations/page.tsx
 'use client';
 
 import React, { useEffect, useState } from 'react';
@@ -175,13 +174,8 @@ export default function ConversationsPage() {
                       <span>{conversation.participant_count} participant{conversation.participant_count !== 1 ? 's' : ''}</span>
                     </div>
                   )}
-                  {conversation.is_privacy_enabled && (
-                    <div className="text-purple-600 font-medium">
-                      Privacy Mode Enabled
-                    </div>
-                  )}
                 </div>
-                <Link href={`/conversations/${conversation.id}${conversation.is_privacy_enabled ? '?privacy=true' : ''}`}>
+                <Link href={`/conversations/${conversation.id}`}>
                   <Button className="w-full mt-4" variant="outline">
                     Open Conversation
                   </Button>
