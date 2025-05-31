@@ -2,6 +2,7 @@
 import './globals.css'
 import React from 'react'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { ToastProvider } from '@/components/ui/use-toast'
 import MainLayout from '@/components/MainLayout'
 
 export const metadata = {
@@ -18,9 +19,11 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <AuthProvider>
-          <MainLayout>
-            {children}
-          </MainLayout>
+          <ToastProvider>
+            <MainLayout>
+              {children}
+            </MainLayout>
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>

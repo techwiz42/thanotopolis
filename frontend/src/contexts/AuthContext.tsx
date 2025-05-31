@@ -2,6 +2,7 @@
 'use client'
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 // Types
 interface User {
@@ -26,6 +27,7 @@ interface AuthTokens {
 interface AuthContextType {
   user: User | null
   tokens: AuthTokens | null
+  token: string | null // Added for backward compatibility with conversation feature
   organization: string | null
   login: (email: string, password: string) => Promise<void>
   register: (data: RegisterData) => Promise<void>
@@ -62,6 +64,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [tokens, setTokens] = useState<AuthTokens | null>(null)
   const [organization, setOrganization] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const router = useRouter()
+
+  // Computed property for backward compatibility
+  const token = tokens?.access_token || null
 
   useEffect(() => {
     const loadStoredAuth = () => {
@@ -105,33 +111,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   const login = async (email: string, password: string) => {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email,
-        password
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password
+        })
       })
-    })
 
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || 'Login failed')
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Login failed')
+      }
+
+      const authResponse = await response.json()
+      const { access_token, refresh_token, token_type, organization_subdomain } = authResponse
+      
+      const authTokens = { access_token, refresh_token, token_type }
+      setTokens(authTokens)
+      setOrganization(organization_subdomain)
+      
+      localStorage.setItem('tokens', JSON.stringify(authTokens))
+      localStorage.setItem('organization', organization_subdomain)
+      
+      await fetchUser(access_token, organization_subdomain)
+      
+      // Redirect to conversations after successful login
+      router.push('/conversations')
+    } catch (error) {
+      console.error('Login error:', error)
+      throw error
     }
-
-    const authResponse = await response.json()
-    const { access_token, refresh_token, token_type, organization_subdomain } = authResponse
-    
-    const authTokens = { access_token, refresh_token, token_type }
-    setTokens(authTokens)
-    setOrganization(organization_subdomain)
-    
-    localStorage.setItem('tokens', JSON.stringify(authTokens))
-    localStorage.setItem('organization', organization_subdomain)
-    
-    await fetchUser(access_token, organization_subdomain)
   }
 
   const register = async (data: RegisterData) => {
@@ -181,10 +195,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOrganization(null)
     localStorage.removeItem('tokens')
     localStorage.removeItem('organization')
+    
+    // Redirect to login page
+    router.push('/login')
   }
 
   return (
-    <AuthContext.Provider value={{ user, tokens, organization, login, register, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, tokens, token, organization, login, register, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   )
