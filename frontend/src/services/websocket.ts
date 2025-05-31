@@ -29,29 +29,24 @@ class WebSocketService {
     this.token = token;
     this.userId = userId;
 
-    // Build the correct WebSocket URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = process.env.NEXT_PUBLIC_WS_HOST || window.location.hostname;
-    const port = process.env.NEXT_PUBLIC_WS_PORT || (window.location.protocol === 'https:' ? '443' : '8000');
+    // Fix the WebSocket URL construction
+    let wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
     
-    // Construct base WebSocket URL
-    let wsBaseUrl: string;
-    if (process.env.NEXT_PUBLIC_WS_URL) {
-      wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL;
-    } else {
-      wsBaseUrl = `${protocol}//${host}:${port}`;
+    // Remove any trailing /ws from the base URL to avoid duplication
+    if (wsBaseUrl.endsWith('/ws')) {
+      wsBaseUrl = wsBaseUrl.slice(0, -3);
     }
     
     const organization = localStorage.getItem('organization') || '';
     
-    // Build query parameters
+    // Include organization in WebSocket connection params
     const queryParams = new URLSearchParams({
       token: token,
       user_id: userId,
       ...(organization && { tenant_id: organization })
     });
     
-    // Construct the correct URL path to match backend: /api/ws/conversations/{id}
+    // Fixed: Use the correct path structure
     const url = `${wsBaseUrl}/api/ws/conversations/${conversationId}?${queryParams.toString()}`;
 
     console.log('Connecting to WebSocket:', url);
@@ -61,7 +56,7 @@ class WebSocketService {
         this.ws = new WebSocket(url);
 
         this.ws.onopen = () => {
-          console.log('WebSocket connected successfully');
+          console.log('WebSocket connected');
           this.reconnectAttempts = 0;
           resolve();
         };
@@ -83,9 +78,7 @@ class WebSocketService {
 
         this.ws.onclose = (event) => {
           console.log('WebSocket closed:', event.code, event.reason);
-          if (event.code !== 1000) { // 1000 is normal closure
-            this.handleReconnect();
-          }
+          this.handleReconnect();
         };
       } catch (error) {
         console.error('Error creating WebSocket:', error);
@@ -102,15 +95,12 @@ class WebSocketService {
       setTimeout(() => {
         this.connect(this.conversationId!, this.token!, this.userId!).catch(console.error);
       }, this.reconnectDelay * this.reconnectAttempts);
-    } else {
-      console.error('Max reconnection attempts reached or missing connection info');
     }
   }
 
   disconnect(): void {
-    this.reconnectAttempts = this.maxReconnectAttempts; // Prevent reconnection
     if (this.ws) {
-      this.ws.close(1000, 'User disconnected'); // Normal closure
+      this.ws.close();
       this.ws = null;
     }
     this.messageHandlers.clear();
@@ -122,13 +112,7 @@ class WebSocketService {
   }
 
   private notifyHandlers(message: WebSocketMessage): void {
-    this.messageHandlers.forEach(handler => {
-      try {
-        handler(message);
-      } catch (error) {
-        console.error('Error in message handler:', error);
-      }
-    });
+    this.messageHandlers.forEach(handler => handler(message));
   }
 
   sendMessage(content: string, senderEmail: string, metadata?: MessageMetadata): void {
@@ -149,8 +133,7 @@ class WebSocketService {
 
   sendTypingStatus(isTyping: boolean, senderEmail: string): void {
     if (!this.isConnected) {
-      console.warn('Cannot send typing status: WebSocket is not connected');
-      return;
+      throw new Error('WebSocket is not connected');
     }
 
     const message = {
