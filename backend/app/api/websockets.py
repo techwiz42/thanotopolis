@@ -404,7 +404,13 @@ async def _handle_user_message(
                     conversation_id=conversation_id,
                     agent_type=response_agent_type,
                     content=response_content,
-                    message_type=MessageType.TEXT
+                    message_type=MessageType.TEXT,
+                    # Store agent metadata in additional_data for proper retrieval later
+                    additional_data=json.dumps({
+                        "agent_type": response_agent_type,
+                        "message_type": "agent",
+                        "sender_type": "agent"
+                    })
                 )
                 db.add(agent_message)
                 await db.commit()
@@ -415,9 +421,12 @@ async def _handle_user_message(
                     conversation_id=conversation_id,
                     message=response_content,
                     sender_id=response_agent_type,
-                    sender_type="agent",
+                    sender_type="agent",  # This MUST be "agent" for frontend to recognize it correctly
                     owner_id=user.id,  # Use the conversation owner for context
-                    metadata={"agent_type": response_agent_type}
+                    metadata={
+                        "agent_type": response_agent_type,
+                        "message_type": "agent"  # Add message_type consistently for all agent messages
+                    }
                 )
                 
                 # Broadcast agent response to all participants
@@ -435,7 +444,8 @@ async def _handle_user_message(
                     "timestamp": datetime.utcnow().isoformat(),
                     "agent_metadata": {
                         "agent_type": response_agent_type,
-                        "message_type": "agent"  # Add to metadata as well for consistency
+                        "message_type": "agent",  # Add to metadata as well for consistency
+                        "sender_type": "agent"    # Ensure consistent sender_type
                     }
                 }
                 
@@ -526,10 +536,57 @@ async def websocket_endpoint(
                 sender_type = "system"
                 sender_name = "System"
                 
-                if msg.agent_type:
-                    # Check for agent_type first as it takes precedence
-                    sender_type = "agent"
-                    sender_name = msg.agent_type
+                # Parse message metadata from additional_data if available
+                metadata = None
+                if msg.additional_data:
+                    try:
+                        import json
+                        if isinstance(msg.additional_data, str):
+                            metadata = json.loads(msg.additional_data)
+                        else:
+                            metadata = msg.additional_data
+                    except:
+                        pass
+                
+                # Use message_metadata property which handles JSON parsing
+                if not metadata and msg.message_metadata:
+                    metadata = msg.message_metadata
+                
+                # Check if this is an agent message based on either agent_type OR metadata
+                if msg.agent_type or (metadata and metadata.get("agent_type")):
+                    # This is an agent message, ensure it's recognized as such
+                    sender_type = "agent"  # This MUST be "agent" for frontend to recognize it correctly
+                    agent_type = msg.agent_type or metadata.get("agent_type", "ASSISTANT")
+                    sender_name = agent_type
+                    
+                    # We'll add message_type field explicitly for agent messages
+                    message_data = {
+                        "type": "message",
+                        "content": msg.content,
+                        "id": str(msg.id),
+                        "sender_name": agent_type,
+                        "sender_type": "agent",  # Critical field - must be "agent"
+                        "message_type": "agent", # Explicitly identify as agent message
+                        "timestamp": msg.created_at.isoformat(),
+                        "is_history": True,
+                        "agent_type": agent_type,
+                        "identifier": agent_type,
+                        "is_owner": False,
+                        "email": f"{agent_type.lower()}@thanotopolis.local",
+                        "agent_metadata": {
+                            "agent_type": agent_type,
+                            "message_type": "agent",
+                            "sender_type": "agent"  # Ensure consistent sender_type
+                        }
+                    }
+                    
+                    # Include any additional metadata from the message
+                    if metadata and isinstance(metadata, dict):
+                        message_data["agent_metadata"].update(metadata)
+                    
+                    # Send message to this client only and continue to the next message
+                    await websocket.send_json(message_data)
+                    continue
                 elif msg.user_id:
                     sender_type = "user"
                     sender_name = "Unknown User"
@@ -563,21 +620,7 @@ async def websocket_endpoint(
                         participant = part_result.scalar_one_or_none()
                         sender_name = participant.name or participant.identifier if participant else "Unknown Participant"
                 
-                # Format metadata
-                metadata = None
-                if msg.additional_data:
-                    try:
-                        import json
-                        if isinstance(msg.additional_data, str):
-                            metadata = json.loads(msg.additional_data)
-                        else:
-                            metadata = msg.additional_data
-                    except:
-                        pass
-                
-                # Use message_metadata property which handles JSON parsing
-                if msg.message_metadata:
-                    metadata = msg.message_metadata
+                # Note: metadata already parsed above, no need to parse again
                 
                 # Prepare message data based on sender type
                 message_data = {
@@ -622,7 +665,7 @@ async def websocket_endpoint(
                     message_data["is_owner"] = False
                     message_data["email"] = f"{msg.agent_type.lower()}@thanotopolis.local"
                     message_data["message_type"] = "agent"  # Critical for frontend rendering
-                    message_data["sender_type"] = "agent"   # Ensure consistent sender_type
+                    message_data["sender_type"] = "agent"   # Ensure consistent sender_type - THIS IS CRUCIAL
                     message_data["agent_type"] = msg.agent_type
                     
                     # Initialize agent metadata with required fields

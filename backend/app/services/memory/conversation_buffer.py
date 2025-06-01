@@ -187,12 +187,22 @@ class ConversationBuffer:
             msg_parts = []
             
             # Format sender info
-            sender_info = f"[{msg['sender_type'].upper()}]"
-            if 'metadata' in msg and msg['metadata']:
-                if 'agent_type' in msg['metadata'] and msg['sender_type'] == "agent":
-                    sender_info = f"[AGENT: {msg['metadata']['agent_type']}]"
+            sender_type = msg.get('sender_type', 'unknown').upper()
+            sender_info = f"[{sender_type}]"
+            
+            # Make sure agent messages are properly identified and tagged
+            if msg.get('sender_type') == "agent":
+                # Agent message identified by sender_type field
+                agent_type = msg.get('metadata', {}).get('agent_type', "AGENT")
+                sender_info = f"[AGENT: {agent_type}]"
+            elif 'metadata' in msg and msg['metadata']:
+                if 'agent_type' in msg['metadata'] or msg['metadata'].get('sender_type') == "agent":
+                    # This is an agent message - make sure sender_type is corrected
+                    msg['sender_type'] = "agent"
+                    agent_type = msg['metadata'].get('agent_type', "AGENT")
+                    sender_info = f"[AGENT: {agent_type}]"
                 elif 'sender_name' in msg['metadata']:
-                    sender_info = f"[{msg['sender_type'].upper()}: {msg['metadata']['sender_name']}]"
+                    sender_info = f"[{sender_type}: {msg['metadata']['sender_name']}]"
                 elif 'participant_name' in msg['metadata']:
                     sender_info = f"[{msg['metadata']['participant_name']}]"
             

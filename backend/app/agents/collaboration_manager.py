@@ -355,8 +355,18 @@ class CollaborationManager:
                     
                     # Cancel any pending tasks
                     for task in pending:
-                        # FIXED: Use safe get_name with fallback
-                        task_name = getattr(task, 'get_name', lambda: 'unknown-task')()
+                        # Use get_name safely with proper function call or fallback to task name
+                        task_name = 'unknown-task'
+                        try:
+                            if hasattr(task, 'get_name'):
+                                if callable(task.get_name):
+                                    task_name = task.get_name()
+                                else:
+                                    task_name = str(task.get_name)
+                            elif hasattr(task, 'name'):
+                                task_name = task.name
+                        except Exception:
+                            pass
                         logger.warning(f"Cancelling slow supporting agent: {task_name}")
                         task.cancel()
                         
@@ -375,8 +385,18 @@ class CollaborationManager:
                             session.response_parts[agent_name] = response
                             logger.info(f"Got supporting response from {agent_name}")
                         except Exception as e:
-                            # FIXED: Use safe get_name with fallback
-                            task_name = getattr(task, 'get_name', lambda: 'unknown-task')()
+                            # Use get_name safely with proper function call or fallback to task name
+                            task_name = 'unknown-task'
+                            try:
+                                if hasattr(task, 'get_name'):
+                                    if callable(task.get_name):
+                                        task_name = task.get_name()
+                                    else:
+                                        task_name = str(task.get_name)
+                                elif hasattr(task, 'name'):
+                                    task_name = task.name
+                            except Exception:
+                                pass
                             logger.error(f"Error getting agent response from task {task_name}: {e}")
                             
                             # Try to extract agent name from task name for error message

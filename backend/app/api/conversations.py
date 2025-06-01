@@ -337,11 +337,11 @@ async def send_message(
             agent_type=response_agent_type,
             content=response_content,
             message_type=MessageType.TEXT,
-            # Store metadata directly in additional_data
+            # Store metadata directly in additional_data with all necessary fields
             additional_data=json.dumps({
                 "agent_type": response_agent_type,
                 "message_type": "agent",
-                "sender_type": "agent"
+                "sender_type": "agent"  # This is crucial for proper identification
             })
         )
         db.add(agent_message)
@@ -362,7 +362,7 @@ async def send_message(
             message_type=agent_message.message_type,
             content=agent_message.content,
             user_id=None,
-            agent_type=agent_message.agent_type,
+            agent_type=response_agent_type,  # Use the response_agent_type directly instead of the message field
             participant_id=None,
             metadata=agent_metadata,
             created_at=agent_message.created_at,
@@ -428,20 +428,25 @@ async def get_messages(
         sender_name = None
         sender_type = None
         
-        if msg.agent_type:
-            # Check for agent_type first as it takes precedence
+        # Get existing metadata first to check for agent messages in metadata
+        existing_metadata = msg.message_metadata or {}
+        
+        # Check for agent message via agent_type field or metadata
+        if msg.agent_type or (isinstance(existing_metadata, dict) and 
+                             (existing_metadata.get("sender_type") == "agent" or 
+                              existing_metadata.get("agent_type"))):
+            # This is an agent message - ensure all agent fields are set
             sender_type = "agent"
-            sender_name = msg.agent_type
+            # Get agent_type from message field or metadata
+            agent_type = msg.agent_type or existing_metadata.get("agent_type", "ASSISTANT")
+            sender_name = agent_type
             
             # Always include required agent metadata fields
             metadata_dict = {
-                "agent_type": msg.agent_type,
+                "agent_type": agent_type,
                 "message_type": "agent",
                 "sender_type": "agent"
             }
-            
-            # Get existing metadata if available
-            existing_metadata = msg.message_metadata or {}
             
             # Merge with our required fields, ensuring our fields take precedence
             if isinstance(existing_metadata, dict):
@@ -456,13 +461,40 @@ async def get_messages(
             sender_type = "user"
             if msg.user:
                 sender_name = f"{msg.user.first_name} {msg.user.last_name}".strip() or msg.user.username
+                
+            # Ensure user messages have sender_type in metadata
+            existing_metadata = msg.message_metadata or {}
+            if isinstance(existing_metadata, dict):
+                if "sender_type" not in existing_metadata:
+                    existing_metadata["sender_type"] = "user"
+                    msg.additional_data = json.dumps(existing_metadata)
+            else:
+                msg.additional_data = json.dumps({"sender_type": "user"})
         elif msg.participant_id:
             sender_type = "participant"
             if msg.participant:
                 sender_name = msg.participant.name or msg.participant.identifier
+                
+            # Ensure participant messages have sender_type in metadata
+            existing_metadata = msg.message_metadata or {}
+            if isinstance(existing_metadata, dict):
+                if "sender_type" not in existing_metadata:
+                    existing_metadata["sender_type"] = "participant"
+                    msg.additional_data = json.dumps(existing_metadata)
+            else:
+                msg.additional_data = json.dumps({"sender_type": "participant"})
         else:
             sender_type = "system"
             sender_name = "System"
+            
+            # Ensure system messages have sender_type in metadata
+            existing_metadata = msg.message_metadata or {}
+            if isinstance(existing_metadata, dict):
+                if "sender_type" not in existing_metadata:
+                    existing_metadata["sender_type"] = "system"
+                    msg.additional_data = json.dumps(existing_metadata)
+            else:
+                msg.additional_data = json.dumps({"sender_type": "system"})
         
         items.append(MessageResponse(
             id=msg.id,
@@ -607,25 +639,44 @@ async def get_message(
     sender_name = None
     sender_type = None
     
-    if message.agent_type:
-        # Check for agent_type first as it takes precedence
+    # Get existing metadata to check for agent message signals
+    existing_metadata = message.message_metadata or {}
+    
+    # Check for agent message via agent_type field or metadata
+    if message.agent_type or (isinstance(existing_metadata, dict) and 
+                             (existing_metadata.get("sender_type") == "agent" or 
+                              existing_metadata.get("agent_type"))):
+        # This is an agent message - ensure all agent fields are set
         sender_type = "agent"
-        sender_name = message.agent_type
+        # Get agent_type from message field or metadata
+        agent_type = message.agent_type or existing_metadata.get("agent_type", "ASSISTANT")
+        sender_name = agent_type
+        
+        # Ensure agent messages have proper metadata
+        if not message.message_metadata:
+            message.message_metadata = {
+                "agent_type": agent_type,
+                "message_type": "agent",
+                "sender_type": "agent"
+            }
+        elif isinstance(message.message_metadata, dict):
+            # Ensure all required agent fields are set
+            message.message_metadata.update({
+                "agent_type": agent_type,
+                "message_type": "agent",
+                "sender_type": "agent"
+            })
     elif message.user_id:
         sender_type = "user"
         if message.user:
             sender_name = f"{message.user.first_name} {message.user.last_name}".strip() or message.user.username
-        # Ensure metadata has agent styling information
+        # Add user-specific metadata if needed
         if not message.message_metadata:
             message.message_metadata = {
-                "agent_type": message.agent_type,
-                "message_type": "agent"
+                "sender_type": "user"
             }
-        elif isinstance(message.message_metadata, dict):
-            message.message_metadata.update({
-                "agent_type": message.agent_type,
-                "message_type": "agent"
-            })
+        elif isinstance(message.message_metadata, dict) and "sender_type" not in message.message_metadata:
+            message.message_metadata["sender_type"] = "user"
     elif message.participant_id:
         sender_type = "participant"
         if message.participant:
@@ -633,14 +684,26 @@ async def get_message(
     else:
         sender_type = "system"
         sender_name = "System"
+        
+        # Ensure system messages have sender_type in metadata
+        if not message.message_metadata:
+            message.message_metadata = {"sender_type": "system"}
+        elif isinstance(message.message_metadata, dict) and "sender_type" not in message.message_metadata:
+            message.message_metadata["sender_type"] = "system"
     
+    # Construct the response - make sure agent_type is properly set for agent messages
+    if sender_type == "agent":
+        agent_type = message.agent_type or message.message_metadata.get("agent_type", "ASSISTANT")
+    else:
+        agent_type = message.agent_type
+        
     return MessageResponse(
         id=message.id,
         conversation_id=message.conversation_id,
         message_type=message.message_type,
         content=message.content,
         user_id=message.user_id,
-        agent_type=message.agent_type,
+        agent_type=agent_type,
         participant_id=message.participant_id,
         metadata=message.message_metadata,
         created_at=message.created_at,
@@ -941,29 +1004,43 @@ async def export_conversation(
         sender_name = None
         sender_type = None
         
-        if message.user_id:
-            sender_type = "user"
-            if message.user:
-                sender_name = f"{message.user.first_name} {message.user.last_name}".strip() or message.user.username
-        elif message.agent_type:
-            sender_type = "agent"
-            sender_name = message.agent_type
-        elif message.participant_id:
-            sender_type = "participant"
-            if message.participant:
-                sender_name = message.participant.name or message.participant.identifier
-        else:
-            sender_type = "system"
-            sender_name = "System"
-        
         # Get metadata from additional_data
-        metadata = None
+        metadata = {}
         if message.additional_data:
             if isinstance(message.additional_data, str):
                 try:
                     metadata = json.loads(message.additional_data)
                 except:
-                    metadata = None
+                    metadata = {}
+        
+        if message.user_id:
+            sender_type = "user"
+            if message.user:
+                sender_name = f"{message.user.first_name} {message.user.last_name}".strip() or message.user.username
+            # Ensure metadata includes sender_type
+            if "sender_type" not in metadata:
+                metadata["sender_type"] = "user"
+        elif message.agent_type:
+            sender_type = "agent"
+            sender_name = message.agent_type
+            # Ensure metadata includes sender_type and agent_type
+            if "sender_type" not in metadata:
+                metadata["sender_type"] = "agent"
+            if "agent_type" not in metadata:
+                metadata["agent_type"] = message.agent_type
+        elif message.participant_id:
+            sender_type = "participant"
+            if message.participant:
+                sender_name = message.participant.name or message.participant.identifier
+            # Ensure metadata includes sender_type
+            if "sender_type" not in metadata:
+                metadata["sender_type"] = "participant"
+        else:
+            sender_type = "system"
+            sender_name = "System"
+            # Ensure metadata includes sender_type
+            if "sender_type" not in metadata:
+                metadata["sender_type"] = "system"
         
         formatted_messages.append({
             "id": str(message.id),
@@ -1084,20 +1161,25 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
         sender_name = None
         sender_type = None
         
-        if msg.agent_type:
-            # Check for agent_type first as it takes precedence
+        # Get existing metadata first to check for agent messages in metadata
+        existing_metadata = msg.message_metadata or {}
+        
+        # Check for agent message via agent_type field or metadata
+        if msg.agent_type or (isinstance(existing_metadata, dict) and 
+                             (existing_metadata.get("sender_type") == "agent" or 
+                              existing_metadata.get("agent_type"))):
+            # This is an agent message - ensure all agent fields are set
             sender_type = "agent"
-            sender_name = msg.agent_type
+            # Get agent_type from message field or metadata
+            agent_type = msg.agent_type or existing_metadata.get("agent_type", "ASSISTANT")
+            sender_name = agent_type
             
             # Always include required agent metadata fields
             metadata_dict = {
-                "agent_type": msg.agent_type,
+                "agent_type": agent_type,
                 "message_type": "agent",
                 "sender_type": "agent"
             }
-            
-            # Get existing metadata if available
-            existing_metadata = msg.message_metadata or {}
             
             # Merge with our required fields, ensuring our fields take precedence
             if isinstance(existing_metadata, dict):
@@ -1112,21 +1194,45 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
             sender_type = "user"
             if msg.user:
                 sender_name = f"{msg.user.first_name} {msg.user.last_name}".strip() or msg.user.username
+                
+            # Ensure user messages have sender_type in metadata
+            existing_metadata = msg.message_metadata or {}
+            if isinstance(existing_metadata, dict):
+                if "sender_type" not in existing_metadata:
+                    existing_metadata["sender_type"] = "user"
+                    msg.additional_data = json.dumps(existing_metadata)
+            else:
+                msg.additional_data = json.dumps({"sender_type": "user"})
         elif msg.participant_id:
             sender_type = "participant"
             if msg.participant:
                 sender_name = msg.participant.name or msg.participant.identifier
+                
+            # Ensure participant messages have sender_type in metadata
+            existing_metadata = msg.message_metadata or {}
+            if isinstance(existing_metadata, dict):
+                if "sender_type" not in existing_metadata:
+                    existing_metadata["sender_type"] = "participant"
+                    msg.additional_data = json.dumps(existing_metadata)
+            else:
+                msg.additional_data = json.dumps({"sender_type": "participant"})
         else:
             sender_type = "system"
             sender_name = "System"
         
+        # For agent messages, make sure we use the correct agent_type
+        if sender_type == "agent":
+            response_agent_type = msg.agent_type or existing_metadata.get("agent_type", "ASSISTANT")
+        else:
+            response_agent_type = msg.agent_type
+            
         formatted_messages.append(MessageResponse(
             id=msg.id,
             conversation_id=msg.conversation_id,
             message_type=msg.message_type,
             content=msg.content,
             user_id=msg.user_id,
-            agent_type=msg.agent_type,
+            agent_type=response_agent_type,
             participant_id=msg.participant_id,
             metadata=msg.message_metadata,
             created_at=msg.created_at,

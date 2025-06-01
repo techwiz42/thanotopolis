@@ -162,9 +162,15 @@ class BufferManager:
                 
                 # Agent message
                 elif msg.agent_type:
-                    sender_type = "agent"
+                    sender_type = "agent"  # This MUST be "agent" for frontend to recognize it correctly
                     sender_id = msg.agent_type
                     sender_name = msg.agent_type
+                    
+                    # Ensure agent_type is always in metadata for agent messages
+                    if not metadata:
+                        metadata = {}
+                    metadata["agent_type"] = msg.agent_type
+                    metadata["message_type"] = "agent"  # Also set message_type consistently
                 
                 # Participant message
                 elif msg.participant_id:
@@ -208,6 +214,7 @@ class BufferManager:
                 
                 # Add sender info to metadata
                 metadata["sender_name"] = sender_name
+                metadata["sender_type"] = sender_type  # Explicitly add sender_type to ensure consistency
                 if msg.agent_type:
                     metadata["agent_type"] = msg.agent_type
                 

@@ -586,9 +586,12 @@ class AgentManager:
                             conversation_id=thread_uuid,
                             message=response,
                             sender_id=primary_agent_type,
-                            sender_type="agent",
+                            sender_type="agent",  # This MUST be "agent" for frontend to recognize it correctly
                             owner_id=owner_id,
-                            metadata={"agent_type": primary_agent_type}
+                            metadata={
+                                "agent_type": primary_agent_type,
+                                "message_type": "agent"  # Add message_type consistently for all agent messages
+                            }
                         )
                         logger.info(f"[BUFFER_DEBUG] Added agent response to buffer for conversation {thread_id} (UUID: {thread_uuid})")
                         
@@ -666,9 +669,12 @@ class AgentManager:
                                 conversation_id=thread_uuid,
                                 message=final_response,
                                 sender_id=primary_agent_type,
-                                sender_type="agent",
+                                sender_type="agent",  # This MUST be "agent" for frontend to recognize it correctly
                                 owner_id=owner_id,
-                                metadata={"agent_type": primary_agent_type}
+                                metadata={
+                                    "agent_type": primary_agent_type,
+                                    "message_type": "agent"  # Add message_type consistently for all agent messages
+                                }
                             )
                             logger.info(f"[BUFFER_DEBUG] Added agent response (streaming) to buffer for conversation {thread_id} (UUID: {thread_uuid})")
                             
@@ -724,9 +730,12 @@ class AgentManager:
                             conversation_id=thread_uuid,
                             message=final_response,
                             sender_id=primary_agent_type,
-                            sender_type="agent",
+                            sender_type="agent",  # This MUST be "agent" for frontend to recognize it correctly
                             owner_id=owner_id,
-                            metadata={"agent_type": primary_agent_type}
+                            metadata={
+                                "agent_type": primary_agent_type,
+                                "message_type": "agent"  # Add message_type consistently for all agent messages
+                            }
                         )
                         logger.info(f"[BUFFER_DEBUG] Added agent response (non-streaming) to buffer for conversation {thread_id} (UUID: {thread_uuid})")
                         
