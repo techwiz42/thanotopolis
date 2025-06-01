@@ -140,7 +140,7 @@ async def list_conversations(
     # Base query - user must be part of the conversation
     query = (
         select(Conversation)
-        .join(ConversationUser)
+        .join(ConversationUser, Conversation.id == ConversationUser.conversation_id)
         .where(
             ConversationUser.user_id == current_user.id,
             ConversationUser.is_active == True,
@@ -218,9 +218,20 @@ async def list_conversations(
                 sender_type=sender_type
             )
         
+        # Use a more descriptive title for empty conversations
+        if not conv.title and message_count == 0:
+            conv_title = "New Conversation"
+        elif not conv.title:
+            conv_title = f"Conversation with {message_count} messages"
+        else:
+            conv_title = conv.title
+
+        # Log conversation details to help with debugging
+        logger.info(f"Conversation {conv.id}: {conv_title} - {message_count} messages")
+        
         items.append(ConversationListResponse(
             id=conv.id,
-            title=conv.title,
+            title=conv_title,
             description=conv.description,
             status=conv.status,
             created_at=conv.created_at,
@@ -229,6 +240,9 @@ async def list_conversations(
             participant_count=participant_count,
             message_count=message_count
         ))
+    
+    # Sort conversations by update time (most recent first), with a secondary sort by message count
+    items.sort(key=lambda x: (-(x.updated_at.timestamp() if x.updated_at else 0), -x.message_count))
     
     return items
 
@@ -312,11 +326,23 @@ async def send_message(
     # Create agent response message
     if agent_response:
         response_agent_type, response_content = agent_response
+        
+        # Ensure we have a valid agent type
+        if not response_agent_type:
+            response_agent_type = agent_type or "ASSISTANT"
+        
+        # Create the message in the database
         agent_message = Message(
             conversation_id=conversation_id,
             agent_type=response_agent_type,
             content=response_content,
-            message_type=MessageType.TEXT
+            message_type=MessageType.TEXT,
+            # Store metadata directly in additional_data
+            additional_data=json.dumps({
+                "agent_type": response_agent_type,
+                "message_type": "agent",
+                "sender_type": "agent"
+            })
         )
         db.add(agent_message)
         await db.commit()
@@ -326,7 +352,8 @@ async def send_message(
         # Include additional metadata for proper agent styling
         agent_metadata = {
             "agent_type": response_agent_type,
-            "message_type": "agent"
+            "message_type": "agent", 
+            "sender_type": "agent"
         }
         
         return MessageResponse(
@@ -401,24 +428,34 @@ async def get_messages(
         sender_name = None
         sender_type = None
         
-        if msg.user_id:
+        if msg.agent_type:
+            # Check for agent_type first as it takes precedence
+            sender_type = "agent"
+            sender_name = msg.agent_type
+            
+            # Always include required agent metadata fields
+            metadata_dict = {
+                "agent_type": msg.agent_type,
+                "message_type": "agent",
+                "sender_type": "agent"
+            }
+            
+            # Get existing metadata if available
+            existing_metadata = msg.message_metadata or {}
+            
+            # Merge with our required fields, ensuring our fields take precedence
+            if isinstance(existing_metadata, dict):
+                merged_metadata = existing_metadata.copy()
+                merged_metadata.update(metadata_dict)
+            else:
+                merged_metadata = metadata_dict
+                
+            # Store updated metadata in additional_data
+            msg.additional_data = json.dumps(merged_metadata)
+        elif msg.user_id:
             sender_type = "user"
             if msg.user:
                 sender_name = f"{msg.user.first_name} {msg.user.last_name}".strip() or msg.user.username
-        elif msg.agent_type:
-            sender_type = "agent"
-            sender_name = msg.agent_type
-            # Ensure metadata has agent styling information
-            if not msg.message_metadata:
-                msg.message_metadata = {
-                    "agent_type": msg.agent_type,
-                    "message_type": "agent"
-                }
-            elif isinstance(msg.message_metadata, dict):
-                msg.message_metadata.update({
-                    "agent_type": msg.agent_type,
-                    "message_type": "agent"
-                })
         elif msg.participant_id:
             sender_type = "participant"
             if msg.participant:
@@ -570,13 +607,14 @@ async def get_message(
     sender_name = None
     sender_type = None
     
-    if message.user_id:
+    if message.agent_type:
+        # Check for agent_type first as it takes precedence
+        sender_type = "agent"
+        sender_name = message.agent_type
+    elif message.user_id:
         sender_type = "user"
         if message.user:
             sender_name = f"{message.user.first_name} {message.user.last_name}".strip() or message.user.username
-    elif message.agent_type:
-        sender_type = "agent"
-        sender_name = message.agent_type
         # Ensure metadata has agent styling information
         if not message.message_metadata:
             message.message_metadata = {
@@ -801,7 +839,7 @@ async def search_conversations(
     # Base query - user must be part of the conversation
     query = (
         select(Conversation)
-        .join(ConversationUser)
+        .join(ConversationUser, Conversation.id == ConversationUser.conversation_id)
         .where(
             ConversationUser.user_id == current_user.id,
             ConversationUser.is_active == True,
@@ -821,20 +859,43 @@ async def search_conversations(
     result = await db.execute(query)
     conversations = result.scalars().all()
     
-    # Convert to response format
-    return [
-        ConversationListResponse(
-            id=conv.id,
-            title=conv.title,
-            description=conv.description,
-            status=conv.status,
-            created_at=conv.created_at,
-            updated_at=conv.updated_at,
-            participant_count=len(conv.users),
-            message_count=len(conv.messages)
+    # Convert to response format - we need to manually query for counts because 
+    # we can't rely on ORM relationships in this case
+    result_list = []
+    for conv in conversations:
+        # Get message count 
+        message_count_query = select(func.count()).select_from(Message).where(
+            Message.conversation_id == conv.id
         )
-        for conv in conversations
-    ]
+        message_count_result = await db.execute(message_count_query)
+        message_count = message_count_result.scalar() or 0
+        
+        # Get participant count
+        participant_count_query = select(func.count()).select_from(ConversationUser).where(
+            ConversationUser.conversation_id == conv.id,
+            ConversationUser.is_active == True
+        )
+        participant_count_result = await db.execute(participant_count_query)
+        participant_count = participant_count_result.scalar() or 0
+        
+        result_list.append(
+            ConversationListResponse(
+                id=conv.id,
+                title=conv.title,
+                description=conv.description,
+                status=conv.status,
+                created_at=conv.created_at,
+                updated_at=conv.updated_at,
+                participant_count=participant_count,
+                message_count=message_count,
+                last_message=None  # We'll handle this separately
+            )
+        )
+    
+    # Sort conversations by update time (most recent first), with a secondary sort by message count
+    result_list.sort(key=lambda x: (-(x.updated_at.timestamp() if x.updated_at else 0), -x.message_count))
+    
+    return result_list
 
 @router.get("/{conversation_id}/export", response_model=dict)
 async def export_conversation(
@@ -1004,15 +1065,75 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    # Get recent messages
-    recent_messages_query = (
+    # Get all messages in chronological order
+    messages_query = (
         select(Message)
+        .options(
+            selectinload(Message.user),
+            selectinload(Message.participant)
+        )
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc())
-        .limit(10)
+        .order_by(Message.created_at)  # Order by creation time (oldest first)
     )
-    recent_messages_result = await db.execute(recent_messages_query)
-    recent_messages = recent_messages_result.scalars().all()
+    messages_result = await db.execute(messages_query)
+    messages = messages_result.scalars().all()
+    
+    # Format each message with sender info
+    formatted_messages = []
+    for msg in messages:
+        sender_name = None
+        sender_type = None
+        
+        if msg.agent_type:
+            # Check for agent_type first as it takes precedence
+            sender_type = "agent"
+            sender_name = msg.agent_type
+            
+            # Always include required agent metadata fields
+            metadata_dict = {
+                "agent_type": msg.agent_type,
+                "message_type": "agent",
+                "sender_type": "agent"
+            }
+            
+            # Get existing metadata if available
+            existing_metadata = msg.message_metadata or {}
+            
+            # Merge with our required fields, ensuring our fields take precedence
+            if isinstance(existing_metadata, dict):
+                merged_metadata = existing_metadata.copy()
+                merged_metadata.update(metadata_dict)
+            else:
+                merged_metadata = metadata_dict
+                
+            # Store updated metadata in additional_data
+            msg.additional_data = json.dumps(merged_metadata)
+        elif msg.user_id:
+            sender_type = "user"
+            if msg.user:
+                sender_name = f"{msg.user.first_name} {msg.user.last_name}".strip() or msg.user.username
+        elif msg.participant_id:
+            sender_type = "participant"
+            if msg.participant:
+                sender_name = msg.participant.name or msg.participant.identifier
+        else:
+            sender_type = "system"
+            sender_name = "System"
+        
+        formatted_messages.append(MessageResponse(
+            id=msg.id,
+            conversation_id=msg.conversation_id,
+            message_type=msg.message_type,
+            content=msg.content,
+            user_id=msg.user_id,
+            agent_type=msg.agent_type,
+            participant_id=msg.participant_id,
+            metadata=msg.message_metadata,
+            created_at=msg.created_at,
+            updated_at=msg.updated_at,
+            sender_name=sender_name,
+            sender_type=sender_type
+        ))
     
     # Format response
     users = [cu.user for cu in conversation.users if cu.user and cu.is_active]
@@ -1043,6 +1164,6 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
         users=users,
         agents=agents,
         participants=participants,
-        recent_messages=list(reversed(recent_messages)),  # Show oldest first
+        recent_messages=formatted_messages,  # All messages in chronological order
         owner_id=conversation.created_by_user_id  # For backward compatibility
     )

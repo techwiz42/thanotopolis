@@ -429,12 +429,13 @@ async def _handle_user_message(
                     "is_owner": False,
                     "email": f"{response_agent_type.lower()}@thanotopolis.local",
                     "sender_name": response_agent_type,
-                    "sender_type": "agent",
+                    "sender_type": "agent",  # This field is critical for message type recognition
                     "message_type": "agent",  # Explicitly add message_type for frontend styling
                     "agent_type": response_agent_type,  # Add agent_type directly for easier access
                     "timestamp": datetime.utcnow().isoformat(),
                     "agent_metadata": {
-                        "agent_type": response_agent_type
+                        "agent_type": response_agent_type,
+                        "message_type": "agent"  # Add to metadata as well for consistency
                     }
                 }
                 
@@ -503,7 +504,8 @@ async def websocket_endpoint(
             from sqlalchemy import select
             from app.models.models import Message
             
-            # Query for messages, limited to most recent 50
+            # Query for all messages with no limit
+            logger.info(f"Fetching all messages for conversation {conversation_id}")
             message_query = (
                 select(Message)
                 .options(
@@ -512,10 +514,11 @@ async def websocket_endpoint(
                 )
                 .where(Message.conversation_id == conversation_id)
                 .order_by(Message.created_at)
-                .limit(50)
+                # No limit - retrieve all messages
             )
             message_result = await db.execute(message_query)
             messages = message_result.scalars().all()
+            logger.info(f"Found {len(messages)} messages for conversation {conversation_id}")
             
             # Send historical messages to the newly connected client
             for msg in messages:
@@ -523,7 +526,11 @@ async def websocket_endpoint(
                 sender_type = "system"
                 sender_name = "System"
                 
-                if msg.user_id:
+                if msg.agent_type:
+                    # Check for agent_type first as it takes precedence
+                    sender_type = "agent"
+                    sender_name = msg.agent_type
+                elif msg.user_id:
                     sender_type = "user"
                     sender_name = "Unknown User"
                     # Get user info if available
@@ -544,10 +551,6 @@ async def websocket_endpoint(
                             user_email = msg_user.email
                         else:
                             user_email = "user@thanotopolis.local"
-                
-                elif msg.agent_type:
-                    sender_type = "agent"
-                    sender_name = msg.agent_type
                 
                 elif msg.participant_id:
                     sender_type = "participant"
@@ -587,6 +590,10 @@ async def websocket_endpoint(
                     "is_history": True  # Flag to indicate this is a historical message
                 }
                 
+                # Ensure consistent message type field for frontend
+                if sender_type == "agent":
+                    message_data["message_type"] = "agent"
+                
                 # Add type-specific data
                 if sender_type == "user":
                     message_data["identifier"] = user_email if msg.user_id == user.id else (
@@ -610,20 +617,23 @@ async def websocket_endpoint(
                         }
                 
                 elif sender_type == "agent":
+                    # Set all required fields for agent messages
                     message_data["identifier"] = msg.agent_type
                     message_data["is_owner"] = False
                     message_data["email"] = f"{msg.agent_type.lower()}@thanotopolis.local"
-                    message_data["message_type"] = "agent"
+                    message_data["message_type"] = "agent"  # Critical for frontend rendering
+                    message_data["sender_type"] = "agent"   # Ensure consistent sender_type
                     message_data["agent_type"] = msg.agent_type
-                    message_data["agent_metadata"] = {"agent_type": msg.agent_type}
                     
-                    # Include metadata from message if available
+                    # Initialize agent metadata with required fields
+                    agent_metadata = {"agent_type": msg.agent_type, "message_type": "agent"}
+                    
+                    # Include additional metadata from message if available
                     if metadata and isinstance(metadata, dict):
-                        if "agent_type" not in metadata:
-                            metadata["agent_type"] = msg.agent_type
-                        if "message_type" not in metadata:
-                            metadata["message_type"] = "agent"
-                        message_data["agent_metadata"] = metadata
+                        agent_metadata.update(metadata)
+                    
+                    # Set the agent_metadata field with complete metadata
+                    message_data["agent_metadata"] = agent_metadata
                 
                 # Send message to this client only
                 await websocket.send_json(message_data)
