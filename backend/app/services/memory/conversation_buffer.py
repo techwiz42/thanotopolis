@@ -189,8 +189,10 @@ class ConversationBuffer:
             # Format sender info
             sender_info = f"[{msg['sender_type'].upper()}]"
             if 'metadata' in msg and msg['metadata']:
-                if 'agent_type' in msg['metadata']:
-                    sender_info = f"[{msg['metadata']['agent_type']}]"
+                if 'agent_type' in msg['metadata'] and msg['sender_type'] == "agent":
+                    sender_info = f"[AGENT: {msg['metadata']['agent_type']}]"
+                elif 'sender_name' in msg['metadata']:
+                    sender_info = f"[{msg['sender_type'].upper()}: {msg['metadata']['sender_name']}]"
                 elif 'participant_name' in msg['metadata']:
                     sender_info = f"[{msg['metadata']['participant_name']}]"
             

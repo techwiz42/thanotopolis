@@ -18,7 +18,7 @@ from app.services.rag.pgvector_query_service import pgvector_query_service
 from app.agents.collaboration_manager import collaboration_manager
 from app.agents.common_context import CommonAgentContext
 from app.agents.base_agent import BaseAgent
-from app.models.models import Message, ConversationAgent as ThreadAgent, ConversationUser as ThreadParticipant
+from app.models.models import Message, ConversationAgent, ConversationUser
 from app.agents.agent_calculator_tool import AgentCalculatorTool
 
 logger = logging.getLogger(__name__)
@@ -238,8 +238,8 @@ class AgentManager:
     async def _prepare_context(
         self,
         message: str,
-        thread_id: Optional[str],
-        owner_id: Optional[UUID],
+        thread_id: Optional[str],  # Used as an alias for conversation_id
+        owner_id: Optional[UUID],  # Required for RAG and context retrieval
         db: Optional[Any]
     ) -> CommonAgentContext:
         """Build context object with conversation history, buffer and RAG data."""
@@ -259,7 +259,7 @@ class AgentManager:
                     # Use the buffer manager to get formatted context
                     thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
                     logger.info(f"[BUFFER_DEBUG] Retrieving context for thread: {thread_id} (converted to UUID: {thread_uuid}, type: {type(thread_uuid)})")
-                    buffer_context = buffer_manager.get_context(thread_uuid)
+                    buffer_context = await buffer_manager.get_context(thread_uuid)
                     
                     if buffer_context:
                         # Assign buffer_context to the context object
@@ -285,10 +285,10 @@ class AgentManager:
                     # Convert thread_id to UUID if needed
                     thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
 
-                    # Query for recent messages in this thread (ordered by timestamp)
+                    # Query for recent messages in this conversation (ordered by timestamp)
                     query = (
                         select(Message)
-                        .where(Message.thread_id == thread_uuid)
+                        .where(Message.conversation_id == thread_uuid)
                         .order_by(Message.created_at)
                         .limit(settings.MAX_CONTEXT_MESSAGES)  # Use a reasonable default if not defined
                     )
@@ -302,20 +302,16 @@ class AgentManager:
 
                         for msg in messages:
                             # Format depends on if it's an agent or user message
-                            if msg.agent_id:
-                                # Get the agent type
-                                agent_query = select(ThreadAgent).where(ThreadAgent.id == msg.agent_id)
-                                agent_result = await db.execute(agent_query)
-                                agent = agent_result.scalar_one_or_none()
-                                agent_type = agent.agent_type if agent else "AGENT"
-
+                            if msg.agent_type:
+                                # Use the agent_type directly from the message
+                                agent_type = msg.agent_type
                                 sender = f"[{agent_type}]"
                             else:
                                 # User/participant message
                                 sender = "[USER]"
                                 if msg.participant_id:
-                                    participant_query = select(ThreadParticipant).where(
-                                        ThreadParticipant.id == msg.participant_id
+                                    participant_query = select(ConversationUser).where(
+                                        ConversationUser.id == msg.participant_id
                                     )
                                     participant_result = await db.execute(participant_query)
                                     participant = participant_result.scalar_one_or_none()
@@ -469,8 +465,8 @@ class AgentManager:
         agents_config: Dict[str, Any],   # This parameter is now ignored
         mention: Optional[str] = None,   # This parameter is now ignored
         db: Optional[Any] = None,
-        thread_id: Optional[str] = None,
-        owner_id: Optional[UUID] = None,
+        thread_id: Optional[str] = None,  # Used as alias for conversation_id for backward compatibility
+        owner_id: Optional[UUID] = None,  # Owner ID is required for context retrieval and RAG
         response_callback: Optional[Callable[[str], Awaitable[None]]] = None
     ) -> Tuple[str, str]:
         """

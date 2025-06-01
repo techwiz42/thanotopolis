@@ -190,6 +190,34 @@ async def list_conversations(
         message_count_result = await db.execute(message_count_query)
         message_count = message_count_result.scalar() or 0
         
+        # Prepare the last message with proper sender type and metadata
+        last_message_response = None
+        if last_message:
+            sender_type = "system"
+            if last_message.user_id:
+                sender_type = "user"
+            elif last_message.agent_type:
+                sender_type = "agent"
+            elif last_message.participant_id:
+                sender_type = "participant"
+                
+            metadata = last_message.message_metadata or {}
+                
+            last_message_response = MessageResponse(
+                id=last_message.id,
+                conversation_id=last_message.conversation_id,
+                message_type=last_message.message_type,
+                content=last_message.content,
+                user_id=last_message.user_id,
+                agent_type=last_message.agent_type,
+                participant_id=last_message.participant_id,
+                metadata=metadata,
+                created_at=last_message.created_at,
+                updated_at=last_message.updated_at,
+                sender_name=None,
+                sender_type=sender_type
+            )
+        
         items.append(ConversationListResponse(
             id=conv.id,
             title=conv.title,
@@ -197,7 +225,7 @@ async def list_conversations(
             status=conv.status,
             created_at=conv.created_at,
             updated_at=conv.updated_at,
-            last_message=MessageResponse.model_validate(last_message) if last_message else None,
+            last_message=last_message_response,
             participant_count=participant_count,
             message_count=message_count
         ))
@@ -295,6 +323,12 @@ async def send_message(
         await db.refresh(agent_message)
         
         # Return agent message instead of user message
+        # Include additional metadata for proper agent styling
+        agent_metadata = {
+            "agent_type": response_agent_type,
+            "message_type": "agent"
+        }
+        
         return MessageResponse(
             id=agent_message.id,
             conversation_id=agent_message.conversation_id,
@@ -303,7 +337,7 @@ async def send_message(
             user_id=None,
             agent_type=agent_message.agent_type,
             participant_id=None,
-            metadata=None,
+            metadata=agent_metadata,
             created_at=agent_message.created_at,
             updated_at=agent_message.updated_at,
             sender_name=response_agent_type,
@@ -374,6 +408,17 @@ async def get_messages(
         elif msg.agent_type:
             sender_type = "agent"
             sender_name = msg.agent_type
+            # Ensure metadata has agent styling information
+            if not msg.message_metadata:
+                msg.message_metadata = {
+                    "agent_type": msg.agent_type,
+                    "message_type": "agent"
+                }
+            elif isinstance(msg.message_metadata, dict):
+                msg.message_metadata.update({
+                    "agent_type": msg.agent_type,
+                    "message_type": "agent"
+                })
         elif msg.participant_id:
             sender_type = "participant"
             if msg.participant:
@@ -532,6 +577,17 @@ async def get_message(
     elif message.agent_type:
         sender_type = "agent"
         sender_name = message.agent_type
+        # Ensure metadata has agent styling information
+        if not message.message_metadata:
+            message.message_metadata = {
+                "agent_type": message.agent_type,
+                "message_type": "agent"
+            }
+        elif isinstance(message.message_metadata, dict):
+            message.message_metadata.update({
+                "agent_type": message.agent_type,
+                "message_type": "agent"
+            })
     elif message.participant_id:
         sender_type = "participant"
         if message.participant:

@@ -32,7 +32,8 @@ async def process_conversation(
     conversation_id: UUID,
     message_id: UUID,
     default_agent_type: str,
-    db: AsyncSession
+    db: AsyncSession,
+    owner_id: Optional[UUID] = None
 ) -> Optional[Tuple[str, str]]:
     """
     Process a conversation message through the MODERATOR agent.
@@ -45,6 +46,7 @@ async def process_conversation(
         message_id: The message UUID to process
         default_agent_type: Default agent type (should be "MODERATOR")
         db: Database session
+        owner_id: Optional owner ID of the message
         
     Returns:
         Tuple of (agent_type, response_content) or None if processing fails
@@ -61,7 +63,7 @@ async def process_conversation(
             
         message_content = message.content
         
-        # Get the conversation to find the owner
+        # Get the conversation
         conversation_query = select(Conversation).where(Conversation.id == conversation_id)
         conversation_result = await db.execute(conversation_query)
         conversation = conversation_result.scalar_one_or_none()
@@ -69,6 +71,10 @@ async def process_conversation(
         if not conversation:
             logger.error(f"Conversation {conversation_id} not found")
             return None
+        
+        # If no owner_id was provided, try to get it from the message
+        if owner_id is None and message.user_id is not None:
+            owner_id = message.user_id
         
         # Process the conversation using the agent manager
         # The agent_manager now discovers all agents dynamically
@@ -79,8 +85,8 @@ async def process_conversation(
             agents_config={},       # Ignored - agents use default config
             mention=None,           # Ignored - no mention routing
             db=db,
-            thread_id=str(conversation_id),
-            owner_id=conversation.owner_id,
+            thread_id=str(conversation_id),  # thread_id is used as alias for conversation_id
+            owner_id=owner_id,      # owner_id is required for proper context handling
             response_callback=None  # No streaming for regular websocket messages
         )
         
@@ -89,6 +95,9 @@ async def process_conversation(
     except Exception as e:
         logger.error(f"Error processing conversation {conversation_id}: {e}")
         logger.error(traceback.format_exc())
+        # Print additional information for debugging
+        if 'owner_id' in locals() and owner_id is None:
+            logger.error("owner_id is None - this might be causing the error")
         return None
 
 class ConnectionManager:
@@ -379,7 +388,10 @@ async def _handle_user_message(
         # Only process with agent if conversation exists
         if conversation:
             # Process with agent
-            agent_response = await process_conversation(conversation_id, UUID(message_id), agent_type, db)
+            # Use the message's user_id as owner_id since conversation doesn't have owner_id
+            owner_id = user.id  # Use the current user ID as the owner ID
+            logger.info(f"Processing conversation with owner_id: {owner_id}")
+            agent_response = await process_conversation(conversation_id, UUID(message_id), agent_type, db, owner_id=owner_id)
             
             if agent_response:
                 response_agent_type, response_content = agent_response
@@ -417,6 +429,8 @@ async def _handle_user_message(
                     "email": f"{response_agent_type.lower()}@thanotopolis.local",
                     "sender_name": response_agent_type,
                     "sender_type": "agent",
+                    "message_type": "agent",  # Explicitly add message_type for frontend styling
+                    "agent_type": response_agent_type,  # Add agent_type directly for easier access
                     "timestamp": datetime.utcnow().isoformat(),
                     "agent_metadata": {
                         "agent_type": response_agent_type
