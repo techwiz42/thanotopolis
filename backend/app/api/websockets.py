@@ -3,6 +3,7 @@ from fastapi import APIRouter, WebSocket, Depends, HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from sqlalchemy import select, update, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from typing import Dict, Set, Optional, List, Union, Any, Tuple
 from uuid import UUID, uuid4
 from datetime import datetime
@@ -495,6 +496,144 @@ async def websocket_endpoint(
             "timestamp": datetime.utcnow().isoformat()
         }
         await websocket.send_json(welcome_message)
+        
+        # Fetch and send previous messages
+        try:
+            # Get recent messages from the database
+            from sqlalchemy import select
+            from app.models.models import Message
+            
+            # Query for messages, limited to most recent 50
+            message_query = (
+                select(Message)
+                .options(
+                    joinedload(Message.user),
+                    joinedload(Message.participant)
+                )
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.created_at)
+                .limit(50)
+            )
+            message_result = await db.execute(message_query)
+            messages = message_result.scalars().all()
+            
+            # Send historical messages to the newly connected client
+            for msg in messages:
+                # Determine sender type and metadata
+                sender_type = "system"
+                sender_name = "System"
+                
+                if msg.user_id:
+                    sender_type = "user"
+                    sender_name = "Unknown User"
+                    # Get user info if available
+                    if msg.user_id == user.id:
+                        sender_name = f"{user.first_name} {user.last_name}".strip() or user.username
+                        user_email = user.email
+                    elif msg.user:
+                        sender_name = f"{msg.user.first_name} {msg.user.last_name}".strip() or msg.user.username
+                        user_email = msg.user.email
+                    else:
+                        # Query for user info if not loaded through joinedload
+                        from app.models.models import User
+                        user_query = select(User).where(User.id == msg.user_id)
+                        user_result = await db.execute(user_query)
+                        msg_user = user_result.scalar_one_or_none()
+                        if msg_user:
+                            sender_name = f"{msg_user.first_name} {msg_user.last_name}".strip() or msg_user.username
+                            user_email = msg_user.email
+                        else:
+                            user_email = "user@thanotopolis.local"
+                
+                elif msg.agent_type:
+                    sender_type = "agent"
+                    sender_name = msg.agent_type
+                
+                elif msg.participant_id:
+                    sender_type = "participant"
+                    if msg.participant:
+                        sender_name = msg.participant.name or msg.participant.identifier
+                    else:
+                        from app.models.models import Participant
+                        part_query = select(Participant).where(Participant.id == msg.participant_id)
+                        part_result = await db.execute(part_query)
+                        participant = part_result.scalar_one_or_none()
+                        sender_name = participant.name or participant.identifier if participant else "Unknown Participant"
+                
+                # Format metadata
+                metadata = None
+                if msg.additional_data:
+                    try:
+                        import json
+                        if isinstance(msg.additional_data, str):
+                            metadata = json.loads(msg.additional_data)
+                        else:
+                            metadata = msg.additional_data
+                    except:
+                        pass
+                
+                # Use message_metadata property which handles JSON parsing
+                if msg.message_metadata:
+                    metadata = msg.message_metadata
+                
+                # Prepare message data based on sender type
+                message_data = {
+                    "type": "message",
+                    "content": msg.content,
+                    "id": str(msg.id),
+                    "sender_name": sender_name,
+                    "sender_type": sender_type,
+                    "timestamp": msg.created_at.isoformat(),
+                    "is_history": True  # Flag to indicate this is a historical message
+                }
+                
+                # Add type-specific data
+                if sender_type == "user":
+                    message_data["identifier"] = user_email if msg.user_id == user.id else (
+                        msg.user.email if msg.user else user_email
+                    )
+                    message_data["email"] = message_data["identifier"]
+                    message_data["is_owner"] = msg.user_id == user.id
+                    
+                    # Add user metadata
+                    if msg.user_id == user.id:
+                        message_data["user_metadata"] = {
+                            "username": user.username,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name
+                        }
+                    elif msg.user:
+                        message_data["user_metadata"] = {
+                            "username": msg.user.username,
+                            "first_name": msg.user.first_name,
+                            "last_name": msg.user.last_name
+                        }
+                
+                elif sender_type == "agent":
+                    message_data["identifier"] = msg.agent_type
+                    message_data["is_owner"] = False
+                    message_data["email"] = f"{msg.agent_type.lower()}@thanotopolis.local"
+                    message_data["message_type"] = "agent"
+                    message_data["agent_type"] = msg.agent_type
+                    message_data["agent_metadata"] = {"agent_type": msg.agent_type}
+                    
+                    # Include metadata from message if available
+                    if metadata and isinstance(metadata, dict):
+                        if "agent_type" not in metadata:
+                            metadata["agent_type"] = msg.agent_type
+                        if "message_type" not in metadata:
+                            metadata["message_type"] = "agent"
+                        message_data["agent_metadata"] = metadata
+                
+                # Send message to this client only
+                await websocket.send_json(message_data)
+                
+            logger.info(f"Sent {len(messages)} historical messages to user {user.email}")
+            
+        except Exception as e:
+            logger.error(f"Error fetching historical messages: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         # Notify others of new participant
         join_message = {

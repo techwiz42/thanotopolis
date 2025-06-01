@@ -355,11 +355,12 @@ class CollaborationManager:
                     
                     # Cancel any pending tasks
                     for task in pending:
-                        logger.warning(f"Cancelling slow supporting agent: {task.get_name()}")
+                        # FIXED: Use safe get_name with fallback
+                        task_name = getattr(task, 'get_name', lambda: 'unknown-task')()
+                        logger.warning(f"Cancelling slow supporting agent: {task_name}")
                         task.cancel()
                         
                         # Extract agent_name from task name for timeout message
-                        task_name = task.get_name()
                         if task_name.startswith("supporting-"):
                             parts = task_name.split("-")
                             if len(parts) >= 2:
@@ -374,10 +375,11 @@ class CollaborationManager:
                             session.response_parts[agent_name] = response
                             logger.info(f"Got supporting response from {agent_name}")
                         except Exception as e:
-                            logger.error(f"Error getting agent response from task {task.get_name()}: {e}")
+                            # FIXED: Use safe get_name with fallback
+                            task_name = getattr(task, 'get_name', lambda: 'unknown-task')()
+                            logger.error(f"Error getting agent response from task {task_name}: {e}")
                             
                             # Try to extract agent name from task name for error message
-                            task_name = task.get_name()
                             if task_name.startswith("supporting-"):
                                 parts = task_name.split("-")
                                 if len(parts) >= 2:

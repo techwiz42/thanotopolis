@@ -37,7 +37,7 @@ class PgVectorStorageService:
         # Initialize embeddings
         self.embeddings = OpenAIEmbeddings(
             openai_api_key=settings.OPENAI_API_KEY,
-            model="text-embedding-3-large"
+            model="text-embedding-3-small"  # Using small model with 1536 dimensions instead of large with 3072
         )
         
         # Initialize text splitter

@@ -646,7 +646,7 @@ class TestAgentManagerIntegration:
             
             assert context.thread_id == thread_id
             assert context.owner_id == owner_id
-            assert context.buffer_context == "Previous messages"
+            assert context.buffer_context == "Previous conversation"
             assert isinstance(context.available_agents, dict)
 
 
