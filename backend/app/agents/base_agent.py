@@ -1,5 +1,5 @@
 from typing import Any, Callable, List, Optional, Union, Type, Dict, TypeVar, Generic
-from agents import Agent, ModelSettings, AgentHooks
+from agents import Agent, ModelSettings, AgentHooks, function_tool
 from agents.tool import Tool, FunctionTool
 from agents.run_context import TContext, RunContextWrapper
 import inspect
@@ -7,6 +7,20 @@ import logging
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+class GuardrailFunctionOutput:
+    """Output structure for guardrail functions."""
+    
+    def __init__(self, tripwire_triggered: bool, output_info: str):
+        """
+        Initialize guardrail function output.
+        
+        Args:
+            tripwire_triggered: Whether a guardrail condition was triggered
+            output_info: Information about the guardrail check
+        """
+        self.tripwire_triggered = tripwire_triggered
+        self.output_info = output_info
 
 class BaseAgentHooks(AgentHooks):
     """Custom hooks for all agents to ensure context is properly initialized."""
@@ -18,8 +32,7 @@ class BaseAgentHooks(AgentHooks):
         Args:
             context: The run context wrapper containing conversation data
         """
-        # Call parent implementation
-        await super().init_context(context)
+        # No parent implementation to call in AgentHooks
         
         # Make sure the context has all expected attributes
         if hasattr(context, 'context'):
@@ -153,9 +166,8 @@ class BaseAgent(Agent, Generic[T]):
                         # The function already has a schema, this is likely an SDK function_tool
                         tools.append(func)
                     else:
-                        # We need to import function_tool here to avoid circular import
-                        from agents import function_tool
                         # Attempt to convert to a function tool
+                        # function_tool is already imported at the top of the file
                         tool = function_tool(func)
                         
                         # Validate the schema
@@ -329,8 +341,7 @@ class BaseAgent(Agent, Generic[T]):
             self.tools.append(func)
         else:
             try:
-                # Import at function level to avoid circular import
-                from agents import function_tool
+                # function_tool is already imported at the top of the file
                 tool = function_tool(func)
                 self._validate_function_schema(func, tool)
                 self.tools.append(tool)

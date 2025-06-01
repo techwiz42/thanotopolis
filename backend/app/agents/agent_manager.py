@@ -262,6 +262,7 @@ class AgentManager:
                     buffer_context = buffer_manager.get_context(thread_uuid)
                     
                     if buffer_context:
+                        # Assign buffer_context to the context object
                         context.buffer_context = buffer_context
                         logger.info(f"[BUFFER_DEBUG] Retrieved conversation context from buffer for thread {thread_id}, length: {len(buffer_context)}")
                         
@@ -269,10 +270,14 @@ class AgentManager:
                         if len(buffer_context.strip()) < 10:
                             logger.warning(f"[BUFFER_DEBUG] Buffer context is too short ({len(buffer_context)} chars), might be insufficient")
                     else:
+                        # Make sure we set buffer_context even when empty
+                        context.buffer_context = buffer_context or "Previous conversation"
                         logger.warning(f"[BUFFER_DEBUG] No buffer context found for thread {thread_id} (UUID: {thread_uuid})")
                 except Exception as e:
                     logger.error(f"Error retrieving buffer context: {e}")
                     logger.error(traceback.format_exc())
+                    # Ensure buffer_context is set even in case of error
+                    context.buffer_context = "Previous conversation"
 
             # If buffer didn't have context or had an error, fall back to DB
             if not context.buffer_context and db and thread_id:

@@ -98,7 +98,7 @@ class Settings:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "YOU_GOT_NOTHIN")
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "NOT_SET")
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "NOT_SET")
-    DEFAULT_AGENT_MODEL: str = "gpt-4o-mini-2024-07-18"
+    DEFAULT_AGENT_MODEL: str = "gpt-4o-mini"
     AGENT_RESPONSE_TIMEOUT: int = 120  # seconds
     MAX_TURNS = 50
 

@@ -34,6 +34,7 @@ class WebSearchAgent(BaseAgent):
         search_context_size: Optional[str] = None,
         tool_choice: Optional[str] = "auto",
         parallel_tool_calls: bool = True,
+        max_tokens: Optional[int] = 2048,
         **kwargs
     ):
         """
@@ -130,7 +131,7 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
             functions=all_functions,  # Pass all functions as tools
             tool_choice=tool_choice,
             parallel_tool_calls=parallel_tool_calls,
-            max_tokens=2048,
+            max_tokens=max_tokens,
             **kwargs
         )
 
@@ -142,9 +143,6 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
         Args:
             context: The context wrapper object with conversation data
         """
-        # Call parent implementation
-        await super().init_context(context)
-        
         # Add any agent-specific context initialization here
         logger.info(f"Initialized context for WebSearchAgent")
         
@@ -231,7 +229,7 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
         logger.info(f"Synthesizing information for question: {focus_question}")
         
         if not search_results:
-            return "No search results were provided to synthesize."
+            return f"{focus_question} - No search results were provided to synthesize."
         
         # Count the number of sources
         num_sources = len(search_results)
@@ -311,12 +309,15 @@ When searching, always strive to find the most accurate, up-to-date, and relevan
         # Create parameter dictionary for the new instance
         params = {
             "name": kwargs.get("name", self.name),
-            "model": kwargs.get("model", self.model),
             "search_location": kwargs.get("search_location", self._search_location),
             "search_context_size": kwargs.get("search_context_size", self._search_context_size),
             "tool_choice": kwargs.get("tool_choice", self.model_settings.tool_choice),
             "parallel_tool_calls": kwargs.get("parallel_tool_calls", self.model_settings.parallel_tool_calls),
         }
+        
+        # Only add max_tokens if not None
+        if hasattr(self.model_settings, 'max_tokens') and self.model_settings.max_tokens is not None:
+            params["max_tokens"] = kwargs.get("max_tokens", self.model_settings.max_tokens)
         
         # Filter out None values to use defaults where not specified
         params = {k: v for k, v in params.items() if v is not None}
