@@ -21,8 +21,16 @@ const transformMessageResponse = (msg: MessageResponse): Message => {
   let senderName = '';
   let senderEmail = '';
 
+  // Check if this is an agent message by looking for agent_type
+  if (msg.agent_type) {
+    isOwner = false;
+    // Set appropriate sender type based on agent type
+    senderType = msg.agent_type === 'MODERATOR' ? 'moderator' : 'agent';
+    // Use agent type or fallback to 'Agent'
+    senderName = msg.agent_type || 'Agent';
+  }
   // Check if this is a participant/user message by looking for participant_id
-  if (msg.participant_id) {
+  else if (msg.participant_id) {
     // Check for owner status in message_info
     isOwner = msg.message_info?.is_owner === true;
     senderType = 'user';
@@ -35,7 +43,7 @@ const transformMessageResponse = (msg: MessageResponse): Message => {
     // Extract email
     senderEmail = msg.message_info?.participant_email || '';
   } 
-  // Check if this is an agent message
+  // Check if this is an agent message through agent_id
   else if (msg.agent_id) {
     isOwner = false;
     // Set appropriate sender type based on agent type
@@ -62,7 +70,9 @@ const transformMessageResponse = (msg: MessageResponse): Message => {
       file_name: msg.message_info?.file_name,
       file_type: msg.message_info?.file_type,
       file_size: msg.message_info?.file_size
-    }
+    },
+    // Add agent_type to the message if it exists
+    agent_type: msg.agent_type
   };
   
   console.log("DB Message transformed:", JSON.stringify(transformed, null, 2));

@@ -552,12 +552,28 @@ async def websocket_endpoint(
                 if not metadata and msg.message_metadata:
                     metadata = msg.message_metadata
                 
-                # Check if this is an agent message based on either agent_type OR metadata
-                if msg.agent_type or (metadata and metadata.get("agent_type")):
+                # Check if this is an agent message based on agent_type OR metadata OR sender_type
+                if (msg.agent_type or 
+                    (metadata and (metadata.get("agent_type") or metadata.get("sender_type") == "agent")) or
+                    (not msg.user_id and not msg.participant_id)):  # If not user or participant, likely an agent
+                    
                     # This is an agent message, ensure it's recognized as such
                     sender_type = "agent"  # This MUST be "agent" for frontend to recognize it correctly
-                    agent_type = msg.agent_type or metadata.get("agent_type", "ASSISTANT")
+                    
+                    # Determine agent type from available sources
+                    agent_type = None
+                    if msg.agent_type:
+                        agent_type = msg.agent_type
+                    elif metadata and metadata.get("agent_type"):
+                        agent_type = metadata.get("agent_type")
+                    else:
+                        # Default agent type if we can't determine it
+                        agent_type = "ASSISTANT"
+                    
                     sender_name = agent_type
+                    
+                    # Log detection of agent message for debugging
+                    logger.info(f"Detected agent message id={msg.id}, agent_type={agent_type}, metadata={metadata}")
                     
                     # We'll add message_type field explicitly for agent messages
                     message_data = {

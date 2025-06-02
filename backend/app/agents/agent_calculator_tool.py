@@ -7,19 +7,8 @@ from typing_extensions import get_type_hints
 
 from app.core.common_calculator import CalculatorUtility
 
-# Import function_tool from the correct location
-# This is a placeholder until the correct import path is determined
-# During testing, this will be mocked
-try:
-    from app.agents.agent_interface import function_tool
-    from app.agents.run_context import RunContextWrapper
-except ImportError:
-    # For testing purposes, we'll create mock versions
-    def function_tool(func):
-        return func
-    
-    class RunContextWrapper:
-        pass
+# Import function_tool from the agents SDK
+from agents import function_tool, RunContextWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +97,12 @@ class AgentCalculatorTool:
 
     @staticmethod
     async def calculate(
-        operation_type: Optional[str] = None,
-        operation: Optional[str] = None,
-        expression: Optional[str] = None,
-        values: Optional[List[Union[int, float]]] = None,
-        parameters: Optional[Dict[str, Any]] = None
+        context: RunContextWrapper,
+        operation_type: str = "arithmetic",
+        operation: str = "add",
+        expression: str = "",
+        values: str = "[]",
+        parameters: str = "{}"
     ) -> Dict[str, Any]:
         """
         Performs a wide range of calculations. Supports the following operation types:
@@ -130,34 +120,35 @@ class AgentCalculatorTool:
 
     Use this tool for structured or quantitative analysis queries.
         Args:
+            context: The conversation context wrapper
             operation_type: The type of operation ("arithmetic", "statistical", "financial", "health", "business").
             operation: The specific operation to perform.
             expression: A mathematical expression to evaluate (for arithmetic operations).
-            values: List of numeric values for calculations.
-            parameters: Dictionary of parameters for the calculation.
+            values: JSON string of numeric values for calculations (e.g., "[1, 2, 3]").
+            parameters: JSON string of parameters for the calculation (e.g., '{"base": 2, "exponent": 3}').
                 
         Returns:
             Dictionary containing the calculation results.
         """
-        # Required parameters with validation
-        if operation_type is None:
-            return {"error": "Operation type is required"}
-        if operation is None:
-            return {"error": "Operation is required"}
+        # Parse string parameters
+        try:
+            import json
+            parsed_values = json.loads(values) if values and values != "[]" else []
+            parsed_parameters = json.loads(parameters) if parameters and parameters != "{}" else {}
+        except json.JSONDecodeError as e:
+            return {"error": f"Invalid JSON in parameters: {str(e)}"}
         
-        # Handle optional parameters
-        if values is None:
-            values = []
-        if expression is None:
-            expression = ""
-        if parameters is None:
-            parameters = {}
+        # Validate required parameters
+        if not operation_type:
+            return {"error": "Operation type is required"}
+        if not operation:
+            return {"error": "Operation is required"}
             
         # Only add expression to parameters if it has a value
         if expression:
-            parameters["expression"] = expression
+            parsed_parameters["expression"] = expression
                 
-        logger.info(f"Performing {operation_type} calculation: {operation} with parameters: {parameters}")
+        logger.info(f"Performing {operation_type} calculation: {operation} with parameters: {parsed_parameters}")
         
         try:
             # Delegate to the appropriate method based on operation type
@@ -176,34 +167,34 @@ class AgentCalculatorTool:
                 }.get(operation.lower())
                 if normalized_op in ["add", "subtract", "multiply", "divide"]:
                     # These operations expect values
-                    if not values:
+                    if not parsed_values:
                         return {"error": f"{operation} requires numeric values"}
-                    return CalculatorUtility.basic_arithmetic(operation, values, parameters)
+                    return CalculatorUtility.basic_arithmetic(operation, parsed_values, parsed_parameters)
                 elif operation == "power":
                     # For power operation
                     base = None
                     exponent = None
-                    if len(values) == 2:
-                        base = values[0]
-                        exponent = values[1]
-                    elif parameters.get("base", None) and parameters.get("exponent", None):
-                        base = parameters.get("base")
-                        exponent = parameters.get("exponent")
+                    if len(parsed_values) == 2:
+                        base = parsed_values[0]
+                        exponent = parsed_values[1]
+                    elif parsed_parameters.get("base", None) and parsed_parameters.get("exponent", None):
+                        base = parsed_parameters.get("base")
+                        exponent = parsed_parameters.get("exponent")
                     if base is None or exponent is None:
                         return {"error": "Power operation requires 'base' and 'exponent' parameters"}
                     power_params = {"base": base, "exponent": exponent}
                     return CalculatorUtility.basic_arithmetic("power", [1], power_params)
                 elif operation == "root":
                     # For root operation
-                    if len(values) == 2:
-                        value = values[0]
-                        n = values[1]
-                    elif len(values) == 1:
-                        value = values[0]
+                    if len(parsed_values) == 2:
+                        value = parsed_values[0]
+                        n = parsed_values[1]
+                    elif len(parsed_values) == 1:
+                        value = parsed_values[0]
                         n = 2
                     else:
-                        value = parameters.get("value")
-                        n = parameters.get("n", 2)  # Default to square root
+                        value = parsed_parameters.get("value")
+                        n = parsed_parameters.get("n", 2)  # Default to square root
                     if value is None:
                         return {"error": "Root operation requires 'value' parameter"}
                     root_params = {"value": value, "n": n}
@@ -235,22 +226,22 @@ class AgentCalculatorTool:
                     return {"error": f"Unsupported arithmetic operation: {operation}"}
             
             elif operation_type == "statistical":
-                if not values:
+                if not parsed_values:
                     return {"error": f"Statistical operations require numeric values"}
                 # Pass values positionally, but parameters as a dictionary
-                return CalculatorUtility.statistical_operations(operation, values, parameters)
+                return CalculatorUtility.statistical_operations(operation, parsed_values, parsed_parameters)
             
             elif operation_type == "financial":
                 # Financial calculations don't need values in parameters
-                return CalculatorUtility.financial_calculations(operation, parameters)
+                return CalculatorUtility.financial_calculations(operation, parsed_parameters)
             
             elif operation_type == "health":
                 # Health metrics don't need values in parameters
-                return CalculatorUtility.health_metrics(operation, parameters)
+                return CalculatorUtility.health_metrics(operation, parsed_parameters)
             
             elif operation_type == "business":
                 # Business metrics don't need values in parameters
-                return CalculatorUtility.business_metrics(operation, parameters)
+                return CalculatorUtility.business_metrics(operation, parsed_parameters)
             
             else:
                 return {"error": f"Unsupported operation type: {operation_type}"}
@@ -262,26 +253,30 @@ class AgentCalculatorTool:
     
     @staticmethod
     async def interpret_calculation_results(
-        calculation_results: Optional[Dict[str, Any]] = None,
-        interpretation_level: Optional[str] = None
+        context: RunContextWrapper,
+        calculation_results: str = "{}",
+        interpretation_level: str = "standard"
     ) -> Dict[str, Any]:
         """
         Interpret calculation results in a human-friendly way.
         
         Args:
-            calculation_results: The results from a calculation.
+            context: The conversation context wrapper
+            calculation_results: JSON string of the results from a calculation.
             interpretation_level: Level of detail for interpretation ("basic", "standard", "detailed").
                 
         Returns:
             Dictionary containing the interpreted results.
         """
-        # Handle default values
-        if calculation_results is None:
-            calculation_results = {}
-        if interpretation_level is None:
-            interpretation_level = "standard"
-        if "error" in calculation_results:
-            return {"interpretation": f"Error in calculation: {calculation_results['error']}"}
+        # Parse string parameters
+        try:
+            import json
+            parsed_results = json.loads(calculation_results) if calculation_results and calculation_results != "{}" else {}
+        except json.JSONDecodeError as e:
+            return {"error": f"Invalid JSON in calculation_results: {str(e)}"}
+        
+        if "error" in parsed_results:
+            return {"interpretation": f"Error in calculation: {parsed_results['error']}"}
         
         # Create a basic interpretation structure
         interpretation = {
@@ -294,23 +289,23 @@ class AgentCalculatorTool:
         
         # Extract main result value if present
         main_result = None
-        if "result" in calculation_results:
-            main_result = calculation_results["result"]
+        if "result" in parsed_results:
+            main_result = parsed_results["result"]
             interpretation["summary"] = f"The calculation resulted in {main_result}."
         
         # Interpret financial calculations
-        if "final_amount" in calculation_results:
-            interpretation["summary"] = f"The investment grows to {calculation_results['final_amount']:,.2f}."
+        if "final_amount" in parsed_results:
+            interpretation["summary"] = f"The investment grows to {parsed_results['final_amount']:,.2f}."
             interpretation["key_findings"].append(
-                f"Total interest/growth: {calculation_results.get('interest_earned', 0):,.2f}"
+                f"Total interest/growth: {parsed_results.get('interest_earned', 0):,.2f}"
             )
         
         # Interpret statistical calculations
-        if "mean" in calculation_results:
-            interpretation["key_findings"].append(f"Average (mean) value: {calculation_results['mean']:,.2f}")
+        if "mean" in parsed_results:
+            interpretation["key_findings"].append(f"Average (mean) value: {parsed_results['mean']:,.2f}")
         
-        if "correlation" in calculation_results:
-            corr = calculation_results["correlation"]
+        if "correlation" in parsed_results:
+            corr = parsed_results["correlation"]
             if corr > 0.7:
                 strength = "strong positive"
             elif corr > 0.3:
@@ -324,9 +319,9 @@ class AgentCalculatorTool:
             interpretation["key_findings"].append(f"There is a {strength} correlation of {corr:.2f}.")
         
         # Interpret health metrics
-        if "bmi" in calculation_results:
-            bmi = calculation_results["bmi"]
-            category = calculation_results.get("category", "")
+        if "bmi" in parsed_results:
+            bmi = parsed_results["bmi"]
+            category = parsed_results.get("category", "")
             interpretation["summary"] = f"BMI is {bmi:.1f}, categorized as {category}."
             
             if category == "Underweight":
@@ -335,8 +330,8 @@ class AgentCalculatorTool:
                 interpretation["recommendations"].append("Consider consulting a healthcare provider about healthy weight management strategies.")
         
         # Interpret business metrics
-        if "profit_margin" in calculation_results or "net_profit_margin" in calculation_results:
-            margin = calculation_results.get("profit_margin", calculation_results.get("net_profit_margin", 0))
+        if "profit_margin" in parsed_results or "net_profit_margin" in parsed_results:
+            margin = parsed_results.get("profit_margin", parsed_results.get("net_profit_margin", 0))
             interpretation["summary"] = f"Profit margin is {margin:.2f}%."
             
             if margin < 0:
@@ -349,9 +344,9 @@ class AgentCalculatorTool:
                 interpretation["key_findings"].append("Profit margin is healthy.")
                 interpretation["recommendations"].append("Focus on maintaining competitive advantage and growth opportunities.")
         
-        if "break_even_units" in calculation_results:
-            be_units = calculation_results["break_even_units"]
-            be_revenue = calculation_results.get("break_even_revenue", 0)
+        if "break_even_units" in parsed_results:
+            be_units = parsed_results["break_even_units"]
+            be_revenue = parsed_results.get("break_even_revenue", 0)
             interpretation["summary"] = f"Break-even point is {be_units:.1f} units (${be_revenue:,.2f} revenue)."
             interpretation["key_findings"].append(f"The business needs to sell at least {be_units:.1f} units to cover fixed costs.")
         
@@ -361,11 +356,11 @@ class AgentCalculatorTool:
             return {"interpretation": interpretation["summary"]}
         elif interpretation_level == "detailed":
             # Add calculation steps if available
-            if "calculation_steps" in calculation_results:
-                interpretation["calculation_steps"] = calculation_results["calculation_steps"]
+            if "calculation_steps" in parsed_results:
+                interpretation["calculation_steps"] = parsed_results["calculation_steps"]
             # Add all parameters used
-            if "parameters" in calculation_results:
-                interpretation["parameters_used"] = calculation_results["parameters"]
+            if "parameters" in parsed_results:
+                interpretation["parameters_used"] = parsed_results["parameters"]
         
         return {"interpretation": interpretation}
 

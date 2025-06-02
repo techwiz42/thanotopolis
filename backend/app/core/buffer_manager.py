@@ -1,34 +1,313 @@
-# In app/core/buffer_manager.py
+# app/core/buffer_manager.py
 
 import asyncio
 import logging
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, List, Any
 from uuid import UUID
-from datetime import datetime
-from app.core.config import settings
-from app.services.memory.conversation_buffer import ConversationBuffer
+from datetime import datetime, timedelta
+import json
+import tiktoken
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
+class ConversationBuffer:
+    """Manages conversation context with automatic summarization"""
+    
+    def __init__(self, conversation_id: UUID, max_tokens: int = 20000):
+        self.conversation_id = conversation_id
+        self.max_tokens = max_tokens
+        self.messages: List[Dict[str, Any]] = []
+        self.summary: Optional[str] = None
+        self.last_updated = datetime.utcnow()
+        self.encoding = tiktoken.get_encoding("cl100k_base")
+        self._lock = asyncio.Lock()
+        
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in text"""
+        try:
+            return len(self.encoding.encode(text))
+        except Exception as e:
+            logger.error(f"Error counting tokens: {e}")
+            # Fallback estimate: roughly 4 characters per token
+            return len(text) // 4
+        
+    def add_message(
+        self, 
+        message: str, 
+        sender_id: str, 
+        sender_type: str, 
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """Add a message to the buffer"""
+        msg_data = {
+            "content": message,
+            "sender_id": sender_id,
+            "sender_type": sender_type,
+            "timestamp": datetime.utcnow().isoformat(),
+            "metadata": metadata or {}
+        }
+        
+        self.messages.append(msg_data)
+        self.last_updated = datetime.utcnow()
+        
+        # Check if we need to summarize (async)
+        asyncio.create_task(self._check_and_summarize())
+        
+    async def _check_and_summarize(self):
+        """Check if buffer needs summarization"""
+        async with self._lock:
+            try:
+                current_context = self.get_formatted_context()
+                token_count = self.count_tokens(current_context)
+                
+                if token_count > self.max_tokens:
+                    await self._summarize_older_messages()
+            except Exception as e:
+                logger.error(f"Error checking buffer size: {e}")
+    
+    async def _summarize_older_messages(self):
+        """Summarize older messages to keep buffer size manageable"""
+        if len(self.messages) <= 20:  # Don't summarize if we have few messages
+            return
+            
+        try:
+            # Keep last 20 messages, summarize the rest
+            messages_to_summarize = self.messages[:-20]
+            recent_messages = self.messages[-20:]
+            
+            if not messages_to_summarize:
+                return
+                
+            # Create summary of older messages
+            summary_text = await self._create_summary(messages_to_summarize)
+            
+            # Update buffer with summary + recent messages
+            self.summary = summary_text
+            self.messages = recent_messages
+            
+            logger.info(f"Summarized {len(messages_to_summarize)} older messages for conversation {self.conversation_id}")
+            
+        except Exception as e:
+            logger.error(f"Error summarizing buffer: {e}")
+    
+    async def _create_summary(self, messages: List[Dict[str, Any]]) -> str:
+        """Create summary of messages"""
+        try:
+            from openai import AsyncOpenAI
+            from app.core.config import settings
+            
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Format messages for summarization
+            formatted_messages = []
+            for msg in messages:
+                sender_type = msg['sender_type']
+                sender_id = msg['sender_id']
+                content = msg['content']
+                
+                if sender_type == 'agent':
+                    formatted_messages.append(f"[{sender_id}]: {content}")
+                elif sender_type == 'user':
+                    formatted_messages.append(f"[USER]: {content}")
+                else:
+                    formatted_messages.append(f"[{sender_type.upper()}]: {content}")
+            
+            conversation_text = "\n".join(formatted_messages)
+            
+            summary_prompt = f"""Summarize this conversation segment, preserving key information for context:
+
+{conversation_text}
+
+Focus on:
+- Main topics and themes discussed
+- Important decisions or outcomes
+- Agent responses and recommendations
+- Any ongoing issues or follow-ups needed
+- Essential context for continuing the conversation
+
+Provide a concise but comprehensive summary."""
+
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a conversation summarizer. Preserve essential context while being concise."},
+                    {"role": "user", "content": summary_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=800
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Error creating summary: {e}")
+            return f"[Summary of {len(messages)} messages - details unavailable due to error]"
+    
+    def get_formatted_context(self) -> str:
+        """Get formatted conversation context"""
+        context_parts = []
+        
+        # Add summary if it exists
+        if self.summary:
+            context_parts.append("CONVERSATION SUMMARY:")
+            context_parts.append(self.summary)
+            context_parts.append("\nRECENT CONVERSATION:")
+        else:
+            context_parts.append("CONVERSATION HISTORY:")
+        
+        # Add recent messages
+        for msg in self.messages:
+            sender_type = msg['sender_type']
+            sender_id = msg['sender_id']
+            content = msg['content']
+            timestamp = msg['timestamp']
+            
+            if sender_type == 'agent':
+                line = f"[{timestamp}] [{sender_id}]: {content}"
+            elif sender_type == 'user':
+                line = f"[{timestamp}] [USER]: {content}"
+            else:
+                line = f"[{timestamp}] [{sender_type.upper()}]: {content}"
+                
+            context_parts.append(line)
+        
+        return "\n".join(context_parts)
+    
+    async def load_from_database(self, db: Any):
+        """Load conversation history from database"""
+        async with self._lock:
+            try:
+                from app.models.models import Message, User, Participant
+                
+                # Query for all messages
+                query = (
+                    select(Message)
+                    .options(
+                        selectinload(Message.user),
+                        selectinload(Message.participant)
+                    )
+                    .where(Message.conversation_id == self.conversation_id)
+                    .order_by(Message.created_at)
+                )
+
+                result = await db.execute(query)
+                messages = result.scalars().all()
+                
+                # Convert to buffer format
+                self.messages = []
+                for msg in messages:
+                    sender_type = "system"
+                    sender_id = "system"
+                    
+                    # Parse additional_data for metadata
+                    metadata = {}
+                    if msg.additional_data:
+                        try:
+                            if isinstance(msg.additional_data, str):
+                                metadata = json.loads(msg.additional_data)
+                            else:
+                                metadata = msg.additional_data
+                        except:
+                            pass
+                    
+                    if msg.agent_type:
+                        sender_type = "agent"
+                        sender_id = msg.agent_type
+                    elif msg.user_id:
+                        sender_type = "user"
+                        if msg.user:
+                            sender_id = f"{msg.user.first_name} {msg.user.last_name}".strip() or msg.user.username
+                        else:
+                            sender_id = "user"
+                    elif msg.participant_id:
+                        sender_type = "participant"
+                        if msg.participant:
+                            sender_id = msg.participant.name or msg.participant.identifier
+                        else:
+                            sender_id = "participant"
+                    
+                    msg_data = {
+                        "content": msg.content,
+                        "sender_id": sender_id,
+                        "sender_type": sender_type,
+                        "timestamp": msg.created_at.isoformat() if msg.created_at else datetime.utcnow().isoformat(),
+                        "metadata": metadata
+                    }
+                    self.messages.append(msg_data)
+                
+                # Check if we need to summarize immediately
+                await self._check_and_summarize()
+                
+                logger.info(f"Loaded {len(messages)} messages from database for conversation {self.conversation_id}")
+                
+            except Exception as e:
+                logger.error(f"Error loading from database: {e}")
+                logger.error(f"Traceback: {e.__traceback__}")
+
 class BufferManager:
-    def __init__(self):
-        self.conversation_buffer = ConversationBuffer(save_dir=settings.BUFFER_SAVE_DIR)
-        self._buffer_loaded = False
-        self._buffer_lock = None
-        self._initialized = False
-
-    async def _ensure_initialized(self):
-        """Initialize async components safely"""
-        if not self._initialized:
-            logger.info("[BUFFER_DEBUG] Initializing BufferManager")
-            self._buffer_lock = asyncio.Lock()
-            if not self._buffer_loaded:
-                logger.info("[BUFFER_DEBUG] Loading conversation buffer from disk")
-                await self.conversation_buffer.load_from_disk()
-                self._buffer_loaded = True
-            self._initialized = True
-            logger.info("[BUFFER_DEBUG] BufferManager initialized")
-
+    """Buffer manager with automatic context management and summarization"""
+    
+    def __init__(self, max_tokens: int = 20000, cleanup_interval: int = 3600):
+        self.buffers: Dict[UUID, ConversationBuffer] = {}
+        self.max_tokens = max_tokens
+        self.cleanup_interval = cleanup_interval
+        self._cleanup_task = None
+        self._lock = asyncio.Lock()
+        
+        # Start cleanup task
+        self._start_cleanup_task()
+    
+    def _start_cleanup_task(self):
+        """Start periodic cleanup of old buffers"""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
+    
+    async def _periodic_cleanup(self):
+        """Periodically clean up old buffers"""
+        while True:
+            try:
+                await asyncio.sleep(self.cleanup_interval)
+                await self._cleanup_old_buffers()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in buffer cleanup: {e}")
+    
+    async def _cleanup_old_buffers(self):
+        """Remove buffers that haven't been used recently"""
+        cutoff_time = datetime.utcnow() - timedelta(hours=6)
+        
+        async with self._lock:
+            to_remove = []
+            for conv_id, buffer in self.buffers.items():
+                if buffer.last_updated < cutoff_time:
+                    to_remove.append(conv_id)
+            
+            for conv_id in to_remove:
+                del self.buffers[conv_id]
+                logger.info(f"Cleaned up buffer for conversation {conv_id}")
+    
+    async def get_or_create_buffer(
+        self, 
+        conversation_id: UUID, 
+        db: Optional[Any] = None
+    ) -> ConversationBuffer:
+        """Get existing buffer or create new one"""
+        async with self._lock:
+            if conversation_id not in self.buffers:
+                buffer = ConversationBuffer(conversation_id, self.max_tokens)
+                
+                # Load from database if available
+                if db:
+                    await buffer.load_from_database(db)
+                
+                self.buffers[conversation_id] = buffer
+                logger.info(f"Created new buffer for conversation {conversation_id}")
+            
+            return self.buffers[conversation_id]
+    
     async def add_message(
         self,
         conversation_id: UUID,
@@ -36,250 +315,253 @@ class BufferManager:
         sender_id: str,
         sender_type: str,
         owner_id: Optional[UUID] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        db: Optional[Any] = None
     ):
-        """Add a message to the conversation buffer."""
-        await self._ensure_initialized()
+        """Add message to conversation buffer"""
         try:
-            async with self._buffer_lock:
-                self.conversation_buffer.add_message(
-                    conversation_id=conversation_id,
-                    message=message,
-                    sender_id=sender_id,
-                    sender_type=sender_type,
-                    owner_id=owner_id,
-                    metadata=metadata
-                )
-                logger.debug(f"Stored message in buffer for conversation {conversation_id}")
-        except Exception as e:
-            logger.error(f"Failed to store message in buffer: {e}")
-            raise
-
-    async def get_context(self, conversation_id: UUID, include_metadata: bool = False) -> str:
-        """Get formatted context from conversation buffer."""
-        await self._ensure_initialized()
-        logger.info(f"[BUFFER_DEBUG] Retrieving context for conversation: {conversation_id}")
-        
-        # Ensure the conversation exists in the buffer
-        str_id = str(conversation_id)
-        if str_id not in self.conversation_buffer.buffers:
-            logger.warning(f"[BUFFER_DEBUG] Conversation {conversation_id} not found in buffer, checking database")
-            # Try to load messages from database
-            await self._load_messages_from_db(conversation_id)
-        
-        context = self.conversation_buffer.format_context(conversation_id, include_metadata)
-        logger.info(f"[BUFFER_DEBUG] Retrieved context length: {len(context)} characters")
-        if not context:
-            logger.warning(f"[BUFFER_DEBUG] No context found for conversation {conversation_id}")
-            # Log buffer state
-            logger.info(f"[BUFFER_DEBUG] Current buffer keys: {list(self.conversation_buffer.buffers.keys())}")
-            # Try one more time with database reload forced
-            await self._load_messages_from_db(conversation_id, force=True)
-            context = self.conversation_buffer.format_context(conversation_id, include_metadata)
-            logger.info(f"[BUFFER_DEBUG] After forced reload, context length: {len(context)} characters")
-        return context
-        
-    async def _load_messages_from_db(self, conversation_id: UUID, force: bool = False):
-        """Load messages from database into buffer when not found in memory."""
-        try:
-            from sqlalchemy.ext.asyncio import AsyncSession
-            from sqlalchemy import select
-            from app.db.database import get_db
-            from app.models.models import Message, User, Conversation, Participant
+            buffer = await self.get_or_create_buffer(conversation_id, db)
+            buffer.add_message(message, sender_id, sender_type, metadata)
             
-            # Clear existing buffer if forcing reload
-            if force:
-                str_id = str(conversation_id)
-                if str_id in self.conversation_buffer.buffers:
-                    self.conversation_buffer.clear_conversation(conversation_id)
-                    logger.info(f"[BUFFER_DEBUG] Forced buffer clear for conversation {conversation_id}")
-            
-            # Get database session
-            db = await anext(get_db())
-            
-            # Query for messages in this conversation
-            query = (
-                select(Message)
-                .where(Message.conversation_id == conversation_id)
-                .order_by(Message.created_at)
-            )
-            
-            result = await db.execute(query)
-            messages = result.scalars().all()
-            
-            if not messages:
-                logger.warning(f"[BUFFER_DEBUG] No messages found in database for conversation {conversation_id}")
-                return
-                
-            logger.info(f"[BUFFER_DEBUG] Found {len(messages)} messages in database for conversation {conversation_id}")
-            
-            # Get owner ID from conversation record
-            owner_id = None
-            try:
-                conv_query = select(Conversation).where(Conversation.id == conversation_id)
-                conv_result = await db.execute(conv_query)
-                conversation = conv_result.scalar_one_or_none()
-                if conversation:
-                    owner_id = conversation.created_by_user_id
-                    logger.info(f"[BUFFER_DEBUG] Found conversation owner: {owner_id}")
-            except Exception as e:
-                logger.error(f"[BUFFER_DEBUG] Error getting conversation owner: {e}")
-            
-            # Cache user data to avoid repeated queries
-            user_cache = {}
-            participant_cache = {}
-            
-            # Add messages to buffer
-            for msg in messages:
-                sender_type = "system"
-                sender_id = "system"
-                sender_name = "System"
-                
-                # User message
-                if msg.user_id:
-                    sender_type = "user"
-                    sender_id = str(msg.user_id)
-                    
-                    # Get user name if not in cache
-                    if sender_id not in user_cache:
-                        try:
-                            user_query = select(User).where(User.id == msg.user_id)
-                            user_result = await db.execute(user_query)
-                            user = user_result.scalar_one_or_none()
-                            if user:
-                                name = f"{user.first_name} {user.last_name}".strip() or user.username
-                                user_cache[sender_id] = name
-                                sender_name = name
-                            else:
-                                user_cache[sender_id] = "Unknown User"
-                                sender_name = "Unknown User"
-                        except Exception as e:
-                            logger.error(f"[BUFFER_DEBUG] Error getting user data: {e}")
-                            user_cache[sender_id] = "Unknown User"
-                            sender_name = "Unknown User"
-                    else:
-                        sender_name = user_cache[sender_id]
-                
-                # Agent message
-                elif msg.agent_type:
-                    sender_type = "agent"  # This MUST be "agent" for frontend to recognize it correctly
-                    sender_id = msg.agent_type
-                    sender_name = msg.agent_type
-                    
-                    # Ensure agent_type is always in metadata for agent messages
-                    if not metadata:
-                        metadata = {}
-                    metadata["agent_type"] = msg.agent_type
-                    metadata["message_type"] = "agent"  # Also set message_type consistently
-                
-                # Participant message
-                elif msg.participant_id:
-                    sender_type = "participant"
-                    sender_id = str(msg.participant_id)
-                    
-                    # Get participant name if not in cache
-                    if sender_id not in participant_cache:
-                        try:
-                            part_query = select(Participant).where(Participant.id == msg.participant_id)
-                            part_result = await db.execute(part_query)
-                            participant = part_result.scalar_one_or_none()
-                            if participant:
-                                name = participant.name or participant.identifier
-                                participant_cache[sender_id] = name
-                                sender_name = name
-                            else:
-                                participant_cache[sender_id] = "Unknown Participant"
-                                sender_name = "Unknown Participant"
-                        except Exception as e:
-                            logger.error(f"[BUFFER_DEBUG] Error getting participant data: {e}")
-                            participant_cache[sender_id] = "Unknown Participant"
-                            sender_name = "Unknown Participant"
-                    else:
-                        sender_name = participant_cache[sender_id]
-                
-                # Parse message metadata if available
-                metadata = None
-                if msg.additional_data:
-                    try:
-                        if isinstance(msg.additional_data, str):
-                            metadata = json.loads(msg.additional_data)
-                        else:
-                            metadata = msg.additional_data
-                    except Exception:
-                        metadata = None
-                
-                # Ensure we have metadata object
-                if not metadata:
-                    metadata = {}
-                
-                # Add sender info to metadata
-                metadata["sender_name"] = sender_name
-                metadata["sender_type"] = sender_type  # Explicitly add sender_type to ensure consistency
-                if msg.agent_type:
-                    metadata["agent_type"] = msg.agent_type
-                
-                # Add message to buffer
-                await self.add_message(
-                    conversation_id=conversation_id,
-                    message=msg.content,
-                    sender_id=sender_id,
-                    sender_type=sender_type,
-                    owner_id=owner_id or msg.user_id,  # Use conversation owner or message user_id
-                    metadata=metadata
-                )
-            
-            logger.info(f"[BUFFER_DEBUG] Successfully loaded {len(messages)} messages from database for conversation {conversation_id}")
+            logger.debug(f"Added message to buffer for conversation {conversation_id}")
             
         except Exception as e:
-            logger.error(f"[BUFFER_DEBUG] Error loading messages from database: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-    async def save_state(self):
-        """Save current buffer state to disk."""
-        await self._ensure_initialized()
-        try:
-            async with self._buffer_lock:
-                await self.conversation_buffer.save_to_disk()
-        except Exception as e:
-            logger.error(f"Error saving buffer state: {e}")
-            raise
-
-    async def cleanup_conversation(self, conversation_id: UUID):
-        """Export and clean up a conversation from the buffer."""
-        await self._ensure_initialized()
-        try:
-            async with self._buffer_lock:
-                buffer_data = self.conversation_buffer.cleanup_and_export(conversation_id)
-                logger.info(f"Exported and cleaned up buffer for conversation {conversation_id}")
-                return buffer_data
-        except Exception as e:
-            logger.error(f"Error cleaning up conversation buffer: {e}")
-            raise
-
-    async def cleanup_expired_conversations(self, max_age_hours: int = 24):
-        """Clean up expired conversations from the buffer."""
-        await self._ensure_initialized()
-        try:
-            async with self._buffer_lock:
-                self.conversation_buffer.cleanup_expired_conversations(max_age_hours)
-        except Exception as e:
-            logger.error(f"Error cleaning up expired conversations: {e}")
-            raise
+            logger.error(f"Error adding message to buffer: {e}")
     
-    async def delete_conversation(self, conversation_id: UUID):
-        async with self._buffer_lock:
-            self.conversation_buffer.remove_conversation(conversation_id)
-
-    def get_buffer_metrics(self) -> dict:
-        """Get current buffer metrics."""
+    async def get_context(
+        self, 
+        conversation_id: UUID, 
+        db: Optional[Any] = None
+    ) -> Optional[str]:
+        """Get formatted conversation context"""
+        try:
+            buffer = await self.get_or_create_buffer(conversation_id, db)
+            return buffer.get_formatted_context()
+            
+        except Exception as e:
+            logger.error(f"Error getting context: {e}")
+            return None
+    
+    async def resume_conversation(
+        self,
+        conversation_id: UUID,
+        db: Any
+    ) -> Optional[str]:
+        """Resume a conversation by loading full history and creating proper context"""
+        try:
+            # Create new buffer and load from database
+            buffer = ConversationBuffer(conversation_id, self.max_tokens)
+            await buffer.load_from_database(db)
+            
+            # Store in our buffers
+            async with self._lock:
+                self.buffers[conversation_id] = buffer
+            
+            context = buffer.get_formatted_context()
+            logger.info(f"Resumed conversation {conversation_id} with {len(buffer.messages)} messages")
+            
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error resuming conversation {conversation_id}: {e}")
+            return None
+    
+    async def clear_conversation(self, conversation_id: UUID):
+        """Clear a conversation from the buffer"""
+        async with self._lock:
+            if conversation_id in self.buffers:
+                del self.buffers[conversation_id]
+                logger.info(f"Cleared buffer for conversation {conversation_id}")
+    
+    async def update_conversation_context(
+        self,
+        conversation_id: UUID,
+        db: Any,
+        force_reload: bool = False
+    ) -> Optional[str]:
+        """Update conversation context from database"""
+        try:
+            if force_reload or conversation_id not in self.buffers:
+                # Force reload from database
+                return await self.resume_conversation(conversation_id, db)
+            else:
+                # Just return existing context
+                buffer = self.buffers[conversation_id]
+                return buffer.get_formatted_context()
+                
+        except Exception as e:
+            logger.error(f"Error updating conversation context: {e}")
+            return None
+    
+    def get_buffer_info(self, conversation_id: UUID) -> Optional[Dict[str, Any]]:
+        """Get information about a specific buffer"""
+        if conversation_id in self.buffers:
+            buffer = self.buffers[conversation_id]
+            context = buffer.get_formatted_context()
+            return {
+                "conversation_id": str(conversation_id),
+                "message_count": len(buffer.messages),
+                "has_summary": buffer.summary is not None,
+                "last_updated": buffer.last_updated.isoformat(),
+                "token_count": buffer.count_tokens(context),
+                "max_tokens": buffer.max_tokens
+            }
+        return None
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get buffer manager statistics"""
+        total_messages = sum(len(buffer.messages) for buffer in self.buffers.values())
+        summarized_buffers = sum(1 for buffer in self.buffers.values() if buffer.summary)
+        
+        # Calculate average token count
+        token_counts = []
+        for buffer in self.buffers.values():
+            try:
+                context = buffer.get_formatted_context()
+                token_counts.append(buffer.count_tokens(context))
+            except:
+                pass
+        
+        avg_tokens = sum(token_counts) / len(token_counts) if token_counts else 0
+        
         return {
-            'total_conversations': len(self.conversation_buffer.buffers),
-            'total_messages': sum(
-                len(buffer) 
-                for buffer in self.conversation_buffer.buffers.values()
-            )
+            "active_buffers": len(self.buffers),
+            "total_messages": total_messages,
+            "summarized_buffers": summarized_buffers,
+            "max_tokens": self.max_tokens,
+            "cleanup_interval": self.cleanup_interval,
+            "average_token_count": round(avg_tokens, 2),
+            "max_token_count": max(token_counts) if token_counts else 0,
+            "min_token_count": min(token_counts) if token_counts else 0
         }
+    
+    async def get_conversation_summary(
+        self,
+        conversation_id: UUID,
+        db: Optional[Any] = None
+    ) -> Optional[str]:
+        """Get just the summary of a conversation if it exists"""
+        try:
+            buffer = await self.get_or_create_buffer(conversation_id, db)
+            return buffer.summary
+        except Exception as e:
+            logger.error(f"Error getting conversation summary: {e}")
+            return None
+    
+    async def force_summarize_conversation(
+        self,
+        conversation_id: UUID,
+        db: Optional[Any] = None
+    ) -> bool:
+        """Force summarization of a conversation"""
+        try:
+            buffer = await self.get_or_create_buffer(conversation_id, db)
+            if len(buffer.messages) > 5:  # Only summarize if we have enough messages
+                await buffer._summarize_older_messages()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error forcing summarization: {e}")
+            return False
+    
+    async def export_conversation_context(
+        self,
+        conversation_id: UUID,
+        db: Optional[Any] = None,
+        include_metadata: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        """Export conversation context for analysis or backup"""
+        try:
+            buffer = await self.get_or_create_buffer(conversation_id, db)
+            
+            export_data = {
+                "conversation_id": str(conversation_id),
+                "last_updated": buffer.last_updated.isoformat(),
+                "message_count": len(buffer.messages),
+                "has_summary": buffer.summary is not None,
+                "formatted_context": buffer.get_formatted_context()
+            }
+            
+            if include_metadata:
+                export_data.update({
+                    "summary": buffer.summary,
+                    "messages": buffer.messages,
+                    "token_count": buffer.count_tokens(buffer.get_formatted_context()),
+                    "max_tokens": buffer.max_tokens
+                })
+            
+            return export_data
+            
+        except Exception as e:
+            logger.error(f"Error exporting conversation context: {e}")
+            return None
+    
+    async def import_conversation_context(
+        self,
+        conversation_id: UUID,
+        context_data: Dict[str, Any]
+    ) -> bool:
+        """Import conversation context from export data"""
+        try:
+            async with self._lock:
+                buffer = ConversationBuffer(conversation_id, self.max_tokens)
+                
+                if "messages" in context_data:
+                    buffer.messages = context_data["messages"]
+                
+                if "summary" in context_data:
+                    buffer.summary = context_data["summary"]
+                
+                if "last_updated" in context_data:
+                    try:
+                        buffer.last_updated = datetime.fromisoformat(context_data["last_updated"])
+                    except:
+                        buffer.last_updated = datetime.utcnow()
+                
+                self.buffers[conversation_id] = buffer
+                logger.info(f"Imported conversation context for {conversation_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error importing conversation context: {e}")
+            return False
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Perform health check on the buffer manager"""
+        try:
+            stats = self.get_stats()
+            
+            # Check for potential issues
+            issues = []
+            
+            if stats["active_buffers"] > 1000:
+                issues.append("High number of active buffers")
+            
+            if stats["average_token_count"] > self.max_tokens * 0.8:
+                issues.append("Average token count approaching limit")
+            
+            if not self._cleanup_task or self._cleanup_task.done():
+                issues.append("Cleanup task not running")
+                self._start_cleanup_task()  # Restart if needed
+            
+            return {
+                "status": "healthy" if not issues else "warning",
+                "issues": issues,
+                "stats": stats,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+    
+    def __del__(self):
+        """Cleanup when the manager is destroyed"""
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
 
-# Global buffer manager instance
+# Create singleton instance
 buffer_manager = BufferManager()

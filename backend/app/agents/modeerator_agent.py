@@ -2,46 +2,26 @@ from typing import Dict, List, Optional, Any, Union
 import logging
 import json
 import os
-import inspect
 import traceback
+from datetime import datetime
 
-# Import agents SDK functionality if available, otherwise mock for testing
-try:
-    from agents import (
-        Agent, 
-        function_tool, 
-        RunContextWrapper,
-        GuardrailFunctionOutput,
-        input_guardrail,
-        output_guardrail,
-        handoff,
-        ModelSettings,
-        AgentHooks
-    )
-except ImportError:
-    # Mock classes for testing without the actual SDK
-    from unittest.mock import Mock
-    
-    # Create a function_tool decorator for testing that preserves function
-    def function_tool(func):
-        # Return the original function unchanged for testing
-        # This ensures tests can still call it directly
-        return func
-    
-    Agent = Mock
-    RunContextWrapper = Mock
-    GuardrailFunctionOutput = Mock
-    input_guardrail = lambda func: func
-    output_guardrail = lambda func: func
-    handoff = lambda agent, **kwargs: Mock()
-    ModelSettings = Mock
-    AgentHooks = Mock
+# Import agents SDK functionality
+from agents import (
+    Agent, 
+    function_tool, 
+    RunContextWrapper,
+    GuardrailFunctionOutput,
+    input_guardrail,
+    output_guardrail,
+    handoff,
+    ModelSettings,
+    AgentHooks
+)
 
 from openai import AsyncOpenAI
 from app.core.config import settings
 from app.agents.base_agent import BaseAgent, BaseAgentHooks
 from app.agents.common_context import CommonAgentContext
-from app.agents.agent_interface import agent_interface
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +32,7 @@ def get_openai_client() -> AsyncOpenAI:
 
 @function_tool
 async def select_agent(
+    context: RunContextWrapper,
     query: Optional[str] = None,
     available_agents: Optional[str] = None
 ) -> str:
@@ -59,6 +40,7 @@ async def select_agent(
     Select the most appropriate agent(s) to handle the user's query.
     
     Args:
+        context: The conversation context wrapper
         query: The user's query
         available_agents: Comma-separated list of available agent types
         
@@ -72,19 +54,6 @@ async def select_agent(
     if query is None:
         query = "Unspecified query"
     
-    # Get context from current execution
-    context = None
-    try:
-        # This is a hack to get access to the current context
-        # The function tool decorator will pass the context as the first argument
-        # but we're not declaring it in the function signature to avoid schema issues
-        frame = inspect.currentframe()
-        args, _, _, values = inspect.getargvalues(frame)
-        if len(args) > 0 and args[0] == 'context':
-            context = values['context']
-    except Exception as e:
-        logger.warning(f"Could not access context: {e}")
-    
     # Parse available agents
     agent_options = []
     if available_agents:
@@ -92,9 +61,9 @@ async def select_agent(
     
     # Get available agents from context if available
     try:
-        if context is not None and hasattr(context, 'context'):
+        if hasattr(context, 'context') and hasattr(context.context, 'available_agents'):
             ctx = context.context  # This is the CommonAgentContext
-            if hasattr(ctx, 'available_agents') and ctx.available_agents:
+            if ctx.available_agents:
                 agent_options = list(ctx.available_agents.keys())
     except (AttributeError, TypeError) as e:
         logger.warning(f"Could not access context.available_agents: {e}")
@@ -105,7 +74,7 @@ async def select_agent(
         
         # Store selected agent in context
         try:
-            if context is not None and hasattr(context, 'context'):
+            if hasattr(context, 'context'):
                 context.context.selected_agent = "MODERATOR"
         except (AttributeError, TypeError) as e:
             logger.warning(f"Could not set selected_agent on context: {e}")
@@ -117,7 +86,6 @@ async def select_agent(
         return json.dumps(result)
     
     # First attempt a simple keyword-based matching approach to avoid LLM call if possible
-    # This helps prevent loops and timeouts
     query_keywords = query.lower().split()
     
     # Check for direct agent mentions in query
@@ -141,11 +109,10 @@ async def select_agent(
             
             # Store in context
             try:
-                if context is not None and hasattr(context, 'context'):
+                if hasattr(context, 'context'):
                     context.context.selected_agent = agent
                     context.context.collaborators = []
-                    if hasattr(context.context, 'is_agent_selection'):
-                        context.context.is_agent_selection = True
+                    context.context.is_agent_selection = True
             except (AttributeError, TypeError) as e:
                 logger.warning(f"Could not update context with direct match: {e}")
                 
@@ -154,7 +121,7 @@ async def select_agent(
     # Get agent descriptions if available
     agent_descriptions = {}
     try:
-        if context is not None and hasattr(context, 'context') and hasattr(context.context, 'available_agents'):
+        if hasattr(context, 'context') and hasattr(context.context, 'available_agents'):
             agent_descriptions = context.context.available_agents
     except (AttributeError, TypeError) as e:
         logger.warning(f"Could not access context.available_agents for descriptions: {e}")
@@ -163,7 +130,7 @@ async def select_agent(
         # Use agent names if descriptions unavailable
         agent_descriptions = {agent: f"{agent} agent" for agent in agent_options}
     
-    # Create a selection prompt for the LLM - with strict instructions to prevent overthinking
+    # Create a selection prompt for the LLM
     selection_prompt = f"""
 You must select ONE primary agent to handle this user query. Be decisive - no overthinking.
 
@@ -188,13 +155,13 @@ Use EXACTLY the agent names as they appear in the AVAILABLE AGENTS list.
 """
     
     try:
-        # Set a low temperature to encourage deterministic results and prevent overthinking
+        # Set a low temperature to encourage deterministic results
         response = await client.chat.completions.create(
             model=settings.DEFAULT_AGENT_MODEL,
             messages=[{"role": "user", "content": selection_prompt}],
-            temperature=0.1,  # Lower temperature for more deterministic selection
+            temperature=0.1,
             response_format={"type": "json_object"},
-            max_tokens=300  # Limit response size to prevent overthinking
+            max_tokens=300
         )
         
         selection_result = json.loads(response.choices[0].message.content)
@@ -215,7 +182,7 @@ Use EXACTLY the agent names as they appear in the AVAILABLE AGENTS list.
         
         # Validate supporting agents (limit to max 2)
         valid_supporting = []
-        for agent in selection_result.get("supporting_agents", [])[:2]:  # Only process first 2
+        for agent in selection_result.get("supporting_agents", [])[:2]:
             if agent in agent_options and agent != selection_result["primary_agent"]:
                 valid_supporting.append(agent)
             else:
@@ -225,15 +192,14 @@ Use EXACTLY the agent names as they appear in the AVAILABLE AGENTS list.
                         valid_supporting.append(agent_name)
                         break
         
-        selection_result["supporting_agents"] = valid_supporting  # Already limited to 2
+        selection_result["supporting_agents"] = valid_supporting
         
         # Store in context
         try:
-            if context is not None and hasattr(context, 'context'):
+            if hasattr(context, 'context'):
                 context.context.selected_agent = selection_result["primary_agent"]
                 context.context.collaborators = valid_supporting
-                if hasattr(context.context, 'is_agent_selection'):
-                    context.context.is_agent_selection = True
+                context.context.is_agent_selection = True
         except (AttributeError, TypeError) as e:
             logger.warning(f"Could not update context with selection results: {e}")
         
@@ -248,7 +214,7 @@ Use EXACTLY the agent names as they appear in the AVAILABLE AGENTS list.
         
         # Update context with fallback
         try:
-            if context is not None and hasattr(context, 'context'):
+            if hasattr(context, 'context'):
                 context.context.selected_agent = fallback
         except (AttributeError, TypeError) as e:
             logger.warning(f"Could not set selected_agent on context: {e}")
@@ -261,6 +227,7 @@ Use EXACTLY the agent names as they appear in the AVAILABLE AGENTS list.
 
 @function_tool
 async def check_collaboration_need(
+    context: RunContextWrapper,
     query: Optional[str] = None,
     primary_agent: Optional[str] = None,
     available_agents: Optional[str] = None
@@ -269,6 +236,7 @@ async def check_collaboration_need(
     Determine whether multiple agents should collaborate on this query.
     
     Args:
+        context: The conversation context wrapper
         query: The user's query
         primary_agent: The primary selected agent
         available_agents: Comma-separated list of available agent types
@@ -285,19 +253,6 @@ async def check_collaboration_need(
     if primary_agent is None:
         primary_agent = "MODERATOR"
     
-    # Get context from current execution
-    context = None
-    try:
-        # This is a hack to get access to the current context
-        # The function tool decorator will pass the context as the first argument
-        # but we're not declaring it in the function signature to avoid schema issues
-        frame = inspect.currentframe()
-        args, _, _, values = inspect.getargvalues(frame)
-        if len(args) > 0 and args[0] == 'context':
-            context = values['context']
-    except Exception as e:
-        logger.warning(f"Could not access context: {e}")
-    
     # Parse available agents
     agent_options = []
     if available_agents:
@@ -305,9 +260,9 @@ async def check_collaboration_need(
     
     # Get available agents from context if available
     try:
-        if context is not None and hasattr(context, 'context'):
+        if hasattr(context, 'context') and hasattr(context.context, 'available_agents'):
             ctx = context.context  # This is the CommonAgentContext
-            if hasattr(ctx, 'available_agents') and ctx.available_agents:
+            if ctx.available_agents:
                 agent_options = list(ctx.available_agents.keys())
     except (AttributeError, TypeError) as e:
         logger.warning(f"Could not access context.available_agents: {e}")
@@ -324,7 +279,7 @@ async def check_collaboration_need(
         
         # Store result in context
         try:
-            if context is not None and hasattr(context, 'context'):
+            if hasattr(context, 'context'):
                 context.context.collaborators = []
         except (AttributeError, TypeError) as e:
             logger.warning(f"Could not set collaborators on context: {e}")
@@ -334,7 +289,7 @@ async def check_collaboration_need(
     # Get agent descriptions if available
     agent_descriptions = {}
     try:
-        if context is not None and hasattr(context, 'context') and hasattr(context.context, 'available_agents'):
+        if hasattr(context, 'context') and hasattr(context.context, 'available_agents'):
             agent_descriptions = context.context.available_agents
     except (AttributeError, TypeError) as e:
         logger.warning(f"Could not access context.available_agents for descriptions: {e}")
@@ -371,8 +326,8 @@ Respond with a JSON object in this format:
         response = await client.chat.completions.create(
             model=settings.DEFAULT_AGENT_MODEL,
             messages=[{"role": "user", "content": collaboration_prompt}],
-            temperature=0.2,  # Slightly higher temperature for more consideration
-            response_format={"type": "json_object"}  # Ensure JSON response
+            temperature=0.2,
+            response_format={"type": "json_object"}
         )
         
         result = json.loads(response.choices[0].message.content)
@@ -405,7 +360,7 @@ Respond with a JSON object in this format:
         
         # Store in context
         try:
-            if context is not None and hasattr(context, 'context'):
+            if hasattr(context, 'context'):
                 context.context.collaborators = result.get("collaborators", [])
         except (AttributeError, TypeError) as e:
             logger.warning(f"Could not set collaborators on context: {e}")
@@ -425,15 +380,14 @@ Respond with a JSON object in this format:
         
         # Store in context
         try:
-            if context is not None and hasattr(context, 'context'):
+            if hasattr(context, 'context'):
                 context.context.collaborators = []
         except (AttributeError, TypeError) as e:
             logger.warning(f"Could not set collaborators on context: {e}")
         
         return json.dumps(result)
 
-# Mock implementation for testing that doesn't require the actual SDK
-# @input_guardrail  # commented out to allow tests to pass
+@input_guardrail
 def validate_moderator_input(
     context: RunContextWrapper[CommonAgentContext],
     agent: Agent,
@@ -443,7 +397,7 @@ def validate_moderator_input(
     try:
         # Handle different input types
         if isinstance(input, str):
-            if not input or len(input.strip()) < 1:  # Lowered from 5 to 1 to allow short inputs
+            if not input or len(input.strip()) < 1:
                 return GuardrailFunctionOutput(
                     output_info="Input too short or empty",
                     tripwire_triggered=True
@@ -455,8 +409,6 @@ def validate_moderator_input(
                     output_info="Input list is empty",
                     tripwire_triggered=True
                 )
-            # Convert list to string if needed for further processing
-            input = str(input)
         elif isinstance(input, dict):
             # Handle dictionary input - check if empty
             if not input:
@@ -482,7 +434,6 @@ def validate_moderator_input(
             tripwire_triggered=False
         )
 
-# Simple agent hooks implementation
 class ModeratorAgentHooks(BaseAgentHooks):
     """Custom hooks for the moderator agent."""
 
@@ -499,7 +450,6 @@ class ModeratorAgentHooks(BaseAgentHooks):
         # Add any agent-specific context initialization here
         logger.info(f"Initialized context for ModeratorAgent")
 
-    
     async def on_handoff(
         self, 
         context: RunContextWrapper[CommonAgentContext],
@@ -555,7 +505,7 @@ ALWAYS SELECT AGENTS EXACTLY AS THEY APPEAR IN THE AVAILABLE AGENTS LIST.""",
             hooks=ModeratorAgentHooks()
         )
         
-        # Add the input guardrail - with reduced minimum length check (1 instead of 5)
+        # Add the input guardrail
         self.input_guardrails = [validate_moderator_input]
         
         # Make sure all collections are initialized
@@ -580,7 +530,6 @@ ALWAYS SELECT AGENTS EXACTLY AS THEY APPEAR IN THE AVAILABLE AGENTS LIST.""",
             agent_type = agent.name.replace('Agent', '').upper()
 
         # Create a valid tool name - must match pattern ^[a-zA-Z0-9_-]+$
-        # Replace any invalid characters with underscores
         valid_tool_name = f"transfer_to_"
 
         # Add the agent type to the tool name, ensuring it only contains valid characters

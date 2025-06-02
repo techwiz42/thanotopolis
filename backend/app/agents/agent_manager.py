@@ -6,30 +6,194 @@ import importlib
 import inspect
 import traceback
 import json
+import tiktoken
 from uuid import UUID
 from datetime import datetime
 
 from agents import Agent, Runner, RunConfig, ModelSettings, handoff, function_tool
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.core.config import settings
-from app.core.buffer_manager import buffer_manager
 from app.core.input_sanitizer import input_sanitizer
 from app.services.rag.pgvector_query_service import pgvector_query_service
 from app.agents.collaboration_manager import collaboration_manager
 from app.agents.common_context import CommonAgentContext
 from app.agents.base_agent import BaseAgent
-from app.models.models import Message, ConversationAgent, ConversationUser
+from app.models.models import Message, ConversationAgent, ConversationUser, User, Participant
 from app.agents.agent_calculator_tool import AgentCalculatorTool
 
 logger = logging.getLogger(__name__)
 MODEL = settings.DEFAULT_AGENT_MODEL
 MAX_TURNS = settings.MAX_TURNS
 
+class ConversationContextManager:
+    """Handles conversation context with token limits and summarization"""
+    
+    def __init__(self, max_tokens: int = 20000):
+        self.max_tokens = max_tokens
+        self.encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 tokenizer
+        
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in text"""
+        return len(self.encoding.encode(text))
+    
+    async def format_conversation_context(
+        self, 
+        messages: List[Dict[str, Any]], 
+        summarize_if_needed: bool = True
+    ) -> str:
+        """Format conversation messages into context string with token management"""
+        
+        if not messages:
+            return ""
+        
+        # Format all messages first
+        formatted_parts = ["CONVERSATION HISTORY:"]
+        
+        for msg in messages:
+            sender_type = self._determine_sender_type(msg)
+            sender_name = self._get_sender_name(msg, sender_type)
+            content = msg.get('content', '')
+            timestamp = msg.get('created_at', '')
+            
+            # Format message with metadata
+            message_line = f"[{timestamp}] {sender_name}: {content}"
+            formatted_parts.append(message_line)
+        
+        full_context = "\n".join(formatted_parts)
+        token_count = self.count_tokens(full_context)
+        
+        logger.info(f"Full conversation context: {token_count} tokens")
+        
+        # If within limit, return full context
+        if token_count <= self.max_tokens or not summarize_if_needed:
+            return full_context
+        
+        # Need to summarize - keep recent messages and summarize older ones
+        return await self._create_summarized_context(messages, formatted_parts)
+    
+    async def _create_summarized_context(
+        self, 
+        messages: List[Dict[str, Any]], 
+        formatted_parts: List[str]
+    ) -> str:
+        """Create summarized context when conversation is too long"""
+        
+        # Keep the last 50 messages as-is for immediate context
+        recent_message_count = min(50, len(messages))
+        recent_messages = messages[-recent_message_count:]
+        older_messages = messages[:-recent_message_count] if len(messages) > recent_message_count else []
+        
+        context_parts = ["CONVERSATION HISTORY:"]
+        
+        # Summarize older messages if they exist
+        if older_messages:
+            summary = await self._summarize_messages(older_messages)
+            context_parts.append(f"[SUMMARY OF EARLIER CONVERSATION ({len(older_messages)} messages)]")
+            context_parts.append(summary)
+            context_parts.append("\n[RECENT CONVERSATION HISTORY:]")
+        
+        # Add recent messages in full
+        for msg in recent_messages:
+            sender_type = self._determine_sender_type(msg)
+            sender_name = self._get_sender_name(msg, sender_type)
+            content = msg.get('content', '')
+            timestamp = msg.get('created_at', '')
+            
+            message_line = f"[{timestamp}] {sender_name}: {content}"
+            context_parts.append(message_line)
+        
+        summarized_context = "\n".join(context_parts)
+        final_token_count = self.count_tokens(summarized_context)
+        
+        logger.info(f"Summarized context: {final_token_count} tokens (reduced from {len(messages)} messages)")
+        
+        return summarized_context
+    
+    async def _summarize_messages(self, messages: List[Dict[str, Any]]) -> str:
+        """Summarize a list of messages using AI"""
+        try:
+            from openai import AsyncOpenAI
+            
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Create a condensed version of messages for summarization
+            message_texts = []
+            for msg in messages:
+                sender_type = self._determine_sender_type(msg)
+                sender_name = self._get_sender_name(msg, sender_type)
+                content = msg.get('content', '')
+                message_texts.append(f"{sender_name}: {content}")
+            
+            conversation_text = "\n".join(message_texts)
+            
+            # Summarization prompt
+            summary_prompt = f"""Please provide a concise summary of this conversation history. Focus on:
+1. Key topics discussed
+2. Important decisions made
+3. Agent interactions and outcomes
+4. Any ongoing issues or concerns
+5. Context that would be important for continuing the conversation
+
+Conversation to summarize:
+{conversation_text}
+
+Provide a clear, structured summary that preserves the essential context for continuing this conversation."""
+
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",  # Use cheaper model for summarization
+                messages=[
+                    {"role": "system", "content": "You are a conversation summarizer. Create concise but comprehensive summaries that preserve important context."},
+                    {"role": "user", "content": summary_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            summary = response.choices[0].message.content
+            logger.info(f"Successfully summarized {len(messages)} messages")
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error summarizing messages: {e}")
+            # Fallback to simple truncation
+            return f"[{len(messages)} earlier messages - summary unavailable]"
+    
+    def _determine_sender_type(self, msg: Dict[str, Any]) -> str:
+        """Determine sender type from message"""
+        if msg.get('agent_type'):
+            return 'agent'
+        elif msg.get('user_id'):
+            return 'user'
+        elif msg.get('participant_id'):
+            return 'participant'
+        else:
+            return 'system'
+    
+    def _get_sender_name(self, msg: Dict[str, Any], sender_type: str) -> str:
+        """Get formatted sender name"""
+        if sender_type == 'agent':
+            return f"[{msg.get('agent_type', 'AGENT')}]"
+        elif sender_type == 'user':
+            # Try to get user info from the message
+            if 'user' in msg and msg['user']:
+                user = msg['user']
+                name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                return f"[USER: {name or user.get('username', 'Unknown')}]"
+            return "[USER]"
+        elif sender_type == 'participant':
+            return f"[PARTICIPANT: {msg.get('participant', {}).get('name', 'Unknown')}]"
+        else:
+            return "[SYSTEM]"
+
 class AgentManager:
     def __init__(self):
         # Storage for dynamically discovered agents
         self.discovered_agents: Dict[str, Agent] = {}
         self.agent_descriptions: Dict[str, str] = {}
+        
+        # Initialize context manager
+        self.context_manager = ConversationContextManager()
         
         # Initialize agents by scanning the filesystem
         self._discover_agents()
@@ -238,8 +402,8 @@ class AgentManager:
     async def _prepare_context(
         self,
         message: str,
-        thread_id: Optional[str],  # Used as an alias for conversation_id
-        owner_id: Optional[UUID],  # Required for RAG and context retrieval
+        thread_id: Optional[str],
+        owner_id: Optional[UUID],
         db: Optional[Any]
     ) -> CommonAgentContext:
         """Build context object with conversation history, buffer and RAG data."""
@@ -253,81 +417,59 @@ class AgentManager:
             if not thread_id:
                 return context
 
-            # Get conversation history from buffer manager first
-            if thread_id:
+            thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
+            
+            # Try to get context from enhanced buffer manager
+            try:
+                from app.core.buffer_manager import buffer_manager
+                
+                buffer_context = await buffer_manager.get_context(thread_uuid, db)
+                
+                if buffer_context:
+                    token_count = self.context_manager.count_tokens(buffer_context)
+                    logger.info(f"[CONTEXT_DEBUG] Context retrieved: {token_count} tokens")
+                    
+                    if token_count > self.context_manager.max_tokens:
+                        # Context is too large, need to summarize
+                        logger.info(f"[CONTEXT_DEBUG] Context too large, creating summary")
+                        
+                        # Get all messages from database and create optimized summary
+                        full_context = await self._get_and_summarize_conversation(thread_uuid, db)
+                        context.buffer_context = full_context
+                    else:
+                        context.buffer_context = buffer_context
+                else:
+                    # No buffer context available, create from database
+                    logger.info(f"[CONTEXT_DEBUG] No buffer context, loading from database")
+                    context.buffer_context = await buffer_manager.resume_conversation(thread_uuid, db)
+                    
+            except ImportError:
+                # Fallback to original buffer manager
+                logger.warning("Enhanced buffer manager not available, using fallback")
                 try:
-                    # Use the buffer manager to get formatted context
-                    thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
-                    logger.info(f"[BUFFER_DEBUG] Retrieving context for thread: {thread_id} (converted to UUID: {thread_uuid}, type: {type(thread_uuid)})")
+                    from app.core.buffer_manager import buffer_manager
+                    
                     buffer_context = await buffer_manager.get_context(thread_uuid)
                     
                     if buffer_context:
-                        # Assign buffer_context to the context object
-                        context.buffer_context = buffer_context
-                        logger.info(f"[BUFFER_DEBUG] Retrieved conversation context from buffer for thread {thread_id}, length: {len(buffer_context)}")
+                        token_count = self.context_manager.count_tokens(buffer_context)
+                        logger.info(f"[CONTEXT_DEBUG] Fallback context retrieved: {token_count} tokens")
                         
-                        # Verify buffer context has content
-                        if len(buffer_context.strip()) < 10:
-                            logger.warning(f"[BUFFER_DEBUG] Buffer context is too short ({len(buffer_context)} chars), might be insufficient")
+                        if token_count > self.context_manager.max_tokens:
+                            # Get from database and summarize
+                            context.buffer_context = await self._get_and_summarize_conversation(thread_uuid, db)
+                        else:
+                            context.buffer_context = buffer_context
                     else:
-                        # Make sure we set buffer_context even when empty
-                        context.buffer_context = buffer_context or "Previous conversation"
-                        logger.warning(f"[BUFFER_DEBUG] No buffer context found for thread {thread_id} (UUID: {thread_uuid})")
-                except Exception as e:
-                    logger.error(f"Error retrieving buffer context: {e}")
-                    logger.error(traceback.format_exc())
-                    # Ensure buffer_context is set even in case of error
-                    context.buffer_context = "Previous conversation"
-
-            # If buffer didn't have context or had an error, fall back to DB
-            if not context.buffer_context and db and thread_id:
-                try:
-                    # Convert thread_id to UUID if needed
-                    thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
-
-                    # Query for recent messages in this conversation (ordered by timestamp)
-                    query = (
-                        select(Message)
-                        .where(Message.conversation_id == thread_uuid)
-                        .order_by(Message.created_at)
-                        .limit(settings.MAX_CONTEXT_MESSAGES)  # Use a reasonable default if not defined
-                    )
-
-                    result = await db.execute(query)
-                    messages = result.scalars().all()
-
-                    # Format messages into a conversation history string
-                    if messages:
-                        history_parts = ["CONVERSATION HISTORY:"]
-
-                        for msg in messages:
-                            # Format depends on if it's an agent or user message
-                            if msg.agent_type:
-                                # Use the agent_type directly from the message
-                                agent_type = msg.agent_type
-                                sender = f"[{agent_type}]"
-                            else:
-                                # User/participant message
-                                sender = "[USER]"
-                                if msg.participant_id:
-                                    participant_query = select(ConversationUser).where(
-                                        ConversationUser.id == msg.participant_id
-                                    )
-                                    participant_result = await db.execute(participant_query)
-                                    participant = participant_result.scalar_one_or_none()
-                                    if participant:
-                                        sender = f"[{participant.name or 'USER'}]"
-
-                            # Add the formatted message
-                            history_parts.append(f"{sender} {msg.content}")
-
-                        # Set the formatted conversation history
-                        context.buffer_context = "\n".join(history_parts)
-
-                        logger.info(f"Added {len(messages)} messages to conversation context for thread {thread_id}")
-                except Exception as e:
-                    logger.error(f"Error retrieving conversation history: {e}")
-                    logger.error(traceback.format_exc())
+                        context.buffer_context = await self._get_and_summarize_conversation(thread_uuid, db)
+                        
+                except Exception as buffer_error:
+                    logger.error(f"Error with fallback buffer manager: {buffer_error}")
+                    context.buffer_context = await self._get_and_summarize_conversation(thread_uuid, db)
+                    
+            except Exception as e:
+                logger.error(f"Error retrieving context: {e}")
+                context.buffer_context = await self._get_and_summarize_conversation(thread_uuid, db)
 
             # Get RAG context if available
             if owner_id and db:
@@ -341,7 +483,6 @@ class AgentManager:
                     logger.info(f"RAG query returned {len(context.rag_results['documents'])} documents")
                 except Exception as e:
                     logger.error(f"Error retrieving RAG context: {e}")
-                    logger.error(traceback.format_exc())
 
             # Add available agents to context
             context.available_agents = self.get_agent_descriptions()
@@ -352,6 +493,69 @@ class AgentManager:
             logger.error(f"Error building context: {e}")
             logger.error(traceback.format_exc())
             return context
+
+    async def _get_and_summarize_conversation(
+        self, 
+        thread_uuid: UUID, 
+        db: Optional[Any]
+    ) -> str:
+        """Get conversation from database and create optimized summary"""
+        
+        if not db:
+            return "Previous conversation"
+        
+        try:
+            # Query for all messages in this conversation
+            query = (
+                select(Message)
+                .options(
+                    selectinload(Message.user),
+                    selectinload(Message.participant)
+                )
+                .where(Message.conversation_id == thread_uuid)
+                .order_by(Message.created_at)
+            )
+
+            result = await db.execute(query)
+            messages = result.scalars().all()
+
+            if not messages:
+                return "No previous conversation"
+
+            # Convert to format expected by context manager
+            message_dicts = []
+            for msg in messages:
+                msg_dict = {
+                    'content': msg.content,
+                    'created_at': msg.created_at.isoformat() if msg.created_at else '',
+                    'agent_type': msg.agent_type,
+                    'user_id': msg.user_id,
+                    'participant_id': msg.participant_id,
+                    'user': {
+                        'first_name': msg.user.first_name if msg.user else '',
+                        'last_name': msg.user.last_name if msg.user else '',
+                        'username': msg.user.username if msg.user else ''
+                    } if msg.user else None,
+                    'participant': {
+                        'name': msg.participant.name if msg.participant else '',
+                        'identifier': msg.participant.identifier if msg.participant else ''
+                    } if msg.participant else None
+                }
+                message_dicts.append(msg_dict)
+
+            # Use context manager to format and potentially summarize
+            formatted_context = await self.context_manager.format_conversation_context(
+                message_dicts, 
+                summarize_if_needed=True
+            )
+
+            logger.info(f"Retrieved and formatted conversation context for thread {thread_uuid}")
+            return formatted_context
+
+        except Exception as e:
+            logger.error(f"Error retrieving conversation from database: {e}")
+            logger.error(traceback.format_exc())
+            return "Previous conversation (error retrieving details)"
 
     async def _select_agent(
         self,
@@ -568,37 +772,7 @@ class AgentManager:
                 )
                 
                 # Add message to conversation buffer AFTER processing
-                if thread_id:
-                    try:
-                        thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
-                        # Store user message in buffer
-                        await buffer_manager.add_message(
-                            conversation_id=thread_uuid,
-                            message=message,
-                            sender_id="user",
-                            sender_type="user",
-                            owner_id=owner_id
-                        )
-                        logger.info(f"[BUFFER_DEBUG] Added user message to buffer for conversation {thread_id} (UUID: {thread_uuid})")
-                        
-                        # Store agent response in buffer
-                        await buffer_manager.add_message(
-                            conversation_id=thread_uuid,
-                            message=response,
-                            sender_id=primary_agent_type,
-                            sender_type="agent",  # This MUST be "agent" for frontend to recognize it correctly
-                            owner_id=owner_id,
-                            metadata={
-                                "agent_type": primary_agent_type,
-                                "message_type": "agent"  # Add message_type consistently for all agent messages
-                            }
-                        )
-                        logger.info(f"[BUFFER_DEBUG] Added agent response to buffer for conversation {thread_id} (UUID: {thread_uuid})")
-                        
-                        # Log buffer state after adding messages
-                        logger.info(f"[BUFFER_DEBUG] Added both messages to buffer for conversation {thread_id}")
-                    except Exception as buffer_error:
-                        logger.error(f"Error adding messages to buffer: {buffer_error}")
+                await self._add_to_buffer(thread_id, message, response, primary_agent_type, owner_id)
                 
                 return primary_agent_type, response
             
@@ -651,37 +825,7 @@ class AgentManager:
                     final_response = streamed_result.final_output or "".join(tokens) or "I couldn't generate a proper response."
                     
                     # Add message to conversation buffer AFTER processing
-                    if thread_id:
-                        try:
-                            thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
-                            # Store user message in buffer
-                            await buffer_manager.add_message(
-                                conversation_id=thread_uuid,
-                                message=message,
-                                sender_id="user",
-                                sender_type="user",
-                                owner_id=owner_id
-                            )
-                            logger.info(f"[BUFFER_DEBUG] Added user message (streaming) to buffer for conversation {thread_id} (UUID: {thread_uuid})")
-                            
-                            # Store agent response in buffer
-                            await buffer_manager.add_message(
-                                conversation_id=thread_uuid,
-                                message=final_response,
-                                sender_id=primary_agent_type,
-                                sender_type="agent",  # This MUST be "agent" for frontend to recognize it correctly
-                                owner_id=owner_id,
-                                metadata={
-                                    "agent_type": primary_agent_type,
-                                    "message_type": "agent"  # Add message_type consistently for all agent messages
-                                }
-                            )
-                            logger.info(f"[BUFFER_DEBUG] Added agent response (streaming) to buffer for conversation {thread_id} (UUID: {thread_uuid})")
-                            
-                            # Log the buffer state
-                            logger.info(f"[BUFFER_DEBUG] Added both messages (streaming) to buffer for conversation {thread_id}")
-                        except Exception as buffer_error:
-                            logger.error(f"Error adding messages to buffer: {buffer_error}")
+                    await self._add_to_buffer(thread_id, message, final_response, primary_agent_type, owner_id)
                     
                     return primary_agent_type, final_response
                     
@@ -712,37 +856,7 @@ class AgentManager:
                 final_response = result.final_output
                 
                 # Add message to conversation buffer AFTER processing
-                if thread_id:
-                    try:
-                        thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
-                        # Store user message in buffer
-                        await buffer_manager.add_message(
-                            conversation_id=thread_uuid,
-                            message=message,
-                            sender_id="user",
-                            sender_type="user",
-                            owner_id=owner_id
-                        )
-                        logger.info(f"[BUFFER_DEBUG] Added user message (non-streaming) to buffer for conversation {thread_id} (UUID: {thread_uuid})")
-                        
-                        # Store agent response in buffer
-                        await buffer_manager.add_message(
-                            conversation_id=thread_uuid,
-                            message=final_response,
-                            sender_id=primary_agent_type,
-                            sender_type="agent",  # This MUST be "agent" for frontend to recognize it correctly
-                            owner_id=owner_id,
-                            metadata={
-                                "agent_type": primary_agent_type,
-                                "message_type": "agent"  # Add message_type consistently for all agent messages
-                            }
-                        )
-                        logger.info(f"[BUFFER_DEBUG] Added agent response (non-streaming) to buffer for conversation {thread_id} (UUID: {thread_uuid})")
-                        
-                        # Log buffer state after adding both messages
-                        logger.info(f"[BUFFER_DEBUG] Added both messages (non-streaming) to buffer for conversation {thread_id}")
-                    except Exception as buffer_error:
-                        logger.error(f"Error adding messages to buffer: {buffer_error}")
+                await self._add_to_buffer(thread_id, message, final_response, primary_agent_type, owner_id)
                 
                 return primary_agent_type, final_response
             except Exception as e:
@@ -756,6 +870,52 @@ class AgentManager:
             if response_callback:
                 await response_callback(error_message)
             return "MODERATOR", error_message
+
+    async def _add_to_buffer(
+        self, 
+        thread_id: str, 
+        user_message: str, 
+        agent_response: str, 
+        agent_type: str, 
+        owner_id: Optional[UUID]
+    ):
+        """Add messages to the conversation buffer"""
+        try:
+            # Try enhanced buffer manager first
+            try:
+                from app.core.buffer_manager import buffer_manager
+                
+                thread_uuid = UUID(thread_id) if not isinstance(thread_id, UUID) else thread_id
+                
+                # Store user message in buffer
+                await buffer_manager.add_message(
+                    conversation_id=thread_uuid,
+                    message=user_message,
+                    sender_id="user",
+                    sender_type="user",
+                    owner_id=owner_id
+                )
+                
+                # Store agent response in buffer
+                await buffer_manager.add_message(
+                    conversation_id=thread_uuid,
+                    message=agent_response,
+                    sender_id=agent_type,
+                    sender_type="agent",
+                    owner_id=owner_id,
+                    metadata={
+                        "agent_type": agent_type,
+                        "message_type": "agent"
+                    }
+                )
+                
+                logger.info(f"[BUFFER_DEBUG] Added messages to  buffer for conversation {thread_id}")
+                
+            except ImportError:
+               traceback.print_exc()
+
+        except Exception as buffer_error:
+            logger.error(f"Error adding messages to buffer: {buffer_error}")
 
     async def _handle_collaboration(
         self,
