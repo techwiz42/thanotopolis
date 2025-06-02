@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { VoiceProvider } from '@/contexts/VoiceContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +14,7 @@ import MessageList from '@/app/conversations/[id]/components/MessageList';
 import MessageInput from '@/app/conversations/[id]/components/MessageInput';
 import { TypingIndicator } from '@/app/conversations/[id]/components/TypingIndicator';
 import { StreamingIndicator } from '@/app/conversations/[id]/components/StreamingIndicator';
+import VoiceControls from '@/components/voice/VoiceControls';
 
 import { useConversation } from '@/app/conversations/[id]/hooks/useConversation';
 import { useWebSocket } from '@/app/conversations/[id]/hooks/useWebSocket';
@@ -283,45 +285,51 @@ export default function ConversationPage() {
   }
 
   return (
-    <div className="container mx-auto p-4 space-y-4">
-      {/* Optional: Show conversation title */}
-      <h1 className="text-2xl font-semibold">{conversation.title}</h1>
-      
-      {conversation.owner_id === user?.id && (
-        <div className="flex items-center space-x-4 w-full">
-          <Button
-            variant="outline"
-            onClick={() => router.push('/conversations')}
-            className="flex items-center"
-          >
-            <ChevronLeft className="mr-2 h-4 w-4" />
-            Back to Conversations
-          </Button>
-
-          <div className="flex space-x-2 flex-grow">
-            <Input
-              type="email"
-              placeholder="Enter participant email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="flex-grow"
-            />
-            <Button onClick={handleAddParticipant}>
-              <UserPlus className="mr-2 h-4 w-4" />
-              Invite Participant
-            </Button>
+    <VoiceProvider>
+      <div className="container mx-auto p-4 space-y-4">
+        {/* Conversation title and voice controls */}
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl font-semibold">{conversation.title}</h1>
+          <div className="flex items-center">
+            <VoiceControls className="py-1" />
           </div>
         </div>
-      )}
-      
-      {/* Show connection status for debugging */}
-      {connectionError && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
-          <p className="text-sm text-yellow-800">
-            Connection issue: {connectionError}
-          </p>
-        </div>
-      )}
+        
+        {conversation.owner_id === user?.id && (
+          <div className="flex items-center space-x-4 w-full">
+            <Button
+              variant="outline"
+              onClick={() => router.push('/conversations')}
+              className="flex items-center"
+            >
+              <ChevronLeft className="mr-2 h-4 w-4" />
+              Back to Conversations
+            </Button>
+
+            <div className="flex space-x-2 flex-grow">
+              <Input
+                type="email"
+                placeholder="Enter participant email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="flex-grow"
+              />
+              <Button onClick={handleAddParticipant}>
+                <UserPlus className="mr-2 h-4 w-4" />
+                Invite Participant
+              </Button>
+            </div>
+          </div>
+        )}
+        
+        {/* Show connection status for debugging */}
+        {connectionError && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
+            <p className="text-sm text-yellow-800">
+              Connection issue: {connectionError}
+            </p>
+          </div>
+        )}
       
       <div className="h-[calc(100vh-200px)]">
         <Card className="h-full">
@@ -378,5 +386,6 @@ export default function ConversationPage() {
         </Card>
       </div>
     </div>
+    </VoiceProvider>
   );
 }

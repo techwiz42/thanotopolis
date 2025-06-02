@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# test_voice_integration.py - Test script for voice integration
+# test_voice_integration.py - Test script for voice integration with Deepgram
 
 import asyncio
 import aiohttp
@@ -17,47 +17,70 @@ sys.path.insert(0, os.path.dirname(__file__))
 try:
     from app.core.config import settings
     # Use settings for configuration
-    BASE_URL = f"http://localhost:{getattr(settings, 'PORT', 8001)}"
+    BASE_URL = f"http://localhost:{getattr(settings, 'API_PORT', 8000)}"
     print(f"📡 Using server configuration from settings: {BASE_URL}")
 except ImportError as e:
     print(f"⚠️  Could not import settings: {e}")
     print("🔄 Falling back to default configuration")
-    BASE_URL = "http://localhost:8001"
+    BASE_URL = "http://localhost:8000"
 
-TEST_TEXT = "Hello, this is a test of the voice synthesis system. How does this sound?"
+TEST_TEXT = "Hello, this is a test of the Deepgram voice synthesis system. How does this sound?"
 
 async def test_voice_services():
-    """Test voice service integration"""
+    """Test voice service integration with Deepgram"""
     
-    print("🎤 Testing Voice Integration...")
+    print("🎤 Testing Voice Integration with Deepgram...")
     print("=" * 50)
     
     async with aiohttp.ClientSession() as session:
         
-        # Test 1: Check STT Status
-        print("\n1. Testing STT Service Status...")
+        # Test 1: Check STT Status (Deepgram)
+        print("\n1. Testing Deepgram STT Service Status...")
         try:
             async with session.get(f"{BASE_URL}/api/voice/stt/status") as response:
                 if response.status == 200:
                     data = await response.json()
                     print(f"✅ STT Status: {data}")
+                    
+                    if data.get('api_key_configured'):
+                        print("✅ Deepgram API Key: Configured")
+                        if data.get('api_key_valid'):
+                            print("✅ Deepgram API Key: Valid")
+                        else:
+                            print("❌ Deepgram API Key: Invalid or verification failed")
+                            error = data.get('error')
+                            if error:
+                                print(f"   Error: {error}")
+                    else:
+                        print("❌ Deepgram API Key: Not configured")
                 else:
                     print(f"❌ STT Status Failed: {response.status}")
         except Exception as e:
             print(f"❌ STT Status Error: {e}")
         
-        # Test 2: Check TTS Status  
-        print("\n2. Testing TTS Service Status...")
+        # Test 2: Check TTS Status (Deepgram)
+        print("\n2. Testing Deepgram TTS Service Status...")
         try:
             async with session.get(f"{BASE_URL}/api/voice/tts/status") as response:
                 if response.status == 200:
                     data = await response.json()
                     print(f"✅ TTS Status: {data}")
                     
+                    provider = data.get('provider', 'unknown')
+                    service = data.get('service', 'unknown')
+                    print(f"✅ TTS Provider: {provider}")
+                    print(f"✅ TTS Service: {service}")
+                    
                     if data.get('api_key_configured'):
-                        print("✅ Google API Key: Configured")
+                        print("✅ Deepgram API Key: Configured")
                     else:
-                        print("❌ Google API Key: Not configured")
+                        print("❌ Deepgram API Key: Not configured")
+                        
+                    available_voices = data.get('available_voices', 0)
+                    print(f"✅ Available Voices: {available_voices}")
+                    
+                    supported_encodings = data.get('supported_encodings', [])
+                    print(f"✅ Supported Encodings: {', '.join(supported_encodings)}")
                         
                 else:
                     print(f"❌ TTS Status Failed: {response.status}")
@@ -65,18 +88,33 @@ async def test_voice_services():
             print(f"❌ TTS Status Error: {e}")
         
         # Test 3: Get Available Voices (requires auth)
-        print("\n3. Testing Available Voices...")
+        print("\n3. Testing Available Deepgram Voices...")
         try:
             async with session.get(f"{BASE_URL}/api/voice/tts/voices") as response:
                 if response.status == 401 or response.status == 403:
                     print("✅ Voices endpoint properly requires authentication (expected)")
-                    print("   Status: 403 Forbidden - Authentication required")
+                    print("   Status: 401/403 - Authentication required")
                 elif response.status == 200:
                     data = await response.json()
                     voices = data.get('voices', [])
-                    print(f"✅ Found {len(voices)} available voices")
-                    for voice in voices[:3]:  # Show first 3
-                        print(f"   - {voice['name']} ({voice['gender']}, {voice['quality']})")
+                    provider = data.get('provider', 'unknown')
+                    print(f"✅ Found {len(voices)} available {provider} voices")
+                    
+                    # Group voices by gender for better display
+                    female_voices = [v for v in voices if v.get('gender') == 'FEMALE']
+                    male_voices = [v for v in voices if v.get('gender') == 'MALE']
+                    
+                    print(f"   Female voices ({len(female_voices)}):")
+                    for voice in female_voices[:3]:  # Show first 3
+                        print(f"     - {voice['name']} ({voice['quality']})")
+                    
+                    print(f"   Male voices ({len(male_voices)}):")
+                    for voice in male_voices[:3]:  # Show first 3
+                        print(f"     - {voice['name']} ({voice['quality']})")
+                    
+                    default_voice = data.get('default_voice')
+                    if default_voice:
+                        print(f"   Default voice: {default_voice}")
                 else:
                     print(f"❌ Voices request failed: {response.status}")
                     error_text = await response.text()
@@ -85,21 +123,31 @@ async def test_voice_services():
             print(f"❌ Voices request error: {e}")
         
         # Test 4: Test TTS Synthesis (requires auth)
-        print("\n4. Testing TTS Synthesis...")
+        print("\n4. Testing Deepgram TTS Synthesis...")
         try:
             test_payload = {
-                "text": "This is a test message",
-                "voice_id": "en-US-Studio-O",
-                "audio_encoding": "MP3"
+                "text": "This is a test message using Deepgram TTS",
+                "voice_id": "aura-asteria-en",
+                "encoding": "mp3",
+                "sample_rate": 24000
             }
             async with session.post(f"{BASE_URL}/api/voice/synthesize", json=test_payload) as response:
                 if response.status == 401 or response.status == 403:
                     print("✅ TTS synthesis endpoint properly requires authentication (expected)")
-                    print("   Status: 403 Forbidden - Authentication required")
+                    print("   Status: 401/403 - Authentication required")
                 elif response.status == 200:
                     print("✅ TTS synthesis successful (user must be authenticated)")
                     content_type = response.headers.get('content-type', '')
-                    print(f"   Response type: {content_type}")
+                    content_length = response.headers.get('content-length', 'unknown')
+                    voice_id = response.headers.get('x-voice-id', 'unknown')
+                    voice_quality = response.headers.get('x-voice-quality', 'unknown')
+                    sample_rate = response.headers.get('x-sample-rate', 'unknown')
+                    
+                    print(f"   Content Type: {content_type}")
+                    print(f"   Content Length: {content_length} bytes")
+                    print(f"   Voice ID: {voice_id}")
+                    print(f"   Voice Quality: {voice_quality}")
+                    print(f"   Sample Rate: {sample_rate} Hz")
                 else:
                     print(f"❌ TTS synthesis failed: {response.status}")
                     error_text = await response.text()
@@ -107,8 +155,30 @@ async def test_voice_services():
         except Exception as e:
             print(f"❌ TTS synthesis error: {e}")
         
-        # Test 5: Test Basic API Routes
-        print("\n5. Testing API Routes...")
+        # Test 5: Test Recommended Voice (requires auth)
+        print("\n5. Testing Recommended Voice Selection...")
+        try:
+            async with session.get(f"{BASE_URL}/api/voice/tts/recommended?gender=FEMALE&quality=conversational") as response:
+                if response.status == 401 or response.status == 403:
+                    print("✅ Recommended voice endpoint properly requires authentication (expected)")
+                elif response.status == 200:
+                    data = await response.json()
+                    recommended = data.get('recommended_voice')
+                    provider = data.get('provider', 'unknown')
+                    print(f"✅ Recommended voice from {provider}: {recommended}")
+                    
+                    voice_details = data.get('voice_details', {})
+                    if voice_details:
+                        gender = voice_details.get('gender', 'unknown')
+                        quality = voice_details.get('quality', 'unknown')
+                        print(f"   Details: {gender}, {quality} quality")
+                else:
+                    print(f"❌ Recommended voice request failed: {response.status}")
+        except Exception as e:
+            print(f"❌ Recommended voice error: {e}")
+        
+        # Test 6: Test Basic API Routes
+        print("\n6. Testing API Routes...")
         routes_to_test = [
             "/health",
             "/api",
@@ -127,7 +197,7 @@ async def test_voice_services():
 
 async def test_authentication():
     """Test authentication flow (optional advanced test)"""
-    print("\n6. Testing Authentication Flow...")
+    print("\n7. Testing Authentication Flow...")
     print("ℹ️  This is an optional test - requires valid user credentials")
     
     # For now, just document what would be needed
@@ -140,7 +210,7 @@ async def test_authentication():
 
 async def test_with_auth_if_available():
     """Test authenticated endpoints if credentials are available"""
-    print("\n7. Testing Authenticated Endpoints (Optional)...")
+    print("\n8. Testing Authenticated Endpoints (Optional)...")
     
     # Check if we have test credentials in environment
     test_email = os.getenv('TEST_EMAIL')
@@ -165,7 +235,7 @@ async def test_with_auth_if_available():
                     token = login_data.get('access_token')
                     
                     if token:
-                        print("✅ Login successful - testing authenticated endpoints")
+                        print("✅ Login successful - testing authenticated Deepgram endpoints")
                         
                         # Test authenticated voices endpoint
                         headers = {"Authorization": f"Bearer {token}"}
@@ -173,24 +243,41 @@ async def test_with_auth_if_available():
                             if auth_response.status == 200:
                                 data = await auth_response.json()
                                 voices = data.get('voices', [])
-                                print(f"✅ Authenticated voices request: {len(voices)} voices available")
-                                for voice in voices[:2]:  # Show first 2
+                                provider = data.get('provider', 'unknown')
+                                print(f"✅ Authenticated voices request: {len(voices)} {provider} voices available")
+                                
+                                # Show sample voices
+                                for voice in voices[:3]:
                                     print(f"   - {voice['name']} ({voice['gender']}, {voice['quality']})")
                             else:
                                 print(f"❌ Authenticated voices request failed: {auth_response.status}")
                         
-                        # Test authenticated TTS synthesis
+                        # Test authenticated TTS synthesis with Deepgram
                         tts_payload = {
-                            "text": "This is a test of authenticated TTS synthesis.",
-                            "voice_id": "en-US-Studio-O",
-                            "audio_encoding": "MP3"
+                            "text": "This is a test of authenticated Deepgram TTS synthesis. The voice should sound natural and clear.",
+                            "voice_id": "aura-asteria-en",
+                            "encoding": "mp3",
+                            "sample_rate": 24000,
+                            "preprocess_text": True
                         }
                         async with session.post(f"{BASE_URL}/api/voice/synthesize", json=tts_payload, headers=headers) as tts_response:
                             if tts_response.status == 200:
-                                content_length = len(await tts_response.read())
-                                print(f"✅ Authenticated TTS synthesis: {content_length} bytes of audio generated")
+                                content = await tts_response.read()
+                                content_length = len(content)
+                                voice_id = tts_response.headers.get('x-voice-id', 'unknown')
+                                voice_quality = tts_response.headers.get('x-voice-quality', 'unknown')
+                                sample_rate = tts_response.headers.get('x-sample-rate', 'unknown')
+                                preprocessed = tts_response.headers.get('x-preprocessed', 'unknown')
+                                
+                                print(f"✅ Authenticated Deepgram TTS synthesis successful:")
+                                print(f"   Audio length: {content_length} bytes")
+                                print(f"   Voice: {voice_id} ({voice_quality} quality)")
+                                print(f"   Sample rate: {sample_rate} Hz")
+                                print(f"   Text preprocessed: {preprocessed}")
                             else:
                                 print(f"❌ Authenticated TTS synthesis failed: {tts_response.status}")
+                                error_text = await tts_response.text()
+                                print(f"   Error: {error_text[:200]}...")
                                 
                         return True
                     else:
@@ -206,30 +293,22 @@ async def test_with_auth_if_available():
     return False
 
 def check_environment():
-    """Check environment configuration"""
-    print("\n5. Checking Environment Configuration...")
+    """Check environment configuration for Deepgram"""
+    print("\n9. Checking Environment Configuration...")
     
     # Try to get API keys from settings first, then fall back to env vars
-    google_client_id = None
     deepgram_key = None
     
     try:
         from app.core.config import settings
-        google_client_id = getattr(settings, 'GOOGLE_CLIENT_ID', None)
         deepgram_key = getattr(settings, 'DEEPGRAM_API_KEY', None)
         print("📝 Using API keys from app.core.config.settings")
     except (ImportError, AttributeError):
         print("📝 Settings not available, checking environment variables directly")
-        google_client_id = os.getenv('GOOGLE_CLIENT_ID')
         deepgram_key = os.getenv('DEEPGRAM_API_KEY')
     
-    print(f"📝 GOOGLE_CLIENT_ID: {'✅ Set' if google_client_id else '❌ Not set'}")
-    if google_client_id:
-        masked_key = google_client_id[:4] + "..." + google_client_id[-4:] if len(google_client_id) > 8 else "***"
-        print(f"   Value: {masked_key}")
-    
-    print(f"📝 DEEPGRAM_API_KEY: {'✅ Set' if deepgram_key else '❌ Not set'}")
-    if deepgram_key:
+    print(f"📝 DEEPGRAM_API_KEY: {'✅ Set' if deepgram_key and deepgram_key != 'NOT_SET' else '❌ Not set'}")
+    if deepgram_key and deepgram_key != 'NOT_SET':
         masked_key = deepgram_key[:4] + "..." + deepgram_key[-4:] if len(deepgram_key) > 8 else "***"
         print(f"   Value: {masked_key}")
     
@@ -237,8 +316,8 @@ def check_environment():
     try:
         from app.core.config import settings
         print(f"\n🔧 Settings Configuration:")
-        print(f"   Port: {getattr(settings, 'PORT', 'Not set')}")
-        print(f"   Environment: {getattr(settings, 'ENVIRONMENT', 'Not set')}")
+        print(f"   API Port: {getattr(settings, 'API_PORT', 'Not set')}")
+        print(f"   API URL: {getattr(settings, 'API_URL', 'Not set')}")
         cors_origins = getattr(settings, 'CORS_ORIGINS', [])
         print(f"   CORS Origins: {cors_origins}")
     except (ImportError, AttributeError) as e:
@@ -246,11 +325,11 @@ def check_environment():
 
 def check_file_structure():
     """Check if required files exist"""
-    print("\n6. Checking File Structure...")
+    print("\n10. Checking File Structure...")
     
     required_files = [
         "app/api/voice_tts.py",
-        "app/services/voice/google_tts_service.py", 
+        "app/services/voice/deepgram_tts_service.py", 
         "app/services/voice/deepgram_stt_service.py",
         "app/services/voice/__init__.py"
     ]
@@ -260,11 +339,24 @@ def check_file_structure():
             print(f"✅ {file_path}")
         else:
             print(f"❌ {file_path} - Missing!")
+    
+    # Check if old Google TTS files exist (informational)
+    google_files = [
+        "app/services/voice/google_tts_service.py",
+        "app/services/voice/google_stt_service.py"
+    ]
+    
+    print("\n   Legacy Google files (optional):")
+    for file_path in google_files:
+        if os.path.exists(file_path):
+            print(f"📋 {file_path} - (legacy, still available)")
+        else:
+            print(f"📋 {file_path} - Not present")
 
 async def main():
     """Main test function"""
-    print("🚀 Voice Integration Test Script")
-    print("This script tests the voice integration setup")
+    print("🚀 Voice Integration Test Script - Deepgram Edition")
+    print("This script tests the voice integration setup using Deepgram for both STT and TTS")
     print(f"🔧 Testing server at: {BASE_URL}")
     print("Make sure your FastAPI server is running")
     print()
@@ -285,17 +377,24 @@ async def main():
         return False
     
     print("\n" + "=" * 50)
-    print("🎉 Voice integration test completed!")
+    print("🎉 Deepgram voice integration test completed!")
     print("\nNext steps:")
     print("1. If APIs are available, test the frontend components")
     print("2. Open a conversation and try voice input/output")
     print("3. Check voice settings page functionality")
+    print("4. Test different Deepgram Aura voices")
     print(f"\nNote: Make sure your server is running on {BASE_URL}")
     
     if 'auth_success' in locals() and auth_success:
-        print("\n🔐 Authentication tests passed - voice endpoints fully functional!")
+        print("\n🔐 Authentication tests passed - Deepgram voice endpoints fully functional!")
     else:
         print("\n🔐 To test authenticated voice endpoints, set TEST_EMAIL and TEST_PASSWORD environment variables")
+    
+    print("\n🎤 Deepgram Features:")
+    print("   • STT: Real-time streaming with Nova-2 model")
+    print("   • TTS: Aura voices with conversational quality")
+    print("   • Unified API key for both services")
+    print("   • High-quality audio synthesis")
     
     return True
 

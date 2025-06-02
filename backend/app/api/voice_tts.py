@@ -8,10 +8,7 @@ import logging
 
 from app.auth.auth import get_current_user
 from app.models.models import User
-from app.services.voice.google_tts_service import GoogleTTSService
-
-# Create TTS service instance
-tts_service = GoogleTTSService()
+from app.services.voice.deepgram_tts_service import deepgram_tts_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
@@ -19,11 +16,9 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 class TTSRequest(BaseModel):
     text: str
     voice_id: Optional[str] = None
-    language_code: str = "en-US"
-    speaking_rate: float = 0.95
-    pitch: float = -1.0
-    volume_gain_db: float = 1.0
-    audio_encoding: str = "MP3"
+    encoding: str = "mp3"
+    sample_rate: Optional[int] = None
+    container: Optional[str] = None
     preprocess_text: bool = True
 
 @router.post("/synthesize")
@@ -31,19 +26,17 @@ async def synthesize_speech(
     request: TTSRequest,
     current_user: User = Depends(get_current_user)
 ):
-    """Synthesize speech from text using Google TTS."""
+    """Synthesize speech from text using Deepgram TTS."""
     try:
         logger.info(f"TTS request from user {current_user.email}: {len(request.text)} characters")
         
         # Synthesize speech
-        result = tts_service.synthesize_speech(
+        result = await deepgram_tts_service.synthesize_speech(
             text=request.text,
             voice_id=request.voice_id,
-            language_code=request.language_code,
-            speaking_rate=request.speaking_rate,
-            pitch=request.pitch,
-            volume_gain_db=request.volume_gain_db,
-            audio_encoding=request.audio_encoding,
+            encoding=request.encoding,
+            sample_rate=request.sample_rate,
+            container=request.container,
             preprocess_text=request.preprocess_text
         )
         
@@ -54,20 +47,39 @@ async def synthesize_speech(
             )
         
         # Get MIME type
-        mime_type = tts_service.get_audio_mime_type(request.audio_encoding)
+        mime_type = deepgram_tts_service.get_audio_mime_type(request.encoding)
         
         # Create audio stream
         audio_stream = io.BytesIO(result["audio"])
         
+        # Determine file extension based on encoding and container
+        if request.container:
+            file_extension = request.container
+        else:
+            file_extension = request.encoding
+        
+        # Build headers carefully - avoid None values that cause encoding errors
+        response_headers = {
+            "Content-Disposition": f"attachment; filename=speech.{file_extension}",
+            "X-Voice-ID": result.get("voice_id", "unknown"),
+            "X-Voice-Quality": result.get("voice_quality", "conversational"),
+            "X-Preprocessed": str(result.get("preprocessed", False)).lower(),
+            "X-Encoding": result.get("encoding", request.encoding)
+        }
+        
+        # Only add sample rate and container if they have actual values (not None)
+        sample_rate_value = result.get("sample_rate") or request.sample_rate
+        if sample_rate_value is not None:
+            response_headers["X-Sample-Rate"] = str(sample_rate_value)
+        
+        container_value = result.get("container") or request.container
+        if container_value is not None:
+            response_headers["X-Container"] = str(container_value)
+        
         return StreamingResponse(
             io.BytesIO(result["audio"]), 
             media_type=mime_type,
-            headers={
-                "Content-Disposition": "attachment; filename=speech.mp3",
-                "X-Voice-ID": result.get("voice_id", "unknown"),
-                "X-Voice-Quality": result.get("voice_quality", "standard"),
-                "X-Preprocessed": str(result.get("preprocessed", False)).lower()
-            }
+            headers=response_headers
         )
         
     except Exception as e:
@@ -78,11 +90,12 @@ async def synthesize_speech(
 async def get_available_voices(current_user: User = Depends(get_current_user)):
     """Get available TTS voices."""
     try:
-        voices = tts_service.get_available_voices()
+        voices = deepgram_tts_service.get_available_voices()
         return {
             "success": True,
             "voices": voices,
-            "default_voice": tts_service.default_voice
+            "default_voice": deepgram_tts_service.default_voice,
+            "provider": "deepgram"
         }
     except Exception as e:
         logger.error(f"Error getting TTS voices: {e}")
@@ -91,16 +104,17 @@ async def get_available_voices(current_user: User = Depends(get_current_user)):
 @router.get("/tts/recommended")
 async def get_recommended_voice(
     gender: Optional[str] = None,
-    accent: str = "US",
+    quality: str = "conversational",
     current_user: User = Depends(get_current_user)
 ):
     """Get recommended voice based on preferences."""
     try:
-        voice_id = tts_service.get_recommended_voice(gender=gender, accent=accent)
+        voice_id = deepgram_tts_service.get_recommended_voice(gender=gender, quality=quality)
         return {
             "success": True,
             "recommended_voice": voice_id,
-            "voice_details": tts_service.voices.get(voice_id, {})
+            "voice_details": deepgram_tts_service.voices.get(voice_id, {}),
+            "provider": "deepgram"
         }
     except Exception as e:
         logger.error(f"Error getting recommended voice: {e}")
@@ -109,12 +123,35 @@ async def get_recommended_voice(
 @router.get("/tts/status")
 async def get_tts_status():
     """Get TTS service status."""
-    api_key_loaded = bool(tts_service.api_key)
+    api_key_loaded = bool(deepgram_tts_service.api_key)
     
     return {
-        "service": "google_tts",
+        "service": "deepgram_tts",
+        "provider": "deepgram",
         "api_key_configured": api_key_loaded,
-        "available_voices": len(tts_service.voices),
-        "default_voice": tts_service.default_voice,
-        "supported_encodings": ["MP3", "LINEAR16", "OGG_OPUS", "MULAW", "ALAW"]
+        "available_voices": len(deepgram_tts_service.voices),
+        "default_voice": deepgram_tts_service.default_voice,
+        "supported_encodings": ["mp3", "linear16", "flac", "opus", "aac"],
+        "recommended_formats": {
+            "mp3": {
+                "encoding": "mp3",
+                "description": "Standard MP3 format - use encoding only, no container/sample_rate",
+                "parameters": ["model", "encoding"]
+            },
+            "wav": {
+                "encoding": "linear16",
+                "container": "wav", 
+                "description": "WAV format - use linear16 encoding with wav container",
+                "parameters": ["model", "encoding", "container", "sample_rate"]
+            }
+        },
+        "parameter_notes": {
+            "mp3_encoding": "Do not use 'container' or 'sample_rate' with MP3 - causes 400 errors",
+            "linear16_encoding": "Can use 'container' and 'sample_rate' parameters",
+            "working_combinations": [
+                "model + encoding=mp3",
+                "model + encoding=linear16 + container=wav",
+                "model only (uses defaults)"
+            ]
+        }
     }
