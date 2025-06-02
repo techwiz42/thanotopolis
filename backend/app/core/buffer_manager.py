@@ -52,8 +52,7 @@ class ConversationBuffer:
         self.messages.append(msg_data)
         self.last_updated = datetime.utcnow()
         
-        # Check if we need to summarize (async)
-        asyncio.create_task(self._check_and_summarize())
+        # We'll check for summarization later when in an async context
         
     async def _check_and_summarize(self):
         """Check if buffer needs summarization"""
@@ -261,8 +260,9 @@ class BufferManager:
     
     def _start_cleanup_task(self):
         """Start periodic cleanup of old buffers"""
-        if self._cleanup_task is None or self._cleanup_task.done():
-            self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
+        # We'll start the task later when we have a running event loop
+        # This will be called by the first async operation
+        pass
     
     async def _periodic_cleanup(self):
         """Periodically clean up old buffers"""
@@ -295,6 +295,11 @@ class BufferManager:
         db: Optional[Any] = None
     ) -> ConversationBuffer:
         """Get existing buffer or create new one"""
+        # Start cleanup task if not already started
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
+            logger.info("Started buffer cleanup task")
+            
         async with self._lock:
             if conversation_id not in self.buffers:
                 buffer = ConversationBuffer(conversation_id, self.max_tokens)
@@ -322,6 +327,9 @@ class BufferManager:
         try:
             buffer = await self.get_or_create_buffer(conversation_id, db)
             buffer.add_message(message, sender_id, sender_type, metadata)
+            
+            # Now that we're in an async context, check if summarization is needed
+            await buffer._check_and_summarize()
             
             logger.debug(f"Added message to buffer for conversation {conversation_id}")
             
@@ -560,8 +568,12 @@ class BufferManager:
     
     def __del__(self):
         """Cleanup when the manager is destroyed"""
-        if self._cleanup_task and not self._cleanup_task.done():
-            self._cleanup_task.cancel()
+        try:
+            if self._cleanup_task is not None and not self._cleanup_task.done():
+                self._cleanup_task.cancel()
+        except Exception as e:
+            # Ignore exceptions during deletion
+            pass
 
 # Create singleton instance
 buffer_manager = BufferManager()
