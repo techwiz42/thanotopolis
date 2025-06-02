@@ -2,11 +2,12 @@
 import React, { useState, useCallback, useEffect, useRef, ChangeEvent, DragEvent } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-import { Send, Paperclip, Loader2 } from 'lucide-react';
+import { Send, Paperclip, Loader2, Mic } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/services/api';
 import { useToast } from '@/components/ui/use-toast';
 import { MessageMetadata } from '@/app/conversations/[id]/types/message.types';
+import { VoiceInput } from '@/components/voice/VoiceInput';
 
 export interface MessageInputProps {
   onSendMessage: (message: string, metadata?: MessageMetadata) => void;
@@ -26,6 +27,10 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const [isTyping, setIsTyping] = useState(false);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [showVoiceInput, setShowVoiceInput] = useState(false);
+  const [voiceInputStatus, setVoiceInputStatus] = useState<'idle' | 'connecting' | 'recording' | 'error'>('idle');
+  const [interimTranscript, setInterimTranscript] = useState('');
+  
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -152,6 +157,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
     
     setMessage('');
     setMessageMetadata(null);
+    setInterimTranscript('');
     
     if (onTypingStatus && isTyping) {
       setIsTyping(false);
@@ -200,6 +206,55 @@ const MessageInput: React.FC<MessageInputProps> = ({
     }
   };
 
+  // Handle voice transcription
+  const handleVoiceTranscription = useCallback((text: string, isFinal: boolean) => {
+    if (isFinal) {
+      // Add the finalized transcription to the message
+      const currentText = message.trim();
+      const newText = currentText 
+        ? `${currentText} ${text}` 
+        : text;
+      
+      setMessage(newText);
+      setInterimTranscript('');
+      
+      // Update typing status
+      updateTypingStatus(true);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      typingTimeoutRef.current = setTimeout(() => {
+        updateTypingStatus(false);
+      }, 2000);
+      
+    } else {
+      // Show interim transcription
+      setInterimTranscript(text);
+    }
+  }, [message, updateTypingStatus]);
+
+  // Handle voice input status changes
+  const handleVoiceStatusChange = useCallback((status: 'idle' | 'connecting' | 'recording' | 'error') => {
+    setVoiceInputStatus(status);
+    
+    // Auto-hide voice input when recording stops
+    if (status === 'idle' && showVoiceInput) {
+      const timer = setTimeout(() => {
+        setShowVoiceInput(false);
+      }, 2000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [showVoiceInput]);
+
+  // Toggle voice input visibility
+  const toggleVoiceInput = useCallback(() => {
+    setShowVoiceInput(!showVoiceInput);
+    if (!showVoiceInput) {
+      setInterimTranscript('');
+    }
+  }, [showVoiceInput]);
+
   useEffect(() => {
     return () => {
       if (typingTimeoutRef.current) {
@@ -208,8 +263,57 @@ const MessageInput: React.FC<MessageInputProps> = ({
     };
   }, []);
 
+  // Calculate the display text (including interim transcription)
+  const displayText = interimTranscript 
+    ? `${message}${message && !message.endsWith(' ') ? ' ' : ''}${interimTranscript}`
+    : message;
+
+  const getVoiceButtonColor = () => {
+    if (disabled) return 'text-gray-400';
+    if (voiceInputStatus === 'error') return 'text-red-500';
+    if (voiceInputStatus === 'recording') return 'text-red-500';
+    if (voiceInputStatus === 'connecting') return 'text-yellow-500';
+    if (showVoiceInput) return 'text-blue-500';
+    return 'text-gray-500';
+  };
+
   return (
     <div className="flex flex-col gap-2">
+      {/* Voice input section */}
+      {showVoiceInput && (
+        <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center gap-3">
+            <VoiceInput
+              onTranscription={handleVoiceTranscription}
+              onStatusChange={handleVoiceStatusChange}
+              disabled={disabled}
+            />
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">
+                {voiceInputStatus === 'idle' && 'Voice Input Ready'}
+                {voiceInputStatus === 'connecting' && 'Connecting...'}
+                {voiceInputStatus === 'recording' && 'Listening...'}
+                {voiceInputStatus === 'error' && 'Voice Input Error'}
+              </span>
+              {interimTranscript && (
+                <span className="text-xs text-gray-600 italic">
+                  "{interimTranscript}"
+                </span>
+              )}
+            </div>
+          </div>
+          <Button
+            onClick={toggleVoiceInput}
+            variant="ghost"
+            size="sm"
+            className="text-gray-500 hover:text-gray-700"
+          >
+            ✕
+          </Button>
+        </div>
+      )}
+
+      {/* Main input section */}
       <div 
         className={`flex gap-2 relative ${isDragging ? 'drop-target' : ''}`}
         onDragEnter={handleDragEnter}
@@ -222,16 +326,40 @@ const MessageInput: React.FC<MessageInputProps> = ({
             <div className="text-blue-500 font-medium">Drop file here to upload</div>
           </div>
         )}
+        
         <Textarea
           ref={textareaRef}
-          value={message}
+          value={displayText}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? "Message input temporarily unavailable" : "Type your message..."}
-          className="flex-grow min-h-[80px] max-h-[200px] resize-none pr-20 pl-4"
+          placeholder={
+            disabled 
+              ? "Message input temporarily unavailable" 
+              : showVoiceInput 
+                ? "Type or speak your message..."
+                : "Type your message..."
+          }
+          className={`flex-grow min-h-[80px] max-h-[200px] resize-none pr-24 pl-4 ${
+            interimTranscript ? 'text-gray-700' : ''
+          }`}
           disabled={disabled}
         />
+        
+        {/* Button controls */}
         <div className="absolute right-12 bottom-2 flex items-center gap-2">
+          {/* Voice input toggle button */}
+          <Button
+            onClick={toggleVoiceInput}
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            className={`p-2 hover:bg-gray-100 rounded-full ${getVoiceButtonColor()}`}
+            title={showVoiceInput ? "Hide voice input" : "Show voice input"}
+          >
+            <Mic className={`h-4 w-4 ${voiceInputStatus === 'recording' ? 'animate-pulse' : ''}`} />
+          </Button>
+          
+          {/* File upload button */}
           <input
             type="file"
             ref={fileInputRef}
@@ -253,6 +381,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
             )}
           </Button>
         </div>
+        
+        {/* Send button */}
         <Button 
           onClick={handleSend}
           disabled={!message.trim() || disabled}

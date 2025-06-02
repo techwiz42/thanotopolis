@@ -1,4 +1,4 @@
-# backend/app/main.py
+# backend/app/main.py - Updated imports and router registration
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -12,6 +12,7 @@ import traceback
 from app.db.database import init_db
 from app.api.auth import router as auth_router
 from app.api.voice_streaming import router as voice_streaming_router
+from app.api.voice_tts import router as voice_tts_router  # Add this import
 from app.api.websockets import router as websockets_router
 from app.api.conversations import router as conversations_router
 from app.core.config import settings
@@ -139,7 +140,8 @@ async def not_found_handler(request: Request, exc):
                 "docs": "/docs",
                 "api_docs": "/api/docs",
                 "auth": "/api/auth",
-                "conversations": "/api/conversations"
+                "conversations": "/api/conversations",
+                "voice": "/api/voice"
             }
         }
     )
@@ -233,7 +235,10 @@ async def root():
             },
             "voice": {
                 "streaming_stt": "ws://localhost:8000/api/ws/voice/streaming-stt",
-                "status": "/api/voice/stt/status"
+                "stt_status": "/api/voice/stt/status",
+                "tts_synthesize": "/api/voice/synthesize",
+                "tts_voices": "/api/voice/tts/voices",
+                "tts_status": "/api/voice/tts/status"
             },
             "websockets": {
                 "conversations": "ws://localhost:8000/api/ws/conversations/{conversation_id}",
@@ -270,6 +275,12 @@ try:
     logger.info("✅ Voice streaming router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register voice streaming router: {e}")
+
+try:
+    app.include_router(voice_tts_router, prefix="/api", tags=["Voice TTS"])  # Add this router
+    logger.info("✅ Voice TTS router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register voice TTS router: {e}")
 
 try:
     app.include_router(websockets_router, prefix="/api", tags=["WebSockets"])

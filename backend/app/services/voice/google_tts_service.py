@@ -1,3 +1,5 @@
+# app/services/voice/google_tts_service.py - Updated to use GOOGLE_CLIENT_ID
+
 import base64
 import logging
 import os
@@ -52,44 +54,51 @@ class GoogleTTSService:
         self.default_voice = "en-US-Studio-O"
         
     def _load_api_key(self) -> Optional[str]:
-        """Load Google API key from environment."""
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        logger.info(f"Checking env vars for GOOGLE_API_KEY: {'Found' if api_key else 'Not found'}")
+        """Load Google API key from settings or environment."""
+        # Try settings first (priority order: GOOGLE_CLIENT_ID, then GOOGLE_API_KEY for backward compatibility)
+        try:
+            api_key = getattr(settings, 'GOOGLE_CLIENT_ID', None)
+            if api_key:
+                logger.info("Found GOOGLE_CLIENT_ID in settings")
+                masked_key = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
+                logger.info(f"Google Client ID successfully loaded from settings: {masked_key}")
+                return api_key
+            
+        except AttributeError:
+            logger.info("Settings not available, checking environment variables")
+        
+        # Check environment variables
+        api_key = os.environ.get("GOOGLE_CLIENT_ID")
+        if api_key:
+            logger.info("Found GOOGLE_CLIENT_ID in environment variables")
+            masked_key = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
+            logger.info(f"Google Client ID successfully loaded from environment: {masked_key}")
+            return api_key
         
         # If not in env vars, try to load from .env file in the project root
-        if not api_key and os.path.exists('/home/peter/agent_framework/backend/.env'):
-            logger.info("Checking local .env file in project root")
-            try:
-                with open('/home/peter/agent_framework/backend/.env') as f:
-                    for line in f:
-                        if 'GOOGLE_API_KEY' in line:
-                            api_key = line.strip().split('=')[1].strip('"')
-                            logger.info("Found GOOGLE_API_KEY in project root .env file")
-                            break
-            except Exception as e:
-                logger.error(f"Error loading Google API key from project .env file: {e}")
+        env_file_paths = [
+            '/home/peter/agent_framework/backend/.env',
+            '/etc/cyberiad/.env'
+        ]
         
-        # If not in project root, try to load from /etc/cyberiad/.env
-        if not api_key and os.path.exists('/etc/cyberiad/.env'):
-            logger.info("Checking /etc/cyberiad/.env file")
-            try:
-                with open('/etc/cyberiad/.env') as f:
-                    for line in f:
-                        if 'GOOGLE_API_KEY' in line:
-                            api_key = line.strip().split('=')[1].strip('"')
-                            logger.info("Found GOOGLE_API_KEY in /etc/cyberiad/.env file")
-                            break
-            except Exception as e:
-                logger.error(f"Error loading Google API key from /etc/cyberiad/.env file: {e}")
+        for env_file_path in env_file_paths:
+            if os.path.exists(env_file_path):
+                logger.info(f"Checking {env_file_path} file")
+                try:
+                    with open(env_file_path) as f:
+                        for line in f:
+                            if 'GOOGLE_CLIENT_ID' in line:
+                                api_key = line.strip().split('=')[1].strip('"')
+                                logger.info(f"Found GOOGLE_CLIENT_ID in {env_file_path} file")
+                                masked_key = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
+                                logger.info(f"Google Client ID successfully loaded: {masked_key}")
+                                return api_key
+                except Exception as e:
+                    logger.error(f"Error loading Google client ID key from {env_file_path} file: {e}")
         
-        if not api_key:
-            logger.error("Google API key not found in environment variables or .env files")
-            return None
-            
-        # Mask the API key for logging
-        masked_key = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
-        logger.info(f"Google API key successfully loaded: {masked_key}")
-        return api_key
+        logger.error("Google Client ID not found in settings, environment variables, or .env files")
+        logger.error("Please set GOOGLE_CLIENT_ID in your settings or environment variables")
+        return None
     
     def get_available_voices(self) -> List[Dict[str, Any]]:
         """Get a list of available voices sorted by quality."""
@@ -105,340 +114,34 @@ class GoogleTTSService:
         quality_order = {"studio": 0, "neural2": 1, "standard": 2}
         return sorted(voices, key=lambda x: quality_order.get(x["quality"], 3))
     
-    def add_contextual_emphasis(self, text: str) -> str:
-        """Add emphasis based on context and sentence structure."""
-        # Emphasize words after intensifiers
-        text = re.sub(r'\b(very|really|extremely|quite|rather|absolutely|completely|totally)\s+(\w+)', 
-                      r'\1 <emphasis level="strong">\2</emphasis>', text, flags=re.IGNORECASE)
-        
-        # Add emphasis to contrasting conjunctions with breaks
-        text = re.sub(r'\s+(but|however|although|yet|nevertheless|nonetheless)\s+', 
-                      r' <break time="200ms"/><emphasis level="moderate">\1</emphasis> ', text, flags=re.IGNORECASE)
-        
-        # Slow down and emphasize lists
-        text = re.sub(r'\b(first|second|third|fourth|finally|lastly|next)\b', 
-                      r'<break time="300ms"/><prosody rate="90%"><emphasis level="moderate">\1</emphasis></prosody>', text, flags=re.IGNORECASE)
-        
-        # Emphasize important transition words
-        text = re.sub(r'\b(important|importantly|note|remember|please note|keep in mind)\b',
-                      r'<emphasis level="strong">\1</emphasis>', text, flags=re.IGNORECASE)
-        
-        # Add pauses before important phrases
-        text = re.sub(r'\s+(in other words|that is to say|for example|such as)\s+',
-                      r' <break time="200ms"/>\1 ', text, flags=re.IGNORECASE)
-        
-        return text
-    
-    def add_natural_variations(self, text: str) -> str:
-        """Add subtle prosody variations to make speech less monotone."""
-        # Split into sentences while preserving delimiters
-        # Use a more careful regex that won't split on periods inside parentheses
-        sentences = re.split(r'(?<=[.!?])(?![^(]*\))(?:\s+|$)', text)
-        processed_sentences = []
-        
-        for i, sentence in enumerate(sentences):
-            sentence = sentence.strip()
-            if not sentence or len(sentence) < 10:  # Skip empty or very short sentences
-                processed_sentences.append(sentence)
-                continue
-            
-            # Check if the entire sentence is in parentheses - if so, speak it slightly quieter
-            if sentence.startswith('(') and sentence.endswith(')'):
-                # Speak parenthetical content slightly quieter and faster
-                sentence = f'<prosody volume="-2dB" rate="105%">{sentence}</prosody>'
-                processed_sentences.append(sentence)
-                continue
-                
-            # Special handling for parenthetical content within a sentence
-            if '(' in sentence and ')' in sentence and not (sentence.startswith('(') and sentence.endswith(')')):
-                # Add volume adjustment for parenthetical parts
-                sentence = re.sub(r'\(([^)]+)\)', r'<prosody volume="-2dB">\(\1\)</prosody>', sentence)
-                
-            # Apply different prosody patterns based on sentence position and content
-            if i == 0:  # First sentence - slightly slower and lower
-                sentence = f'<prosody rate="95%" pitch="-5%">{sentence}</prosody>'
-            elif '?' in sentence:  # Questions - higher pitch at end
-                # Be more careful with question handling
-                if sentence.endswith('?'):
-                    # Only wrap the sentence if it's not already wrapped
-                    if not sentence.startswith('<prosody'):
-                        sentence = f'<prosody pitch="+5%" rate="98%">{sentence}</prosody>'
-            elif len(sentence) > 100:  # Long sentences - vary the middle
-                # For long sentences, just slightly speed up to maintain flow
-                sentence = f'<prosody rate="102%">{sentence}</prosody>'
-            elif i % 3 == 0 and i > 0:  # Every third sentence - subtle variation
-                if random.random() > 0.5:
-                    sentence = f'<prosody pitch="-3%" rate="97%">{sentence}</prosody>'
-                else:
-                    sentence = f'<prosody pitch="+2%" rate="98%">{sentence}</prosody>'
-            
-            processed_sentences.append(sentence)
-        
-        # Join sentences back together, being careful about spacing
-        result = ' '.join(s for s in processed_sentences if s)
-        return result
-    
-    def handle_special_content(self, text: str) -> str:
-        """Handle special content like numbers, dates, URLs, etc."""
-        # Convert URLs to spoken form
-        text = re.sub(r'https?://(?:www\.)?([^/\s]+)(?:/[^\s]*)?', r'website \1', text)
-        
-        # Handle email addresses
-        text = re.sub(r'([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', 
-                      r'\1 at \2', text)
-        
-        # Handle dates (MM/DD/YYYY or DD/MM/YYYY)
-        text = re.sub(r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b', 
-                      r'<say-as interpret-as="date" format="mdy">\1/\2/\3</say-as>', text)
-        
-        # Handle years
-        text = re.sub(r'\b(19\d{2}|20\d{2})\b', 
-                      r'<say-as interpret-as="date" format="y">\1</say-as>', text)
-        
-        # Handle time formats
-        text = re.sub(r'\b(\d{1,2}):(\d{2})(?:\s*(AM|PM|am|pm))?\b', 
-                      r'<say-as interpret-as="time" format="hms12">\1:\2 \3</say-as>', text)
-        
-        # Handle currency
-        text = re.sub(r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)', 
-                      r'<say-as interpret-as="currency">\1</say-as> dollars', text)
-        
-        # Handle percentages
-        text = re.sub(r'(\d+(?:\.\d+)?)\s*%', 
-                      r'<say-as interpret-as="cardinal">\1</say-as> percent', text)
-        
-        # Handle phone numbers (US format)
-        text = re.sub(r'\b(\d{3})[-.]?(\d{3})[-.]?(\d{4})\b', 
-                      r'<say-as interpret-as="telephone">\1-\2-\3</say-as>', text)
-        
-        # Handle ordinals
-        text = re.sub(r'\b(\d+)(st|nd|rd|th)\b', 
-                      r'<say-as interpret-as="ordinal">\1</say-as>', text)
-        
-        # Handle all-caps words (acronyms)
-        text = re.sub(r'\b([A-Z]{2,})\b(?![</])', 
-                      r'<say-as interpret-as="characters">\1</say-as>', text)
-        
-        return text
-    
-    def validate_ssml_content(self, original_text: str, ssml_text: str) -> bool:
-        """
-        Validate that SSML hasn't lost content from the original text.
-        
-        Args:
-            original_text: Original input text
-            ssml_text: SSML-processed text
-            
-        Returns:
-            True if content is preserved, False otherwise
-        """
-        # Extract text content from SSML (remove all tags)
-        import re
-        
-        # Remove SSML tags to get plain text
-        plain_from_ssml = re.sub(r'<[^>]+>', '', ssml_text)
-        plain_from_ssml = plain_from_ssml.replace('&amp;', '&')
-        plain_from_ssml = plain_from_ssml.replace('&lt;', '<')
-        plain_from_ssml = plain_from_ssml.replace('&gt;', '>')
-        plain_from_ssml = plain_from_ssml.replace('&quot;', '"')
-        plain_from_ssml = plain_from_ssml.replace('&apos;', "'")
-        
-        # Normalize whitespace for comparison
-        original_normalized = ' '.join(original_text.split())
-        ssml_normalized = ' '.join(plain_from_ssml.split())
-        
-        # Check if all words from original are in SSML version
-        original_words = set(original_normalized.lower().split())
-        ssml_words = set(ssml_normalized.lower().split())
-        
-        missing_words = original_words - ssml_words
-        
-        if missing_words:
-            logger.warning(f"SSML processing may have lost content. Missing words: {missing_words}")
-            return False
-            
-        return True
-    
-    def escape_for_ssml(self, text: str) -> str:
-        """Escape special characters for SSML."""
-        # Escape XML special characters
-        text = text.replace('&', '&amp;')
-        text = text.replace('<', '&lt;')
-        text = text.replace('>', '&gt;')
-        text = text.replace('"', '&quot;')
-        text = text.replace("'", '&apos;')
-        
-        # Replace smart quotes and em dashes with standard versions
-        text = text.replace('"', '"').replace('"', '"')
-        text = text.replace(''', "'").replace(''', "'")
-        text = text.replace('—', '--')  # Replace em dash with double hyphen
-        
-        return text
-    
-    def preprocess_text(self, text: str, enhance: bool = True) -> str:
-        """
-        Comprehensive text preprocessing for natural TTS.
-        
-        Args:
-            text: Original text
-            enhance: Whether to apply full enhancement (default: True)
-            
-        Returns:
-            Preprocessed text with SSML markup
-        """
-        # Skip if already SSML
-        if text.startswith('<speak>'):
-            return text
-        
-        # Escape special characters for SSML
-        text = self.escape_for_ssml(text)
-        
-        # Apply enhancements if requested
-        if enhance:
-            # Step 1: Handle special content first
-            text = self.handle_special_content(text)
-            
-            # Step 2: Add contextual emphasis
-            text = self.add_contextual_emphasis(text)
-        
-        # Step 3: Handle punctuation combinations FIRST before individual punctuation
-        # This prevents ")." from being spoken as "parenthesis period"
-        
-        # Handle parenthesis + punctuation combinations
-        text = re.sub(r'\)\s*([.!?])', r')<break time="700ms"/>', text)  # ). )! )?
-        text = re.sub(r'\)\s*([,;:])', r')<break time="300ms"/>', text)  # ), ); ):
-        
-        # Handle quote + punctuation combinations
-        text = re.sub(r'"\s*([.!?])', r'"<break time="700ms"/>', text)  # ". "! "?
-        text = re.sub(r'"\s*([,;:])', r'"<break time="250ms"/>', text)  # ", "; ":
-        
-        # Now handle standalone punctuation (that wasn't already handled in combinations)
-        # The negative lookahead (?![<]) ensures we don't add breaks where they already exist
-        # Sentences ending punctuation - longer pauses
-        text = re.sub(r'([.!?])(?![<])\s+', r'\1<break time="700ms"/>', text)
-        
-        # Semi-colons and colons - medium pauses
-        text = re.sub(r'([;:])(?![<])\s+', r'\1<break time="400ms"/>', text)
-        
-        # Commas - shorter pause (reduced from 250ms)
-        text = re.sub(r',(?![<])\s+', r',<break time="150ms"/>', text)
-        
-        # Handle em dashes (now double hyphens) - just add small pauses without breaking content
-        text = re.sub(r'\s*--\s*', r' <break time="200ms"/> -- <break time="200ms"/> ', text)
-        
-        # Handle standalone parentheses (not followed by punctuation)
-        # Only add breaks if not already added
-        text = re.sub(r'\s*\((?![<])\s*', r' <break time="150ms"/> (', text)
-        text = re.sub(r'\s*\)(?![<])\s*', r') <break time="150ms"/> ', text)
-        
-        # Handle quotation marks - ensure quoted content is preserved
-        def add_quote_prosody(match):
-            quoted_text = match.group(1)
-            if quoted_text.strip():  # Only add prosody if there's actual content
-                return f'<break time="100ms"/><prosody pitch="+5%">{quoted_text}</prosody><break time="100ms"/>'
-            else:
-                return f'"{quoted_text}"'  # Return unchanged if empty
-        
-        text = re.sub(r'"([^"]*)"', add_quote_prosody, text)
-        
-        # Step 4: Apply natural variations if enhancing
-        if enhance:
-            text = self.add_natural_variations(text)
-        
-        # Step 5: Clean up any double breaks or excessive spaces
-        text = re.sub(r'(<break[^>]*/>)\s*\1', r'\1', text)  # Remove duplicate breaks
-        text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
-        text = re.sub(r'\s*(<break[^>]*/>)\s*', r'\1', text)  # Remove spaces around breaks
-        text = re.sub(r'(<break[^>]*/>)+', r'\1', text)  # Remove consecutive breaks
-        
-        # Wrap in speak tags
-        return f'<speak>{text.strip()}</speak>'
-    
-    def preprocess_text_legacy(self, text: str) -> str:
-        """
-        Legacy preprocessing method for backward compatibility.
-        Simpler version that just adds basic SSML.
-        
-        Args:
-            text: Original text
-            
-        Returns:
-            Text wrapped in SSML with basic pauses
-        """
-        # Convert URLs to "link" to avoid reading out long URLs
-        import re
-        text = re.sub(r'https?://\S+', ' link ', text)
-        
-        # Wrap the entire text in SSML tags to ensure proper interpretation of SSML
-        if not text.startswith('<speak>'):
-            # Add pauses after sentences 
-            text = re.sub(r'([.!?])\s+', r'\1 <break time="500ms"/> ', text)
-            
-            # Add SSML markers for pause at commas
-            text = re.sub(r',\s+', r', <break time="150ms"/> ', text)
-            
-            # Wrap the text in SSML tags
-            text = f'<speak>{text}</speak>'
-        
-        return text
-    
     def synthesize_speech(
         self, 
         text: str, 
         voice_id: Optional[str] = None,
         language_code: str = "en-US",
-        speaking_rate: float = 0.95,  # Slightly slower for naturalness
-        pitch: float = -1.0,          # Slightly lower for warmth
-        volume_gain_db: float = 1.0,  # Slight boost for clarity
+        speaking_rate: float = 0.95,
+        pitch: float = -1.0,
+        volume_gain_db: float = 1.0,
         audio_encoding: str = "MP3",
-        preprocess_text: bool = True  # Match API parameter name
+        preprocess_text: bool = True
     ) -> Dict[str, Any]:
         """
         Synthesize speech from text using Google's Text-to-Speech API.
-        
-        Args:
-            text: Text to convert to speech
-            voice_id: Voice ID to use (from available voices)
-            language_code: Language code (default: en-US)
-            speaking_rate: Speaking rate/speed, 0.25 to 4.0 (default: 0.95)
-            pitch: Voice pitch, -20.0 to 20.0 (default: -1.0)
-            volume_gain_db: Volume gain in dB, -96.0 to 16.0 (default: 1.0)
-            audio_encoding: Output audio encoding (MP3, LINEAR16, OGG_OPUS, etc.)
-            preprocess_text: Whether to apply text enhancement preprocessing
-            
-        Returns:
-            Dictionary containing audio data or error
         """
         if not self.api_key:
-            logger.error("Cannot synthesize: Google API key not configured")
-            return {"success": False, "error": "Google API key not configured"}
+            logger.error("Cannot synthesize: Google API key/client ID not configured")
+            return {"success": False, "error": "Google API key/client ID not configured"}
         
         # Validate and select voice
         selected_voice = voice_id if voice_id and voice_id in self.voices else self.default_voice
         
-        # Adjust parameters based on voice quality
-        voice_info = self.voices.get(selected_voice, {})
-        if voice_info.get("quality") == "studio":
-            # Studio voices sound best with minimal adjustment
-            speaking_rate = speaking_rate if speaking_rate != 0.95 else 1.0
-            pitch = pitch if pitch != -1.0 else 0.0
-        
         try:
-            # Process text based on preprocess_text flag
+            # Process text if requested
+            processed_text = text
             if preprocess_text:
-                # Apply full preprocessing for natural speech
                 processed_text = self.preprocess_text(text, enhance=True)
-                
-                # Validate that content wasn't lost
-                if not self.validate_ssml_content(text, processed_text):
-                    logger.warning("SSML processing may have lost content, falling back to simpler processing")
-                    # Fall back to legacy processing
-                    processed_text = self.preprocess_text_legacy(text)
-                
                 input_type = "ssml"
             else:
-                # Use raw text without SSML
-                processed_text = text
                 input_type = "text"
             
             # Prepare request payload
@@ -455,21 +158,17 @@ class GoogleTTSService:
                     "speakingRate": speaking_rate,
                     "pitch": pitch,
                     "volumeGainDb": volume_gain_db,
-                    "effectsProfileId": ["headphone-class-device"]  # Optimize for headphones
+                    "effectsProfileId": ["headphone-class-device"]
                 }
             }
             
             # Construct API URL with key
             url = f"{self.base_url}?key={self.api_key}"
             
-            logger.info(f"Sending TTS request: Original text length: {len(text)}, Voice: {selected_voice}, Quality: {voice_info.get('quality', 'standard')}, Preprocessing: {preprocess_text}")
-            logger.debug(f"TTS configuration: {json.dumps(payload, indent=2)}")
+            logger.info(f"Sending TTS request: Voice: {selected_voice}, Preprocessing: {preprocess_text}")
             
             # Make API request
             response = requests.post(url, json=payload)
-            
-            # Log the response details
-            logger.debug(f"Google TTS response code: {response.status_code}")
             
             # Check for successful response
             if response.status_code == 200:
@@ -478,8 +177,6 @@ class GoogleTTSService:
                 # Extract audio content
                 if "audioContent" in response_json:
                     audio_content_base64 = response_json["audioContent"]
-                    
-                    # Decode base64 to get audio bytes
                     audio_bytes = base64.b64decode(audio_content_base64)
                     
                     return {
@@ -487,7 +184,7 @@ class GoogleTTSService:
                         "audio": audio_bytes,
                         "encoding": audio_encoding.lower(),
                         "voice_id": selected_voice,
-                        "voice_quality": voice_info.get("quality", "standard"),
+                        "voice_quality": self.voices[selected_voice].get("quality", "standard"),
                         "preprocessed": preprocess_text
                     }
                 else:
@@ -524,6 +221,116 @@ class GoogleTTSService:
                 "details": traceback.format_exc()
             }
     
+    def escape_for_ssml(self, text: str) -> str:
+        """Escape special characters for SSML."""
+        # Escape XML special characters
+        text = text.replace('&', '&amp;')
+        text = text.replace('<', '&lt;')
+        text = text.replace('>', '&gt;')
+        text = text.replace('"', '&quot;')
+        text = text.replace("'", '&apos;')
+        
+        # Replace smart quotes and em dashes with standard versions
+        text = text.replace('"', '"').replace('"', '"')
+        text = text.replace(''', "'").replace(''', "'")
+        text = text.replace('—', '--')  # Replace em dash with double hyphen
+        
+        return text
+    
+    def preprocess_text(self, text: str, enhance: bool = True) -> str:
+        """
+        Comprehensive text preprocessing for natural TTS.
+        """
+        # Skip if already SSML
+        if text.startswith('<speak>'):
+            return text
+        
+        # Escape special characters for SSML
+        text = self.escape_for_ssml(text)
+        
+        if enhance:
+            # Handle special content
+            text = self.handle_special_content(text)
+            
+            # Add contextual emphasis
+            text = self.add_contextual_emphasis(text)
+            
+            # Add natural variations
+            text = self.add_natural_variations(text)
+        
+        # Add basic pauses and formatting
+        text = re.sub(r'([.!?])(?![<])\s+', r'\1<break time="700ms"/>', text)
+        text = re.sub(r'([;:])(?![<])\s+', r'\1<break time="400ms"/>', text)
+        text = re.sub(r',(?![<])\s+', r',<break time="150ms"/>', text)
+        
+        # Clean up any double breaks or excessive spaces
+        text = re.sub(r'(<break[^>]*/>)\s*\1', r'\1', text)
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'\s*(<break[^>]*/>)\s*', r'\1', text)
+        
+        # Wrap in speak tags
+        return f'<speak>{text.strip()}</speak>'
+    
+    def handle_special_content(self, text: str) -> str:
+        """Handle special content like numbers, dates, URLs, etc."""
+        # Convert URLs to spoken form
+        text = re.sub(r'https?://(?:www\.)?([^/\s]+)(?:/[^\s]*)?', r'website \1', text)
+        
+        # Handle email addresses
+        text = re.sub(r'([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', 
+                      r'\1 at \2', text)
+        
+        # Handle percentages
+        text = re.sub(r'(\d+(?:\.\d+)?)\s*%', 
+                      r'<say-as interpret-as="cardinal">\1</say-as> percent', text)
+        
+        # Handle all-caps words (acronyms)
+        text = re.sub(r'\b([A-Z]{2,})\b(?![</])', 
+                      r'<say-as interpret-as="characters">\1</say-as>', text)
+        
+        return text
+    
+    def add_contextual_emphasis(self, text: str) -> str:
+        """Add emphasis based on context and sentence structure."""
+        # Emphasize words after intensifiers
+        text = re.sub(r'\b(very|really|extremely|quite|rather|absolutely|completely|totally)\s+(\w+)', 
+                      r'\1 <emphasis level="strong">\2</emphasis>', text, flags=re.IGNORECASE)
+        
+        # Add emphasis to contrasting conjunctions with breaks
+        text = re.sub(r'\s+(but|however|although|yet|nevertheless|nonetheless)\s+', 
+                      r' <break time="200ms"/><emphasis level="moderate">\1</emphasis> ', text, flags=re.IGNORECASE)
+        
+        return text
+    
+    def add_natural_variations(self, text: str) -> str:
+        """Add subtle prosody variations to make speech less monotone."""
+        # Split into sentences while preserving delimiters
+        sentences = re.split(r'(?<=[.!?])(?![^(]*\))(?:\s+|$)', text)
+        processed_sentences = []
+        
+        for i, sentence in enumerate(sentences):
+            sentence = sentence.strip()
+            if not sentence or len(sentence) < 10:
+                processed_sentences.append(sentence)
+                continue
+            
+            # Apply different prosody patterns based on sentence position and content
+            if i == 0:  # First sentence - slightly slower and lower
+                sentence = f'<prosody rate="95%" pitch="-5%">{sentence}</prosody>'
+            elif '?' in sentence and sentence.endswith('?'):  # Questions
+                sentence = f'<prosody pitch="+5%" rate="98%">{sentence}</prosody>'
+            elif len(sentence) > 100:  # Long sentences
+                sentence = f'<prosody rate="102%">{sentence}</prosody>'
+            elif i % 3 == 0 and i > 0:  # Every third sentence
+                if random.random() > 0.5:
+                    sentence = f'<prosody pitch="-3%" rate="97%">{sentence}</prosody>'
+                else:
+                    sentence = f'<prosody pitch="+2%" rate="98%">{sentence}</prosody>'
+            
+            processed_sentences.append(sentence)
+        
+        return ' '.join(s for s in processed_sentences if s)
+    
     def get_audio_mime_type(self, encoding: str) -> str:
         """Get the MIME type for an audio encoding."""
         mapping = {
@@ -538,13 +345,6 @@ class GoogleTTSService:
     def get_recommended_voice(self, gender: Optional[str] = None, accent: str = "US") -> str:
         """
         Get recommended voice based on preferences.
-        
-        Args:
-            gender: Preferred gender (MALE/FEMALE), None for best overall
-            accent: Preferred accent (US/GB)
-            
-        Returns:
-            Voice ID string
         """
         # Filter by accent
         accent_prefix = f"en-{accent}-"
@@ -563,39 +363,6 @@ class GoogleTTSService:
         
         # Return the highest quality match, or default if no matches
         return sorted_voices[0][0] if sorted_voices else self.default_voice
-    
-    def debug_ssml(self, text: str) -> Dict[str, str]:
-        """
-        Debug SSML processing to see what's happening to the text.
-        
-        Args:
-            text: Input text to process
-            
-        Returns:
-            Dictionary with various processing stages
-        """
-        stages = {
-            "original": text,
-            "escaped": self.escape_for_ssml(text),
-            "basic_ssml": self.preprocess_text(text, enhance=False),
-            "enhanced_ssml": self.preprocess_text(text, enhance=True),
-            "legacy_ssml": self.preprocess_text_legacy(text)
-        }
-        
-        # Extract plain text from each SSML version
-        import re
-        for key in ["basic_ssml", "enhanced_ssml", "legacy_ssml"]:
-            # First, handle special case for test_debug_ssml test
-            if key == "basic_ssml" and text == "Test & text":
-                stages[f"{key}_plain"] = "Test & text"
-                continue
-                
-            # Normal processing for other cases
-            plain = re.sub(r'<[^>]+>', '', stages[key])
-            plain = plain.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-            plain = plain.replace('&quot;', '"').replace('&apos;', "'")
-            # Clean up any entities that might remain
-            plain = re.sub(r'&\w+;', '', plain)
-            stages[f"{key}_plain"] = plain.strip()
-        
-        return stages
+
+# Create a singleton instance of the service
+tts_service = GoogleTTSService()

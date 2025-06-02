@@ -2,11 +2,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Message } from '@/app/conversations/[id]/types/message.types';
 import { DownloadButton } from '@/app/conversations/[id]/components/DownloadButton';
-import { Copy } from 'lucide-react';
+import { Copy, Volume2, VolumeX } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import FileDisplay from '@/app/conversations/[id]/components/FileDisplay';
 import { PrintButton } from '@/app/conversations/[id]/components/PrintButton';
+import { VoiceOutput } from '@/components/voice/VoiceOutput';
+import { Button } from '@/components/ui/button';
 
 // Define an enhanced interface for the Message type to include all needed properties
 interface EnhancedMessage extends Message {
@@ -59,6 +61,8 @@ const MessageItem: React.FC<Props> = ({
   const { toast } = useToast();
   const { user } = useAuth();
   const contentRef = useRef<HTMLDivElement>(null);
+  const [showVoiceControls, setShowVoiceControls] = useState(false);
+  const [isVoicePlaying, setIsVoicePlaying] = useState(false);
   
   // Cast message to EnhancedMessage for easier access to optional properties
   const enhancedMessage = message as EnhancedMessage;
@@ -67,6 +71,49 @@ const MessageItem: React.FC<Props> = ({
   const currentStreamingContent = streamingContent || enhancedMessage.streaming_content || '';
   const messageIsStreaming = isStreaming || enhancedMessage.is_streaming || 
     (hasMessageInfo(message) && message.message_info?.is_streaming);
+
+  // Check if this is an agent message that can have voice output
+  const isAgentMessage = message.sender.type === 'agent' || 
+                        !!enhancedMessage.agent_type || 
+                        !message.sender.is_owner;
+
+  // Get clean text content for voice synthesis
+  const getCleanTextContent = () => {
+    if (messageIsStreaming) {
+      return currentStreamingContent
+        .replace(/\[\w+ is thinking\.\.\.\]/g, '')
+        .replace(/\[\w+ has completed\]/g, '')
+        .replace(/\[Synthesizing collaborative response\.\.\.\]/g, '')
+        .replace(/\[TIMEOUT\]/g, '')
+        .replace(/\[ERROR\]/g, '')
+        .replace(/\[DONE\]/g, '')
+        .replace(/\[END\]/g, '')
+        .replace(/\[AGENT_COMPLETE\]/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+    
+    // Clean up markdown and HTML for better voice synthesis
+    let cleanText = message.content;
+    
+    // Remove markdown links but keep the text
+    cleanText = cleanText.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    
+    // Remove markdown formatting
+    cleanText = cleanText.replace(/\*\*([^*]+)\*\*/g, '$1'); // Bold
+    cleanText = cleanText.replace(/\*([^*]+)\*/g, '$1'); // Italic
+    cleanText = cleanText.replace(/`([^`]+)`/g, '$1'); // Inline code
+    cleanText = cleanText.replace(/```[\s\S]*?```/g, ''); // Code blocks
+    cleanText = cleanText.replace(/#{1,6}\s+/g, ''); // Headers
+    
+    // Remove HTML tags
+    cleanText = cleanText.replace(/<[^>]*>/g, '');
+    
+    // Clean up extra whitespace
+    cleanText = cleanText.replace(/\n{3,}/g, '\n\n').trim();
+    
+    return cleanText;
+  };
 
   const getMessageClasses = () => {
     const baseClasses = "rounded-lg px-4 py-3 max-w-[70%] relative text-sm break-all";
@@ -398,6 +445,18 @@ const MessageItem: React.FC<Props> = ({
     }
   };
 
+  const toggleVoiceControls = () => {
+    setShowVoiceControls(!showVoiceControls);
+  };
+
+  const handleVoicePlayStateChange = (isPlaying: boolean) => {
+    setIsVoicePlaying(isPlaying);
+  };
+
+  // Get the text content for voice synthesis
+  const voiceText = getCleanTextContent();
+  const hasVoiceContent = voiceText.length > 0 && !messageIsStreaming;
+
   return (
     <div className={`flex ${message.sender.is_owner ? 'justify-end' : 'justify-start'} mb-4`}>
       <div className={`${getMessageClasses()} flex flex-col break-words`}>
@@ -428,6 +487,32 @@ const MessageItem: React.FC<Props> = ({
           {renderContent()}
         </div>
         
+        {/* Voice output controls for agent messages */}
+        {isAgentMessage && hasVoiceContent && !messageIsStreaming && (
+          <div className="mt-3">
+            {showVoiceControls ? (
+              <VoiceOutput
+                text={voiceText}
+                onPlayStateChange={handleVoicePlayStateChange}
+                className="w-full"
+                voiceId={enhancedMessage.agent_type?.toLowerCase().includes('female') ? 
+                  'en-US-Studio-O' : 'en-US-Studio-M'}
+                messageId={message.id}
+              />
+            ) : (
+              <Button
+                onClick={toggleVoiceControls}
+                variant="ghost"
+                size="sm"
+                className="flex items-center gap-2 text-xs"
+              >
+                <Volume2 className="w-3 h-3" />
+                Listen to Response
+              </Button>
+            )}
+          </div>
+        )}
+        
         <div className="mt-2 flex items-center gap-2">
           <button 
             onClick={handleCopy}
@@ -436,6 +521,21 @@ const MessageItem: React.FC<Props> = ({
           >
             <Copy className="w-4 h-4" />  
           </button>
+          
+          {/* Voice toggle for agent messages */}
+          {isAgentMessage && hasVoiceContent && !messageIsStreaming && (
+            <button
+              onClick={toggleVoiceControls}
+              className={`${showVoiceControls || isVoicePlaying ? 'text-blue-600' : 'text-gray-600'} hover:text-gray-900`}
+              aria-label={showVoiceControls ? "Hide voice controls" : "Show voice controls"}
+            >
+              {isVoicePlaying ? (
+                <Volume2 className="w-4 h-4" />
+              ) : (
+                <VolumeX className="w-4 h-4" />
+              )}
+            </button>
+          )}
           
           {/* Only show download and print buttons for completed messages */}
           {!messageIsStreaming && (
