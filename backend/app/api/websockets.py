@@ -701,7 +701,6 @@ async def websocket_endpoint(
             
         except Exception as e:
             logger.error(f"Error fetching historical messages: {e}")
-            import traceback
             logger.error(traceback.format_exc())
         
         # Notify others of new participant

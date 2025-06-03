@@ -4,9 +4,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Send, Paperclip, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useVoice } from '@/contexts/VoiceContext';
 import { api } from '@/services/api';
 import { useToast } from '@/components/ui/use-toast';
 import { MessageMetadata } from '@/app/conversations/[id]/types/message.types';
+// No longer need to import VoiceInput since it's handled at the page level
 
 export interface MessageInputProps {
   onSendMessage: (message: string, metadata?: MessageMetadata) => void;
@@ -26,12 +28,30 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const [isTyping, setIsTyping] = useState(false);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isVoiceInput, setIsVoiceInput] = useState(false);
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [voiceStatus, setVoiceStatus] = useState<'idle' | 'connecting' | 'recording' | 'error'>('idle');
   
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { token, user } = useAuth();
+  const { inputEnabled } = useVoice();
   const { toast } = useToast();
+
+  // Debug logging
+  useEffect(() => {
+    console.log('MessageInput - Voice input enabled globally:', inputEnabled);
+    console.log('MessageInput - Token available:', !!token);
+    console.log('MessageInput - Component disabled:', disabled);
+    
+    if (inputEnabled) {
+      // Add a CSS class to indicate voice input is enabled globally
+      textareaRef.current?.classList.add('voice-enabled');
+    } else {
+      textareaRef.current?.classList.remove('voice-enabled');
+    }
+  }, [inputEnabled, token, disabled]);
 
   const processFile = async (file: File) => {
     if (!file) return;
@@ -148,11 +168,14 @@ const MessageInput: React.FC<MessageInputProps> = ({
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
 
+    console.log('Sending message:', trimmedMessage);
+
     // Send message with existing metadata if any
     onSendMessage(trimmedMessage, messageMetadata || undefined);
     
     setMessage('');
     setMessageMetadata(null);
+    setInterimTranscript('');
     
     if (onTypingStatus && isTyping) {
       setIsTyping(false);
@@ -201,6 +224,59 @@ const MessageInput: React.FC<MessageInputProps> = ({
     }
   };
 
+  // Handle voice transcription
+  const handleVoiceTranscription = useCallback((text: string, isFinal: boolean) => {
+    console.log('Voice transcription received:', { text, isFinal });
+    
+    if (isFinal) {
+      // Final transcription - add to message
+      const currentText = message.trim();
+      const newText = currentText ? `${currentText} ${text}` : text;
+      console.log('Setting final message:', newText);
+      setMessage(newText);
+      setInterimTranscript('');
+      setIsVoiceInput(false);
+      
+      // Focus textarea after voice input
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+      
+      toast({
+        title: "Voice Input Complete",
+        description: `Transcribed: "${text}"`,
+        duration: 2000
+      });
+    } else {
+      // Interim transcription - show as preview
+      console.log('Setting interim transcript:', text);
+      setInterimTranscript(text);
+      setIsVoiceInput(true);
+    }
+  }, [message, toast]);
+
+  // Handle voice input status changes
+  const handleVoiceStatusChange = useCallback((status: 'idle' | 'connecting' | 'recording' | 'error') => {
+    console.log('Voice status changed:', status);
+    setVoiceStatus(status);
+    
+    if (status === 'recording') {
+      updateTypingStatus(true);
+      setIsVoiceInput(true);
+    } else if (status === 'idle') {
+      updateTypingStatus(false);
+      setIsVoiceInput(false);
+      setInterimTranscript('');
+    } else if (status === 'error') {
+      setIsVoiceInput(false);
+      setInterimTranscript('');
+      toast({
+        title: "Voice Input Error",
+        description: "There was an issue with voice input. Please try again.",
+        variant: "destructive"
+      });
+    }
+  }, [updateTypingStatus, toast]);
 
   useEffect(() => {
     return () => {
@@ -210,10 +286,29 @@ const MessageInput: React.FC<MessageInputProps> = ({
     };
   }, []);
 
-  const displayText = message;
+  // Combine message text with interim transcript for display
+  const displayText = isVoiceInput && interimTranscript ? 
+    `${message}${message ? ' ' : ''}${interimTranscript}` : 
+    message;
+
+  // Show voice status indicator
+  const getVoiceStatusText = () => {
+    switch (voiceStatus) {
+      case 'connecting': return 'Connecting to voice service...';
+      case 'recording': return 'Listening...';
+      case 'error': return 'Voice input error';
+      default: return '';
+    }
+  };
 
   return (
     <div className="flex flex-col gap-2">
+      {/* Debug info in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="text-xs text-gray-400 bg-gray-50 p-2 rounded">
+          Voice Debug: Enabled={inputEnabled ? 'Y' : 'N'} | Status={voiceStatus} | Token={token ? 'Y' : 'N'}
+        </div>
+      )}
 
       {/* Main input section */}
       <div 
@@ -237,15 +332,18 @@ const MessageInput: React.FC<MessageInputProps> = ({
           placeholder={
             disabled 
               ? "Message input temporarily unavailable" 
-              : "Type your message..."
+              : voiceStatus === 'recording'
+              ? "Listening... (speak now)"
+              : "Type your message or use voice input..."
           }
-          className="flex-grow min-h-[80px] max-h-[200px] resize-none pr-24 pl-4"
+          className={`flex-grow min-h-[80px] max-h-[200px] resize-none pr-32 pl-4 ${
+            inputEnabled ? 'voice-enabled border-green-200' : ''
+          } ${isVoiceInput ? 'border-green-300 bg-green-50' : ''}`}
           disabled={disabled}
         />
         
         {/* Button controls */}
         <div className="absolute right-12 bottom-2 flex items-center gap-2">
-          
           {/* File upload button */}
           <input
             type="file"
@@ -280,6 +378,28 @@ const MessageInput: React.FC<MessageInputProps> = ({
         </Button>
       </div>
 
+      {/* Voice status indicators */}
+      {voiceStatus !== 'idle' && (
+        <div className={`text-sm px-3 py-1 rounded border ${
+          voiceStatus === 'recording' ? 'text-green-600 bg-green-50 border-green-200' :
+          voiceStatus === 'connecting' ? 'text-blue-600 bg-blue-50 border-blue-200' :
+          voiceStatus === 'error' ? 'text-red-600 bg-red-50 border-red-200' :
+          'text-gray-600 bg-gray-50 border-gray-200'
+        }`}>
+          <span className="font-medium">{getVoiceStatusText()}</span>
+          {voiceStatus === 'recording' && (
+            <span className="ml-2 inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+          )}
+        </div>
+      )}
+
+      {/* Interim transcript display */}
+      {isVoiceInput && interimTranscript && (
+        <div className="text-sm text-green-600 bg-green-50 px-3 py-1 rounded border border-green-200">
+          <span className="font-medium">Transcribing:</span> "{interimTranscript}"
+        </div>
+      )}
+
       <style jsx global>{`
         .drop-target {
           position: relative;
@@ -292,6 +412,15 @@ const MessageInput: React.FC<MessageInputProps> = ({
           border-radius: 0.5rem;
           pointer-events: none;
           z-index: 10;
+        }
+        
+        .voice-enabled {
+          border-color: #86efac;
+          background-color: #f0fdf4;
+        }
+        
+        .voice-enabled::placeholder {
+          color: #059669;
         }
       `}</style>
     </div>

@@ -1,62 +1,57 @@
+// src/contexts/VoiceContext.tsx
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
-interface VoiceContextType {
+interface VoiceSettings {
   inputEnabled: boolean;
   outputEnabled: boolean;
   autoPlayResponses: boolean;
+  selectedVoice: string;
+  speakingRate: number;
+  pitch: number;
+  volume: number;
+  preprocessText: boolean;
+}
+
+interface VoiceContextType extends VoiceSettings {
   setInputEnabled: (enabled: boolean) => void;
   setOutputEnabled: (enabled: boolean) => void;
   setAutoPlayResponses: (enabled: boolean) => void;
-  voiceId: string;
-  setVoiceId: (id: string) => void;
-  speakingRate: number;
+  setSelectedVoice: (voiceId: string) => void;
   setSpeakingRate: (rate: number) => void;
-  pitch: number;
   setPitch: (pitch: number) => void;
-  volume: number;
   setVolume: (volume: number) => void;
-  preprocessText: boolean;
-  setPreprocessText: (preprocess: boolean) => void;
+  setPreprocessText: (enabled: boolean) => void;
+  updateSettings: (settings: Partial<VoiceSettings>) => void;
+  resetSettings: () => void;
 }
 
-const defaultSettings = {
+const defaultSettings: VoiceSettings = {
   inputEnabled: false,
   outputEnabled: false,
   autoPlayResponses: false,
-  voiceId: '',
+  selectedVoice: '',
   speakingRate: 0.95,
   pitch: -1.0,
   volume: 80,
   preprocessText: true
 };
 
-const VoiceContext = createContext<VoiceContextType>({
-  ...defaultSettings,
-  setInputEnabled: () => {},
-  setOutputEnabled: () => {},
-  setAutoPlayResponses: () => {},
-  setVoiceId: () => {},
-  setSpeakingRate: () => {},
-  setPitch: () => {},
-  setVolume: () => {},
-  setPreprocessText: () => {}
-});
+const VoiceContext = createContext<VoiceContextType | undefined>(undefined);
 
-export const useVoice = () => useContext(VoiceContext);
+export const useVoice = (): VoiceContextType => {
+  const context = useContext(VoiceContext);
+  if (!context) {
+    throw new Error('useVoice must be used within a VoiceProvider');
+  }
+  return context;
+};
 
 interface VoiceProviderProps {
   children: ReactNode;
 }
 
 export const VoiceProvider: React.FC<VoiceProviderProps> = ({ children }) => {
-  const [inputEnabled, setInputEnabled] = useState(defaultSettings.inputEnabled);
-  const [outputEnabled, setOutputEnabled] = useState(defaultSettings.outputEnabled);
-  const [autoPlayResponses, setAutoPlayResponses] = useState(defaultSettings.autoPlayResponses);
-  const [voiceId, setVoiceId] = useState(defaultSettings.voiceId);
-  const [speakingRate, setSpeakingRate] = useState(defaultSettings.speakingRate);
-  const [pitch, setPitch] = useState(defaultSettings.pitch);
-  const [volume, setVolume] = useState(defaultSettings.volume);
-  const [preprocessText, setPreprocessText] = useState(defaultSettings.preprocessText);
+  const [settings, setSettings] = useState<VoiceSettings>(defaultSettings);
 
   // Load settings from localStorage on mount
   useEffect(() => {
@@ -64,14 +59,7 @@ export const VoiceProvider: React.FC<VoiceProviderProps> = ({ children }) => {
     if (savedSettings) {
       try {
         const parsed = JSON.parse(savedSettings);
-        setInputEnabled(parsed.inputEnabled ?? defaultSettings.inputEnabled);
-        setOutputEnabled(parsed.outputEnabled ?? defaultSettings.outputEnabled);
-        setAutoPlayResponses(parsed.autoPlayResponses ?? defaultSettings.autoPlayResponses);
-        setVoiceId(parsed.selectedVoice ?? defaultSettings.voiceId);
-        setSpeakingRate(parsed.speakingRate ?? defaultSettings.speakingRate);
-        setPitch(parsed.pitch ?? defaultSettings.pitch);
-        setVolume(parsed.volume ?? defaultSettings.volume);
-        setPreprocessText(parsed.preprocessText ?? defaultSettings.preprocessText);
+        setSettings(prev => ({ ...prev, ...parsed }));
       } catch (error) {
         console.error('Error loading voice settings:', error);
       }
@@ -80,40 +68,65 @@ export const VoiceProvider: React.FC<VoiceProviderProps> = ({ children }) => {
 
   // Save settings to localStorage whenever they change
   useEffect(() => {
-    const settings = {
-      inputEnabled,
-      outputEnabled,
-      autoPlayResponses,
-      selectedVoice: voiceId,
-      speakingRate,
-      pitch,
-      volume,
-      preprocessText
-    };
     localStorage.setItem('voiceSettings', JSON.stringify(settings));
-  }, [inputEnabled, outputEnabled, autoPlayResponses, voiceId, speakingRate, pitch, volume, preprocessText]);
+  }, [settings]);
+
+  const setInputEnabled = (enabled: boolean) => {
+    setSettings(prev => ({ ...prev, inputEnabled: enabled }));
+  };
+
+  const setOutputEnabled = (enabled: boolean) => {
+    setSettings(prev => ({ ...prev, outputEnabled: enabled }));
+  };
+
+  const setAutoPlayResponses = (enabled: boolean) => {
+    setSettings(prev => ({ ...prev, autoPlayResponses: enabled }));
+  };
+
+  const setSelectedVoice = (voiceId: string) => {
+    setSettings(prev => ({ ...prev, selectedVoice: voiceId }));
+  };
+
+  const setSpeakingRate = (rate: number) => {
+    setSettings(prev => ({ ...prev, speakingRate: rate }));
+  };
+
+  const setPitch = (pitch: number) => {
+    setSettings(prev => ({ ...prev, pitch: pitch }));
+  };
+
+  const setVolume = (volume: number) => {
+    setSettings(prev => ({ ...prev, volume: volume }));
+  };
+
+  const setPreprocessText = (enabled: boolean) => {
+    setSettings(prev => ({ ...prev, preprocessText: enabled }));
+  };
+
+  const updateSettings = (newSettings: Partial<VoiceSettings>) => {
+    setSettings(prev => ({ ...prev, ...newSettings }));
+  };
+
+  const resetSettings = () => {
+    setSettings(defaultSettings);
+  };
+
+  const value: VoiceContextType = {
+    ...settings,
+    setInputEnabled,
+    setOutputEnabled,
+    setAutoPlayResponses,
+    setSelectedVoice,
+    setSpeakingRate,
+    setPitch,
+    setVolume,
+    setPreprocessText,
+    updateSettings,
+    resetSettings
+  };
 
   return (
-    <VoiceContext.Provider
-      value={{
-        inputEnabled,
-        outputEnabled,
-        autoPlayResponses,
-        setInputEnabled,
-        setOutputEnabled,
-        setAutoPlayResponses,
-        voiceId,
-        setVoiceId,
-        speakingRate,
-        setSpeakingRate,
-        pitch,
-        setPitch,
-        volume,
-        setVolume,
-        preprocessText,
-        setPreprocessText
-      }}
-    >
+    <VoiceContext.Provider value={value}>
       {children}
     </VoiceContext.Provider>
   );

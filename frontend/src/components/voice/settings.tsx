@@ -1,5 +1,5 @@
 // src/components/voice/VoiceSettings.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -73,12 +73,7 @@ export const VoiceSettings: React.FC = () => {
     localStorage.setItem('voiceSettings', JSON.stringify(settings));
   }, [settings]);
 
-  // Load available voices and service status
-  useEffect(() => {
-    loadVoicesAndStatus();
-  }, [token]);
-
-  const loadVoicesAndStatus = async () => {
+  const loadVoicesAndStatus = useCallback(async () => {
     if (!token) return;
 
     setIsLoading(true);
@@ -94,27 +89,28 @@ export const VoiceSettings: React.FC = () => {
 
       // Handle voices
       if (voicesResponse.status === 'fulfilled') {
-        setVoices(voicesResponse.value.data.voices || []);
-        if (!settings.selectedVoice && voicesResponse.value.data.default_voice) {
+        const responseData = voicesResponse.value.data as any;
+        setVoices(responseData.voices || []);
+        if (!settings.selectedVoice && responseData.default_voice) {
           setSettings(prev => ({ 
             ...prev, 
-            selectedVoice: voicesResponse.value.data.default_voice 
+            selectedVoice: responseData.default_voice 
           }));
         }
       }
 
       // Handle TTS status
-      const ttsAvailable = ttsStatusResponse.status === 'fulfilled' && 
-                          ttsStatusResponse.value.data.api_key_configured;
+      const ttsResponseData = ttsStatusResponse.status === 'fulfilled' ? (ttsStatusResponse.value.data as any) : null;
+      const ttsAvailable = ttsResponseData?.api_key_configured === true;
       const ttsError = ttsStatusResponse.status === 'rejected' ? 
-                      ttsStatusResponse.reason.message : 
+                      (ttsStatusResponse.reason as Error).message : 
                       !ttsAvailable ? 'API key not configured' : undefined;
 
       // Handle STT status  
-      const sttAvailable = sttStatusResponse.status === 'fulfilled' && 
-                          sttStatusResponse.value.data.api_key_configured;
+      const sttResponseData = sttStatusResponse.status === 'fulfilled' ? (sttStatusResponse.value.data as any) : null;
+      const sttAvailable = sttResponseData?.api_key_configured === true;
       const sttError = sttStatusResponse.status === 'rejected' ? 
-                      sttStatusResponse.reason.message : 
+                      (sttStatusResponse.reason as Error).message : 
                       !sttAvailable ? 'API key not configured' : undefined;
 
       setServiceStatus({
@@ -132,7 +128,12 @@ export const VoiceSettings: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [token, settings.selectedVoice, toast]);
+
+  // Load available voices and service status
+  useEffect(() => {
+    loadVoicesAndStatus();
+  }, [loadVoicesAndStatus]);
 
   const testVoice = async () => {
     if (!settings.selectedVoice || !serviceStatus.tts.available) return;
@@ -141,20 +142,29 @@ export const VoiceSettings: React.FC = () => {
     try {
       const testText = "Hello! This is a test of the selected voice settings. How does this sound?";
       
-      const response = await api.post('/voice/synthesize', {
-        text: testText,
-        voice_id: settings.selectedVoice,
-        speaking_rate: settings.speakingRate,
-        pitch: settings.pitch,
-        volume_gain_db: (settings.volume / 100) * 16 - 8, // Convert 0-100 to -8 to +8 dB
-        preprocess_text: settings.preprocessText
-      }, {
-        headers: { 'Authorization': `Bearer ${token}` },
-        responseType: 'blob'
+      // Use fetch directly for binary data
+      const response = await fetch('/api/voice/synthesize', {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: testText,
+          voice_id: settings.selectedVoice,
+          speaking_rate: settings.speakingRate,
+          pitch: settings.pitch,
+          volume_gain_db: (settings.volume / 100) * 16 - 8, // Convert 0-100 to -8 to +8 dB
+          preprocess_text: settings.preprocessText
+        })
       });
 
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
       // Play the audio
-      const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+      const audioBlob = await response.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
       

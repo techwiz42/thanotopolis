@@ -84,10 +84,9 @@ export const conversationService = {
       
       console.log('Raw API response:', response);
       console.log('Response data:', response.data);
-      console.log('Response status:', response.status);
       console.log('Response headers:', response.headers);
       
-      return response.data;
+      return response.data as ConversationResponse;
       
     } catch (error: any) {
       console.error('=== CONVERSATION CREATION ERROR ===');
@@ -138,7 +137,6 @@ export const conversationService = {
       const data = await response.json();
       console.log('Raw conversations response:', response);
       console.log('Response data:', data);
-      console.log('Response status:', response.status);
       
       return data;
     } catch (error: any) {
@@ -170,7 +168,7 @@ export const conversationService = {
       });
       
       return {
-        data: response.data
+        data: response.data as ConversationResponse
       };
     } catch (error) {
       console.error('Error fetching conversation:', error);
@@ -180,14 +178,15 @@ export const conversationService = {
 
   async updateConversation(conversationId: string, data: ConversationUpdateData, token: string): Promise<ConversationResponse> {
     try {
-      const response = await api.patch(`/conversations/${conversationId}`, data, {
+      // Use PUT instead of PATCH as it's what our api service supports
+      const response = await api.put(`/conversations/${conversationId}`, data, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error updating conversation:', error);
       throw error;
@@ -202,7 +201,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error deleting conversation:', error);
       throw error;
@@ -218,7 +217,7 @@ export const conversationService = {
         }
       });
       
-      return response.data || [];
+      return (response.data || []) as ConversationListResponse[];
     } catch (error) {
       console.error('Error searching conversations:', error);
       throw error;
@@ -229,14 +228,14 @@ export const conversationService = {
   async getMessages(conversationId: string, token: string, skip = 0, limit = 50): Promise<{ data: MessageResponse[] }> {
     try {
       const response = await api.get(`/conversations/${conversationId}/messages`, {
-        params: { skip, limit },
+        params: { skip: skip.toString(), limit: limit.toString() },
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
       
       return {
-        data: response.data || []
+        data: (response.data || []) as MessageResponse[]
       };
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -253,7 +252,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error sending message:', error);
       throw error;
@@ -268,7 +267,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error fetching message:', error);
       throw error;
@@ -283,7 +282,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error deleting message:', error);
       throw error;
@@ -298,7 +297,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error clearing messages:', error);
       throw error;
@@ -315,7 +314,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error adding agent:', error);
       throw error;
@@ -330,7 +329,7 @@ export const conversationService = {
         }
       });
       
-      return response.data || [];
+      return (response.data || []) as Array<{ id: string; agent_type: string; configuration?: Record<string, any>; added_at: string }>;
     } catch (error) {
       console.error('Error fetching agents:', error);
       throw error;
@@ -345,7 +344,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error removing agent:', error);
       throw error;
@@ -367,7 +366,7 @@ export const conversationService = {
       return {
         message: 'Participant added successfully'
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding participant:', error);
       if (error.response?.status === 404) {
         throw new Error('Participant endpoint not implemented yet');
@@ -388,7 +387,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error exporting conversation:', error);
       throw error;
@@ -403,7 +402,7 @@ export const conversationService = {
         }
       });
       
-      return response.data;
+      return response.data as any;
     } catch (error) {
       console.error('Error fetching conversation stats:', error);
       throw error;

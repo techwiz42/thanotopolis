@@ -33,6 +33,17 @@ export const VoiceInput: React.FC<VoiceInputProps> = ({
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const { token } = useAuth();
   const { toast } = useToast();
+  
+  // Debug log component initialization
+  useEffect(() => {
+    console.log('VoiceInput component initialized', {
+      disabled,
+      hasToken: !!token,
+      baseUrl: process.env.NEXT_PUBLIC_WS_URL,
+      protocol: typeof window !== 'undefined' ? window.location.protocol : 'unknown',
+      host: typeof window !== 'undefined' ? window.location.host : 'unknown'
+    });
+  }, [disabled, token]);
 
   // Update parent component when status changes
   useEffect(() => {
@@ -108,8 +119,19 @@ export const VoiceInput: React.FC<VoiceInputProps> = ({
       setIsConnecting(true);
       setConnectionStatus('connecting');
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/api/ws/voice/streaming-stt?token=${token}`;
+      // Use the same WebSocket base URL as the main WebSocket service
+      let wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 
+                     (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + 
+                     '//' + window.location.host;
+      
+      // Remove any trailing /ws from the base URL to avoid duplication
+      if (wsBaseUrl.endsWith('/ws')) {
+        wsBaseUrl = wsBaseUrl.slice(0, -3);
+      }
+      
+      const wsUrl = `${wsBaseUrl}/api/ws/voice/streaming-stt?token=${token}`;
+      
+      console.log('Connecting to voice WebSocket:', wsUrl);
       
       const ws = new WebSocket(wsUrl);
       
@@ -140,7 +162,17 @@ export const VoiceInput: React.FC<VoiceInputProps> = ({
 
         ws.onmessage = (event) => {
           try {
-            const data = JSON.parse(event.data);
+            console.log('WebSocket raw message received:', event.data);
+            
+            let data;
+            try {
+              data = JSON.parse(event.data);
+              console.log('WebSocket parsed message:', data);
+            } catch (parseError) {
+              console.error('Failed to parse WebSocket message:', parseError);
+              console.log('Raw message content:', event.data);
+              return;
+            }
             
             switch (data.type) {
               case 'ready':
@@ -148,12 +180,20 @@ export const VoiceInput: React.FC<VoiceInputProps> = ({
                 break;
                 
               case 'transcription':
+                console.log('Transcription received:', data);
                 const transcript = data.transcript || '';
                 const isFinal = data.is_final || data.speech_final || false;
                 
                 if (transcript) {
+                  console.log('Processing transcript:', {
+                    transcript,
+                    isFinal,
+                    length: transcript.length
+                  });
                   setCurrentTranscript(isFinal ? '' : transcript);
                   onTranscription(transcript, isFinal);
+                } else {
+                  console.log('Empty transcript received');
                 }
                 break;
                 
@@ -174,18 +214,35 @@ export const VoiceInput: React.FC<VoiceInputProps> = ({
                   variant: "destructive"
                 });
                 break;
+                
+              default:
+                console.log('Unknown message type received:', data.type);
+                break;
             }
           } catch (error) {
-            console.error('Error parsing WebSocket message:', error);
+            console.error('Error handling WebSocket message:', error);
           }
         };
 
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
+          
+          // Log additional connection details for debugging
+          console.error('WebSocket connection details:', {
+            url: wsUrl,
+            token: token ? `${token.substring(0, 5)}...` : 'none',
+            readyState: ws.readyState,
+            protocol: ws.protocol,
+            extensions: ws.extensions,
+            host: window.location.host,
+            origin: window.location.origin,
+            env: process.env.NODE_ENV
+          });
+          
           setConnectionStatus('error');
           toast({
-            title: "Connection Error",
-            description: "Failed to connect to voice input service",
+            title: "Voice Connection Error",
+            description: "Failed to connect to voice input service. Check console for details.",
             variant: "destructive"
           });
           resolve(false);
@@ -222,8 +279,8 @@ export const VoiceInput: React.FC<VoiceInputProps> = ({
 
       mediaStreamRef.current = stream;
 
-      // Create audio context
-      const audioContext = new AudioContext({ sampleRate: 16000 });
+      // Create audio context with browser's native sample rate
+      const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
 
       // Connect to Deepgram

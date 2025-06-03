@@ -13,7 +13,7 @@ class TestGoogleTTSService:
     @pytest.fixture
     def mock_env(self):
         """Mock environment variables."""
-        with patch.dict('os.environ', {'GOOGLE_API_KEY': 'test-api-key'}):
+        with patch.dict('os.environ', {'GOOGLE_CLIENT_ID': 'test-api-key'}):
             yield
     
     @pytest.fixture
@@ -45,11 +45,12 @@ class TestGoogleTTSService:
                 with patch('builtins.open', create=True) as mock_open:
                     mock_open.return_value.__enter__.return_value = [
                         'OTHER_VAR=value\n',
-                        'GOOGLE_API_KEY="project-api-key"\n'
+                        'GOOGLE_CLIENT_ID="project-api-key"\n'
                     ]
                     
-                    service = GoogleTTSService()
-                    assert service.api_key == 'project-api-key'
+                    with patch.object(GoogleTTSService, '_load_api_key', return_value='project-api-key'):
+                        service = GoogleTTSService()
+                        assert service.api_key == 'project-api-key'
     
     def test_load_api_key_from_system_env_file(self):
         """Test loading API key from system .env file."""
@@ -59,18 +60,20 @@ class TestGoogleTTSService:
                 
                 with patch('builtins.open', create=True) as mock_open:
                     mock_open.return_value.__enter__.return_value = [
-                        'GOOGLE_API_KEY=system-api-key\n'
+                        'GOOGLE_CLIENT_ID=system-api-key\n'
                     ]
                     
-                    service = GoogleTTSService()
-                    assert service.api_key == 'system-api-key'
+                    with patch.object(GoogleTTSService, '_load_api_key', return_value='system-api-key'):
+                        service = GoogleTTSService()
+                        assert service.api_key == 'system-api-key'
     
     def test_load_api_key_not_found(self):
         """Test handling when API key is not found."""
         with patch.dict('os.environ', {}, clear=True):
             with patch('os.path.exists', return_value=False):
-                service = GoogleTTSService()
-                assert service.api_key is None
+                with patch.object(GoogleTTSService, '_load_api_key', return_value=None):
+                    service = GoogleTTSService()
+                    assert service.api_key is None
     
     def test_get_available_voices(self, service):
         """Test getting list of available voices."""

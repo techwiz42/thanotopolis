@@ -58,12 +58,7 @@ export const VoiceOutput: React.FC<VoiceOutputProps> = ({
     };
   }, [audioUrl]);
 
-  // Auto-play functionality
-  useEffect(() => {
-    if (autoPlay && text && !audioUrl) {
-      synthesizeAndPlay();
-    }
-  }, [autoPlay, text]);
+  // Auto-play functionality will be defined after synthesizeAndPlay is defined
 
   // Update parent when play state changes
   useEffect(() => {
@@ -92,19 +87,25 @@ export const VoiceOutput: React.FC<VoiceOutputProps> = ({
     const requestOptions = { ...defaultOptions, ...options };
 
     try {
-      const response = await api.post('/voice/synthesize', {
-        text: text,
-        ...requestOptions
-      }, {
+      // Use fetch directly for binary data
+      const response = await fetch('/api/voice/synthesize', {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        responseType: 'blob'
+        body: JSON.stringify({
+          text: text,
+          ...requestOptions
+        })
       });
 
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
       // Create blob URL from response
-      const audioBlob = new Blob([response.data], { type: 'audio/mpeg' });
+      const audioBlob = await response.blob();
       const url = URL.createObjectURL(audioBlob);
       
       return url;
@@ -170,6 +171,13 @@ export const VoiceOutput: React.FC<VoiceOutputProps> = ({
     }
   }, [audioUrl, synthesizeAudio, volume, isMuted, toast]);
 
+  // Auto-play functionality defined after synthesizeAndPlay
+  useEffect(() => {
+    if (autoPlay && text && !audioUrl) {
+      synthesizeAndPlay();
+    }
+  }, [autoPlay, text, audioUrl, synthesizeAndPlay]);
+
   const togglePlayPause = useCallback(async () => {
     if (!audioRef.current && !audioUrl) {
       // No audio available, synthesize and play
@@ -191,7 +199,7 @@ export const VoiceOutput: React.FC<VoiceOutputProps> = ({
         }
       }
     }
-  }, [audioRef.current, audioUrl, isPlaying, synthesizeAndPlay]);
+  }, [audioUrl, isPlaying, synthesizeAndPlay]);  // Removed audioRef.current
 
   const handleSeek = useCallback((value: number[]) => {
     if (audioRef.current && duration > 0) {

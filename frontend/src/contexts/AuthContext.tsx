@@ -1,7 +1,7 @@
 // frontend/src/contexts/AuthContext.tsx
 'use client'
 
-import React, { createContext, useContext, useState, useEffect } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 
 // Types
@@ -69,25 +69,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Computed property for backward compatibility
   const token = tokens?.access_token || null
 
-  useEffect(() => {
-    const loadStoredAuth = () => {
-      const storedTokens = localStorage.getItem('tokens')
-      const storedOrganization = localStorage.getItem('organization')
-      
-      if (storedTokens && storedOrganization) {
-        const parsedTokens = JSON.parse(storedTokens)
-        setTokens(parsedTokens)
-        setOrganization(storedOrganization)
-        fetchUser(parsedTokens.access_token, storedOrganization)
-      } else {
-        setIsLoading(false)
-      }
+  const logout = useCallback(() => {
+    if (tokens) {
+      fetch(`${API_BASE_URL}/api/auth/logout`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${tokens.access_token}`,
+          'X-Tenant-ID': organization || '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          refresh_token: tokens.refresh_token
+        })
+      }).catch(console.error)
     }
 
-    loadStoredAuth()
-  }, [])
+    setUser(null)
+    setTokens(null)
+    setOrganization(null)
+    localStorage.removeItem('tokens')
+    localStorage.removeItem('organization')
+    
+    // Redirect to login page
+    router.push('/login')
+  }, [tokens, organization, router])
 
-  const fetchUser = async (accessToken: string, organizationSubdomain: string) => {
+  const fetchUser = useCallback(async (accessToken: string, organizationSubdomain: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
         headers: {
@@ -108,7 +115,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [logout])
+
+  useEffect(() => {
+    const loadStoredAuth = () => {
+      const storedTokens = localStorage.getItem('tokens')
+      const storedOrganization = localStorage.getItem('organization')
+      
+      if (storedTokens && storedOrganization) {
+        const parsedTokens = JSON.parse(storedTokens)
+        setTokens(parsedTokens)
+        setOrganization(storedOrganization)
+        fetchUser(parsedTokens.access_token, storedOrganization)
+      } else {
+        setIsLoading(false)
+      }
+    }
+
+    loadStoredAuth()
+  }, [fetchUser])
 
   const login = async (email: string, password: string) => {
     try {
@@ -173,31 +198,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('organization', organization_subdomain)
     
     await fetchUser(access_token, organization_subdomain)
-  }
-
-  const logout = () => {
-    if (tokens) {
-      fetch(`${API_BASE_URL}/api/auth/logout`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${tokens.access_token}`,
-          'X-Tenant-ID': organization || '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          refresh_token: tokens.refresh_token
-        })
-      }).catch(console.error)
-    }
-
-    setUser(null)
-    setTokens(null)
-    setOrganization(null)
-    localStorage.removeItem('tokens')
-    localStorage.removeItem('organization')
-    
-    // Redirect to login page
-    router.push('/login')
   }
 
   return (

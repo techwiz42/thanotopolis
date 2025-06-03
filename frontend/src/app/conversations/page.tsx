@@ -1,7 +1,7 @@
 // src/app/conversations/page.tsx - Updated layout section
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
@@ -20,6 +20,50 @@ export default function ConversationsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const fetchConversations = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      setIsLoading(true);
+      console.log('Fetching conversations with token:', token?.substring(0, 10) + '...');
+      
+      const response = await conversationService.getConversations(token);
+      console.log('Conversations response:', response);
+      
+      // Ensure we have a valid array of conversations
+      const conversationsList = Array.isArray(response) ? response : [];
+      console.log('Setting conversations:', conversationsList);
+      
+      // Convert response to match Conversation type
+      const mappedConversations = conversationsList.map(conv => {
+        // Create a conversation object matching the Conversation type
+        const conversation: Conversation = {
+          id: conv.id,
+          title: conv.title,
+          description: conv.description,
+          owner_id: user?.id || '', // Use current user id as owner_id
+          organization_id: user?.tenant_id || '', // Use current user tenant as organization_id
+          is_privacy_enabled: conv.status === 'private',
+          created_at: conv.created_at,
+          updated_at: conv.updated_at || conv.created_at,
+          participant_count: conv.participant_count
+        };
+        return conversation;
+      });
+      
+      setConversations(mappedConversations);
+    } catch (error) {
+      console.error('Error fetching conversations:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load conversations',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, toast, user]);
+
   useEffect(() => {
     if (!token) {
       router.push('/login');
@@ -27,7 +71,7 @@ export default function ConversationsPage() {
     }
 
     fetchConversations();
-  }, [token, router]);
+  }, [token, router, fetchConversations]);
 
   // Refresh conversations when the page comes into focus
   useEffect(() => {
@@ -40,34 +84,7 @@ export default function ConversationsPage() {
 
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [token]);
-
-  const fetchConversations = async () => {
-    if (!token) return;
-
-    try {
-      setIsLoading(true);
-      console.log('Fetching conversations with token:', token?.substring(0, 10) + '...');
-      
-      const response = await conversationService.getConversations(token);
-      console.log('Conversations response:', response);
-      
-      // Backend returns array directly, not wrapped in { conversations: [...] }
-      const conversationsList = Array.isArray(response) ? response : (response.conversations || []);
-      console.log('Setting conversations:', conversationsList);
-      
-      setConversations(conversationsList);
-    } catch (error) {
-      console.error('Error fetching conversations:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load conversations',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [token, fetchConversations]);
 
   const handleDeleteConversation = async (conversationId: string) => {
     if (!token) return;

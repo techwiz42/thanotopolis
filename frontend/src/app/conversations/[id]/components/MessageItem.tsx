@@ -1,12 +1,14 @@
 // src/app/conversations/[id]/components/MessageItem.tsx
-import React, { useRef } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { Message } from '@/app/conversations/[id]/types/message.types';
 import { DownloadButton } from '@/app/conversations/[id]/components/DownloadButton';
 import { Copy } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { useVoice } from '@/contexts/VoiceContext';
 import FileDisplay from '@/app/conversations/[id]/components/FileDisplay';
 import { PrintButton } from '@/app/conversations/[id]/components/PrintButton';
+import { VoiceOutput } from '@/components/voice/VoiceOutput';
 
 // Define an enhanced interface for the Message type to include all needed properties
 interface EnhancedMessage extends Message {
@@ -58,7 +60,9 @@ const MessageItem: React.FC<Props> = ({
 }) => {
   const { toast } = useToast();
   const { user } = useAuth();
+  const { outputEnabled, autoPlayResponses } = useVoice();
   const contentRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoPlay, setShouldAutoPlay] = useState(false);
   
   // Cast message to EnhancedMessage for easier access to optional properties
   const enhancedMessage = message as EnhancedMessage;
@@ -72,6 +76,19 @@ const MessageItem: React.FC<Props> = ({
   const isAgentMessage = message.sender.type === 'agent' || 
                         !!enhancedMessage.agent_type || 
                         !message.sender.is_owner;
+
+  // Auto-play logic for agent messages
+  useEffect(() => {
+    if (isAgentMessage && !messageIsStreaming && outputEnabled && autoPlayResponses && message.content.trim()) {
+      // Only auto-play if this is a new message (you might want to add additional checks)
+      const messageAge = Date.now() - new Date(message.timestamp).getTime();
+      const isRecentMessage = messageAge < 5000; // Only auto-play messages less than 5 seconds old
+      
+      if (isRecentMessage) {
+        setShouldAutoPlay(true);
+      }
+    }
+  }, [isAgentMessage, messageIsStreaming, outputEnabled, autoPlayResponses, message.content, message.timestamp]);
 
   const getMessageClasses = () => {
     const baseClasses = "rounded-lg px-4 py-3 max-w-[70%] relative text-sm break-all";
@@ -403,7 +420,6 @@ const MessageItem: React.FC<Props> = ({
     }
   };
 
-
   return (
     <div className={`flex ${message.sender.is_owner ? 'justify-end' : 'justify-start'} mb-4`}>
       <div className={`${getMessageClasses()} flex flex-col break-words`}>
@@ -434,6 +450,23 @@ const MessageItem: React.FC<Props> = ({
           {renderContent()}
         </div>
         
+        {/* Voice output for agent messages */}
+        {isAgentMessage && outputEnabled && !messageIsStreaming && message.content.trim() && (
+          <div className="mt-2">
+            <VoiceOutput
+              text={message.content}
+              autoPlay={shouldAutoPlay}
+              compact={true}
+              messageId={message.id}
+              onPlayStateChange={(isPlaying) => {
+                // Reset auto-play after first play
+                if (!isPlaying && shouldAutoPlay) {
+                  setShouldAutoPlay(false);
+                }
+              }}
+            />
+          </div>
+        )}
         
         <div className="mt-2 flex items-center gap-2">
           <button 
@@ -443,7 +476,6 @@ const MessageItem: React.FC<Props> = ({
           >
             <Copy className="w-4 h-4" />  
           </button>
-          
           
           {/* Only show download and print buttons for completed messages */}
           {!messageIsStreaming && (

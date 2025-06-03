@@ -4,7 +4,7 @@
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { VoiceProvider } from '@/contexts/VoiceContext';
+import { VoiceProvider, useVoice } from '@/contexts/VoiceContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import MessageList from '@/app/conversations/[id]/components/MessageList';
 import MessageInput from '@/app/conversations/[id]/components/MessageInput';
 import { TypingIndicator } from '@/app/conversations/[id]/components/TypingIndicator';
 import { StreamingIndicator } from '@/app/conversations/[id]/components/StreamingIndicator';
+import { GlobalVoiceHandler } from '@/app/conversations/[id]/components/GlobalVoiceHandler';
 import VoiceControls from '@/components/voice/VoiceControls';
 
 import { useConversation } from '@/app/conversations/[id]/hooks/useConversation';
@@ -286,6 +287,7 @@ export default function ConversationPage() {
 
   return (
     <VoiceProvider>
+      <GlobalVoiceHandler conversationId={conversationId} />
       <div className="container mx-auto p-4 space-y-4">
         {/* Conversation title and voice controls */}
         <div className="flex justify-between items-center mb-4">
