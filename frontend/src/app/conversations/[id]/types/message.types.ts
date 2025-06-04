@@ -42,6 +42,7 @@ export interface MessageResponse {
   created_at: string;
   participant_id?: string;
   agent_id?: string;
+  agent_type?: string;
   message_info?: {
     is_owner?: boolean;
     participant_name?: string;

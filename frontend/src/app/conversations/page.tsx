@@ -53,10 +53,30 @@ export default function ConversationsPage() {
       console.log('Conversations response:', response);
       
       // Backend returns array directly, not wrapped in { conversations: [...] }
-      const conversationsList = Array.isArray(response) ? response : (response.conversations || []);
+      const conversationsList = Array.isArray(response) ? response : [];
       console.log('Setting conversations:', conversationsList);
       
-      setConversations(conversationsList);
+      // Convert API response to Conversation objects with required fields
+      const conversationsWithRequiredFields = conversationsList.map(conv => {
+        // Type assertion to any to handle potential property mismatches
+        const apiConv = conv as any;
+        
+        // Create a properly typed Conversation object with all required fields
+        const typedConversation: Conversation = {
+          id: apiConv.id,
+          title: apiConv.title,
+          description: apiConv.description,
+          created_at: apiConv.created_at,
+          updated_at: apiConv.updated_at || apiConv.created_at, // Ensure updated_at is never undefined
+          owner_id: apiConv.owner_id || '',
+          organization_id: apiConv.organization_id || '',
+          is_privacy_enabled: apiConv.is_privacy_enabled || false,
+          participant_count: apiConv.participant_count
+        };
+        return typedConversation;
+      });
+      
+      setConversations(conversationsWithRequiredFields);
     } catch (error) {
       console.error('Error fetching conversations:', error);
       toast({

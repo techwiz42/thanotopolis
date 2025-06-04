@@ -4,7 +4,7 @@
 const API_BASE_URL = '/api';
 
 interface RequestOptions extends RequestInit {
-  params?: Record<string, string>;
+  params?: Record<string, string | number>;
   tenantId?: string; // Added for multi-tenant support
 }
 
@@ -30,7 +30,11 @@ class ApiService {
     let url = `${this.baseUrl}${endpoint}`;
     
     if (params) {
-      const searchParams = new URLSearchParams(params);
+      // Convert params to string entries for URLSearchParams
+      const searchParams = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        searchParams.append(key, String(value));
+      });
       url += `?${searchParams.toString()}`;
     }
 
@@ -80,6 +84,14 @@ class ApiService {
     return this.request<T>(endpoint, {
       ...options,
       method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+  
+  async patch<T>(endpoint: string, data?: any, options?: RequestOptions): Promise<{ data: T; headers: Headers }> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
