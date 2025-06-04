@@ -94,10 +94,21 @@ class Settings:
     STRIPE_PRICE_50K_TOKENS=os.getenv("STRIPE_PRICE_50K_TOKENS")
     STRIPE_PRICE_10K_TOKENS=os.getenv("STRIPE_PRICE_10K_TOKENS")
 
+    # Voice Settings
+    DEEPGRAM_MODEL: str = os.getenv("DEEPGRAM_MODEL", "nova-2")
+    DEEPGRAM_LANGUAGE: str = os.getenv("DEEPGRAM_LANGUAGE", "en-US")
+    ELEVENLABS_MODEL: str = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Default Rachel voice
+    ELEVENLABS_OPTIMIZE_STREAMING_LATENCY: int = int(os.getenv("ELEVENLABS_OPTIMIZE_STREAMING_LATENCY", "3"))
+    ELEVENLABS_OUTPUT_FORMAT: str = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128")
+
+
     # Agent Settings
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "YOU_GOT_NOTHIN")
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "NOT_SET")
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "NOT_SET")
+    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "NOT_SET")
+
     DEFAULT_AGENT_MODEL: str = "gpt-4o-mini"
     AGENT_RESPONSE_TIMEOUT: int = 120  # seconds
     MAX_TURNS = 50
