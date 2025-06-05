@@ -15,6 +15,7 @@ export interface MessageInputProps {
   conversationId: string;
   voiceTranscript?: string;
   isVoiceActive?: boolean;
+  onVoiceTranscriptFinal?: (finalTranscript: string) => void;
 }
 
 const MessageInput: React.FC<MessageInputProps> = ({ 
@@ -23,7 +24,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
   disabled = false,
   conversationId,
   voiceTranscript = '',
-  isVoiceActive = false
+  isVoiceActive = false,
+  onVoiceTranscriptFinal
 }: MessageInputProps) => {
   const [message, setMessage] = useState('');
   const [messageMetadata, setMessageMetadata] = useState<MessageMetadata | null>(null);
@@ -44,9 +46,25 @@ const MessageInput: React.FC<MessageInputProps> = ({
   useEffect(() => {
     if (voiceTranscript && voiceTranscript !== lastVoiceTranscriptRef.current) {
       lastVoiceTranscriptRef.current = voiceTranscript;
-      setPendingVoiceTranscript(voiceTranscript);
+      
+      // Check if this is a final transcript (ending with punctuation or significant pause)
+      const trimmedTranscript = voiceTranscript.trim();
+      const endsWithPunctuation = /[.!?]$/.test(trimmedTranscript);
+      
+      if (endsWithPunctuation || trimmedTranscript.length > pendingVoiceTranscript.length + 10) {
+        // Treat as final transcript
+        handleVoiceTranscriptFinal(trimmedTranscript);
+      } else {
+        // Treat as interim transcript
+        setPendingVoiceTranscript(trimmedTranscript);
+        
+        // Auto-focus when voice input starts
+        if (textareaRef.current && isVoiceActive) {
+          textareaRef.current.focus();
+        }
+      }
     }
-  }, [voiceTranscript]);
+  }, [voiceTranscript, pendingVoiceTranscript.length, isVoiceActive, handleVoiceTranscriptFinal]);
 
   // Update message when voice transcript is finalized
   const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {

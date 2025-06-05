@@ -144,13 +144,14 @@ class ElevenLabsService:
         model_id = model_id or self.default_model
         output_format = output_format or self.default_output_format
         
-        # Default voice settings
+        # Default voice settings - less nasal, faster pace
         if voice_settings is None:
             voice_settings = {
-                "stability": 0.5,
-                "similarity_boost": 0.5,
-                "style": 0.0,
-                "use_speaker_boost": True
+                "stability": 0.5,  # Reduced for less nasal tone
+                "similarity_boost": 0.4,  # Lower to reduce nasal quality
+                "style": 0.1,  # Minimal emotional expression for cleaner sound
+                "use_speaker_boost": True,
+                "speed": 1.05  # 5% speed increase
             }
         
         try:
@@ -240,13 +241,14 @@ class ElevenLabsService:
         model_id = model_id or self.default_model
         output_format = output_format or self.default_output_format
         
-        # Default voice settings
+        # Default voice settings - less nasal, faster pace
         if voice_settings is None:
             voice_settings = {
                 "stability": 0.5,
-                "similarity_boost": 0.5,
-                "style": 0.0,
-                "use_speaker_boost": True
+                "similarity_boost": 0.4,  # Lower to reduce nasal quality
+                "style": 0.1,  # Minimal emotional expression for cleaner sound
+                "use_speaker_boost": True,
+                "speed": 1.05  # 5% speed increase
             }
         
         try:

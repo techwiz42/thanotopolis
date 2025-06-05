@@ -168,3 +168,23 @@ def require_role(required_role: str):
             )
         return current_user
     return role_checker
+
+
+async def require_admin_user(current_user: User = Depends(get_current_active_user)) -> User:
+    """Dependency to require admin or super_admin role."""
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return current_user
+
+
+async def require_super_admin_user(current_user: User = Depends(get_current_active_user)) -> User:
+    """Dependency to require super_admin role."""
+    if current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required"
+        )
+    return current_user

@@ -81,7 +81,7 @@ export default function ConversationPage() {
   // Voice transcript handler
   const handleVoiceTranscript = useCallback((transcript: string, isFinal: boolean) => {
     if (isFinal && transcript.trim() && transcript !== lastFinalTranscriptRef.current) {
-      // This is a final transcript, add it to the message input
+      // This is a final transcript, add it to the voice transcript state
       lastFinalTranscriptRef.current = transcript;
       setVoiceTranscript(prev => {
         const newTranscript = prev.trim() ? `${prev} ${transcript}` : transcript;
@@ -92,6 +92,14 @@ export default function ConversationPage() {
       // This is interim text, show it as pending
       setPendingVoiceText(transcript);
     }
+  }, []);
+
+  // Handle final voice transcript from MessageInput
+  const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {
+    // Clear the voice transcript state since it's now been committed to the message
+    setVoiceTranscript('');
+    setPendingVoiceText('');
+    lastFinalTranscriptRef.current = '';
   }, []);
 
   // Using the voice hook
@@ -448,6 +456,7 @@ export default function ConversationPage() {
                   conversationId={conversationId}
                   voiceTranscript={voiceTranscript + (pendingVoiceText ? ` ${pendingVoiceText}` : '')}
                   isVoiceActive={isSTTActive}
+                  onVoiceTranscriptFinal={handleVoiceTranscriptFinal}
                 />
                 
                 {/* Debug info for development */}

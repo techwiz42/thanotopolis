@@ -226,6 +226,66 @@ class ConversationParticipant(Base):
         UniqueConstraint('conversation_id', 'participant_id', name='_conversation_participant_uc'),
     )
 
+class UsageRecord(Base):
+    """Track usage metrics for users and organizations"""
+    __tablename__ = "usage_records"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    
+    # Usage type and metrics
+    usage_type = Column(String, nullable=False)  # 'tokens', 'tts_minutes', 'stt_minutes'
+    amount = Column(Integer, nullable=False)  # tokens count or minutes in seconds
+    
+    # Metadata for tracking context
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True)
+    service_provider = Column(String, nullable=True)  # 'openai', 'elevenlabs', 'deepgram'
+    model_name = Column(String, nullable=True)  # 'gpt-4', 'eleven_turbo_v2', etc.
+    
+    # Cost tracking (in cents)
+    cost_cents = Column(Integer, nullable=True, default=0)
+    
+    # Additional metadata
+    additional_data = Column(JSON, default={})
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    tenant = relationship("Tenant")
+    user = relationship("User")
+    conversation = relationship("Conversation")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_usage_tenant_date', 'tenant_id', 'created_at'),
+        Index('idx_usage_user_date', 'user_id', 'created_at'),
+        Index('idx_usage_type', 'usage_type'),
+    )
+
+class SystemMetrics(Base):
+    """Track system-level metrics like DB connections, WebSocket connections"""
+    __tablename__ = "system_metrics"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    metric_type = Column(String, nullable=False)  # 'db_connections', 'ws_connections', 'active_users'
+    value = Column(Integer, nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    
+    # Additional context
+    additional_data = Column(JSON, default={})
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    tenant = relationship("Tenant")
+    
+    # Indexes
+    __table_args__ = (
+        Index('idx_metrics_type_date', 'metric_type', 'created_at'),
+        Index('idx_metrics_tenant_date', 'tenant_id', 'created_at'),
+    )
+
 class DocumentEmbedding(Base):
     __tablename__ = "document_embeddings"
     

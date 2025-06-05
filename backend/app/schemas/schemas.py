@@ -220,3 +220,66 @@ class AgentInfo(BaseModel):
 
 class AvailableAgentsResponse(BaseModel):
     agents: List[AgentInfo]
+
+# Usage tracking schemas
+class UsageRecordCreate(BaseModel):
+    usage_type: str  # 'tokens', 'tts_minutes', 'stt_minutes'
+    amount: int
+    conversation_id: Optional[UUID] = None
+    service_provider: Optional[str] = None
+    model_name: Optional[str] = None
+    cost_cents: Optional[int] = 0
+    additional_data: Optional[Dict[str, Any]] = {}
+
+class UsageRecordResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    user_id: Optional[UUID]
+    usage_type: str
+    amount: int
+    conversation_id: Optional[UUID]
+    service_provider: Optional[str]
+    model_name: Optional[str]
+    cost_cents: Optional[int]
+    additional_data: Optional[Dict[str, Any]]
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class UsageStats(BaseModel):
+    period: str  # 'day', 'week', 'month'
+    start_date: datetime
+    end_date: datetime
+    total_tokens: int
+    total_tts_words: int
+    total_stt_words: int
+    total_cost_cents: int
+    breakdown_by_user: Optional[Dict[str, Dict[str, int]]] = {}
+    breakdown_by_service: Optional[Dict[str, Dict[str, int]]] = {}
+
+class SystemMetricsResponse(BaseModel):
+    id: UUID
+    metric_type: str
+    value: int
+    tenant_id: Optional[UUID]
+    additional_data: Optional[Dict[str, Any]]
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class AdminDashboardResponse(BaseModel):
+    total_users: int
+    total_conversations: int
+    active_ws_connections: int
+    db_connection_pool_size: int
+    recent_usage: List[UsageRecordResponse]
+    system_metrics: List[SystemMetricsResponse]
+    tenant_stats: List[Dict[str, Any]]
+    overall_usage_stats: UsageStats
+    usage_by_organization: List[Dict[str, Any]]
+
+# Admin user management
+class AdminUserUpdate(BaseModel):
+    role: Optional[str] = None  # 'user', 'admin', 'super_admin'
+    is_active: Optional[bool] = None
+    is_verified: Optional[bool] = None

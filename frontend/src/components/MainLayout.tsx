@@ -48,6 +48,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   >
                     Dashboard
                   </Link>
+                  {(user.role === 'admin' || user.role === 'super_admin') && (
+                    <Link 
+                      href="/admin" 
+                      className="text-gray-200 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+                    >
+                      Admin
+                    </Link>
+                  )}
                   <span className="text-gray-200 text-sm hidden sm:block">{user.email}</span>
                   <button
                     onClick={logout}

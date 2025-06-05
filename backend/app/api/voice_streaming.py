@@ -14,10 +14,18 @@ from app.auth.auth import get_current_user, get_current_active_user
 from app.db.database import get_db
 from app.models.models import User
 from app.services.voice import deepgram_service, elevenlabs_service
+from app.services.usage_service import usage_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def count_words(text: str) -> int:
+    """Count words in text for usage tracking."""
+    if not text:
+        return 0
+    return len(text.split())
 
 # Active WebSocket connections for voice streaming
 active_voice_connections: Dict[str, WebSocket] = {}
@@ -145,11 +153,26 @@ async def websocket_streaming_stt(
                             
                             def on_transcript_message(transcript_data):
                                 """Handle transcript messages."""
+                                # Track usage for final transcripts
+                                transcript_text = transcript_data.get("transcript", "")
+                                if transcript_data.get("is_final", False) and transcript_text.strip():
+                                    word_count = count_words(transcript_text)
+                                    if word_count > 0:
+                                        # Record STT usage asynchronously
+                                        asyncio.create_task(usage_service.record_stt_usage(
+                                            db=db,
+                                            tenant_id=user.tenant_id,
+                                            user_id=user.id,
+                                            word_count=word_count,
+                                            service_provider="deepgram",
+                                            model_name=settings.DEEPGRAM_MODEL
+                                        ))
+                                
                                 asyncio.create_task(websocket.send_json({
                                     "type": "transcript",
                                     "is_final": transcript_data.get("is_final", False),
                                     "speech_final": transcript_data.get("speech_final", False),
-                                    "transcript": transcript_data.get("transcript", ""),
+                                    "transcript": transcript_text,
                                     "confidence": transcript_data.get("confidence", 0.0),
                                     "words": transcript_data.get("words", []),
                                     "timestamp": datetime.utcnow().isoformat()
@@ -275,6 +298,20 @@ async def transcribe_audio_file(
         # Log transcription
         logger.info(f"Transcribed file {audio_file.filename} for user {current_user.email}")
         
+        # Track STT usage
+        transcript_text = result["transcript"]
+        if transcript_text.strip():
+            word_count = count_words(transcript_text)
+            if word_count > 0:
+                await usage_service.record_stt_usage(
+                    db=db,
+                    tenant_id=current_user.tenant_id,
+                    user_id=current_user.id,
+                    word_count=word_count,
+                    service_provider="deepgram",
+                    model_name=model or settings.DEEPGRAM_MODEL
+                )
+        
         return {
             "success": result["success"],
             "transcript": result["transcript"],
@@ -306,7 +343,8 @@ async def synthesize_speech(
     style: float = Form(0.0),
     use_speaker_boost: bool = Form(True),
     output_format: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Synthesize speech from text."""
     try:
@@ -336,6 +374,18 @@ async def synthesize_speech(
         
         # Log synthesis
         logger.info(f"Synthesized {len(text)} characters for user {current_user.email}")
+        
+        # Track TTS usage
+        word_count = count_words(text)
+        if word_count > 0:
+            await usage_service.record_tts_usage(
+                db=db,
+                tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                word_count=word_count,
+                service_provider="elevenlabs",
+                model_name=model_id or elevenlabs_service.default_model
+            )
         
         # Return audio as response
         return Response(
@@ -367,7 +417,8 @@ async def stream_speech(
     style: float = Form(0.0),
     use_speaker_boost: bool = Form(True),
     output_format: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Stream speech synthesis from text."""
     try:
@@ -385,6 +436,18 @@ async def stream_speech(
         
         # Log streaming start
         logger.info(f"Starting speech streaming for {len(text)} characters for user {current_user.email}")
+        
+        # Track TTS usage
+        word_count = count_words(text)
+        if word_count > 0:
+            await usage_service.record_tts_usage(
+                db=db,
+                tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                word_count=word_count,
+                service_provider="elevenlabs",
+                model_name=model_id or elevenlabs_service.default_model
+            )
         
         # Stream speech
         async def generate_audio():

@@ -21,6 +21,7 @@ from app.models.models import (
     ConversationUser, MessageType
     )
 from app.agents.agent_manager import agent_manager
+from app.services.monitoring_service import monitoring_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -500,6 +501,13 @@ async def websocket_endpoint(
         # Register connection
         connection_id = await connection_manager.connect(websocket, conversation_id, user.email)
         
+        # Add monitoring for this WebSocket connection
+        monitoring_service.add_websocket_connection(
+            connection_id=str(connection_id),
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id)
+        )
+        
         # Send welcome message
         welcome_message = {
             "type": "system",
@@ -776,6 +784,9 @@ async def websocket_endpoint(
         if connection_id and user:
             await connection_manager.disconnect(conversation_id, connection_id, user.email)
             
+            # Remove from monitoring
+            monitoring_service.remove_websocket_connection(str(connection_id))
+            
             # Notify others of departure
             leave_message = {
                 "type": "user_left",
@@ -815,6 +826,9 @@ async def websocket_notifications(
     db: AsyncSession = Depends(get_db)
 ):
     """WebSocket endpoint for user-specific notifications"""
+    connection_id = None
+    user = None
+    
     try:
         await websocket.accept()
         
@@ -823,6 +837,15 @@ async def websocket_notifications(
         if not user:
             await websocket.close(code=4001, reason="Authentication failed")
             return
+        
+        # Add monitoring for this notification WebSocket
+        import uuid
+        connection_id = str(uuid.uuid4())
+        monitoring_service.add_websocket_connection(
+            connection_id=connection_id,
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id)
+        )
         
         # Simple notification loop
         while True:
@@ -844,6 +867,10 @@ async def websocket_notifications(
                 break
     
     finally:
+        # Remove from monitoring
+        if connection_id:
+            monitoring_service.remove_websocket_connection(connection_id)
+        
         try:
             await websocket.close()
         except:
