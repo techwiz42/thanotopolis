@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -64,34 +64,7 @@ const AdminMonitoringPage = () => {
   const [error, setError] = useState<string | null>(null)
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null)
 
-  // Check admin access
-  useEffect(() => {
-    if (user && user.role !== 'admin' && user.role !== 'super_admin') {
-      router.push('/conversations')
-      return
-    }
-  }, [user, router])
-
-  // Early return for non-admin users to prevent flash
-  if (!user) {
-    return (
-      <div className="p-6">
-        <h1 className="text-2xl font-bold mb-6">Admin Monitoring Dashboard</h1>
-        <div>Loading user data...</div>
-      </div>
-    )
-  }
-
-  if (user.role !== 'admin' && user.role !== 'super_admin') {
-    return (
-      <div className="p-6">
-        <h1 className="text-2xl font-bold mb-6">Admin Monitoring Dashboard</h1>
-        <div>Redirecting...</div>
-      </div>
-    )
-  }
-
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     if (!tokens?.access_token || !organization) return
 
     try {
@@ -119,7 +92,15 @@ const AdminMonitoringPage = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [tokens, organization])
+
+  // Check admin access
+  useEffect(() => {
+    if (user && user.role !== 'admin' && user.role !== 'super_admin') {
+      router.push('/conversations')
+      return
+    }
+  }, [user, router])
 
   useEffect(() => {
     fetchDashboardData()
@@ -131,7 +112,26 @@ const AdminMonitoringPage = () => {
     return () => {
       if (interval) clearInterval(interval)
     }
-  }, [tokens, organization])
+  }, [tokens, organization, fetchDashboardData])
+
+  // Early return for non-admin users to prevent flash
+  if (!user) {
+    return (
+      <div className="p-6">
+        <h1 className="text-2xl font-bold mb-6">Admin Monitoring Dashboard</h1>
+        <div>Loading user data...</div>
+      </div>
+    )
+  }
+
+  if (user.role !== 'admin' && user.role !== 'super_admin') {
+    return (
+      <div className="p-6">
+        <h1 className="text-2xl font-bold mb-6">Admin Monitoring Dashboard</h1>
+        <div>Redirecting...</div>
+      </div>
+    )
+  }
 
   const formatBytes = (bytes: number) => {
     const units = ['B', 'KB', 'MB', 'GB']
