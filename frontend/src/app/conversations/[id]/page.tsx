@@ -1,4 +1,4 @@
-// src/app/conversations/[id]/page.tsx - Updated disabled logic section
+// src/app/conversations/[id]/page.tsx - Voice-enabled version
 'use client';
 
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
@@ -11,6 +11,7 @@ import { Loader2, ChevronLeft, UserPlus } from 'lucide-react';
 
 import MessageList from '@/app/conversations/[id]/components/MessageList';
 import MessageInput from '@/app/conversations/[id]/components/MessageInput';
+import VoiceControls from '@/app/conversations/[id]/components/VoiceControls';
 import { TypingIndicator } from '@/app/conversations/[id]/components/TypingIndicator';
 import { StreamingIndicator } from '@/app/conversations/[id]/components/StreamingIndicator';
 
@@ -19,6 +20,7 @@ import { useWebSocket } from '@/app/conversations/[id]/hooks/useWebSocket';
 import { useMessageLoader } from '@/app/conversations/[id]/hooks/useMessageLoader';
 import { useScrollManager } from '@/app/conversations/[id]/hooks/useScrollManager';
 import { useStreamingTokens } from '@/app/conversations/[id]/hooks/useStreamingTokens';
+import { useVoice } from '@/app/conversations/[id]/hooks/useVoice';
 import { Message, MessageMetadata } from '@/app/conversations/[id]/types/message.types';
 import { TypingStatusMessage, TokenMessage } from '@/app/conversations/[id]/types/websocket.types';
 import { participantStorage } from '@/lib/participantStorage';
@@ -45,6 +47,8 @@ export default function ConversationPage() {
   const [hideAwaitingMessage, setHideAwaitingMessage] = useState<boolean>(false);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [email, setEmail] = useState('');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [pendingVoiceText, setPendingVoiceText] = useState('');
   
   // Streaming tokens handling
   const { streamingState, handleToken, resetStreamingForAgent } = useStreamingTokens();
@@ -52,6 +56,7 @@ export default function ConversationPage() {
   const messageQueueRef = useRef<Message[]>([]);
   const isProcessingRef = useRef(false);
   const awaitingInputTimeoutRef = useRef<NodeJS.Timeout>();
+  const lastFinalTranscriptRef = useRef('');
 
   // Using the conversation hook
   const { conversation, error, isLoading } = useConversation(conversationId, token);
@@ -72,6 +77,38 @@ export default function ConversationPage() {
     messagesEndRef, 
     scrollToBottom
   } = useScrollManager(messages);
+
+  // Voice transcript handler
+  const handleVoiceTranscript = useCallback((transcript: string, isFinal: boolean) => {
+    if (isFinal && transcript.trim() && transcript !== lastFinalTranscriptRef.current) {
+      // This is a final transcript, add it to the message input
+      lastFinalTranscriptRef.current = transcript;
+      setVoiceTranscript(prev => {
+        const newTranscript = prev.trim() ? `${prev} ${transcript}` : transcript;
+        return newTranscript;
+      });
+      setPendingVoiceText('');
+    } else if (!isFinal) {
+      // This is interim text, show it as pending
+      setPendingVoiceText(transcript);
+    }
+  }, []);
+
+  // Using the voice hook
+  const {
+    isSTTEnabled,
+    isTTSEnabled,
+    isSTTActive,
+    isTTSActive,
+    isSTTConnecting,
+    toggleSTT,
+    toggleTTS,
+    speakText,
+    stopSpeaking
+  } = useVoice({
+    conversationId,
+    onTranscript: handleVoiceTranscript
+  });
   
   // Auto-scroll when new streaming content arrives
   useEffect(() => {
@@ -95,6 +132,13 @@ export default function ConversationPage() {
 
     checkAuth();
   }, [conversationId, token, router]);
+
+  // Cleanup pending TTS timeouts on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(pendingTTSRef.current).forEach(timeout => clearTimeout(timeout));
+    };
+  }, []);
 
   const handleAddParticipant = async () => {
     if (!email) {
@@ -136,6 +180,10 @@ export default function ConversationPage() {
     }
   };
 
+  // Track completed agent messages for TTS
+  const completedMessagesRef = useRef<Set<string>>(new Set());
+  const pendingTTSRef = useRef<{ [messageId: string]: NodeJS.Timeout }>({}); 
+
   const handleMessage = useCallback((message: Message) => {
     if (!message.sender.is_owner) {
       setHideAwaitingMessage(true);
@@ -150,6 +198,33 @@ export default function ConversationPage() {
           });
         } else {
           resetStreamingForAgent(message.sender.name, message.id);
+        }
+        
+        // Schedule TTS for agent messages after ensuring streaming is complete
+        if (isTTSEnabled && message.content.trim() && message.id && !completedMessagesRef.current.has(message.id)) {
+          // Clear any existing timeout for this message
+          if (pendingTTSRef.current[message.id]) {
+            clearTimeout(pendingTTSRef.current[message.id]);
+          }
+          
+          // Wait a bit to ensure no more tokens are coming
+          pendingTTSRef.current[message.id] = setTimeout(() => {
+            // Check if streaming is still active for this agent
+            const agentStreamingState = streamingState[message.sender.name || ''];
+            const isStillStreaming = agentStreamingState?.active && agentStreamingState?.lastMessageId === message.id;
+            
+            if (!isStillStreaming && !completedMessagesRef.current.has(message.id)) {
+              completedMessagesRef.current.add(message.id);
+              speakText(message.content);
+              
+              // Clean up after a while to prevent memory leak
+              setTimeout(() => {
+                completedMessagesRef.current.delete(message.id);
+              }, 60000); // Clean up after 1 minute
+            }
+            
+            delete pendingTTSRef.current[message.id];
+          }, 1500); // Wait 1.5 seconds to ensure streaming is complete
         }
         
         setTimeout(() => {
@@ -179,7 +254,7 @@ export default function ConversationPage() {
         scrollToBottom(true);
       });
     }
-  }, [addMessage, resetStreamingForAgent, scrollToBottom, typingUsers.size, streamingState]);
+  }, [addMessage, resetStreamingForAgent, scrollToBottom, typingUsers.size, streamingState, isTTSEnabled, speakText]);
 
   const handleTypingStatus = useCallback((status: TypingStatusMessage) => {
     setTypingUsers(prev => {
@@ -232,29 +307,16 @@ export default function ConversationPage() {
   // Using the websocket hook
   const { sendMessage, sendTypingStatus, isConnected, connectionError, wsConnected } = useWebSocket(wsConfig);
 
-  // Enhanced debug logging for MessageInput disabled state
-  useEffect(() => {
-    const participantSession = participantStorage.getSession(conversationId);
+  // Handle sending message with voice transcript
+  const handleSendMessage = useCallback((content: string, metadata?: MessageMetadata) => {
+    // Clear voice transcript when sending
+    setVoiceTranscript('');
+    setPendingVoiceText('');
+    lastFinalTranscriptRef.current = '';
     
-    // Updated disabled logic - more permissive
-    const hasAuth = !!token || !!participantSession;
-    const hasIdentification = !!user?.email || !!participantSession?.email;
-    const isMessageInputDisabled = !isConnected || !hasAuth || !hasIdentification;
-    
-    console.log('=== Enhanced MessageInput Debug ===');
-    console.log('WebSocket Connected:', wsConnected);
-    console.log('IsConnected (final):', isConnected);
-    console.log('Connection Error:', connectionError);
-    console.log('Has Token:', !!token);
-    console.log('Has User:', !!user);
-    console.log('User Email:', user?.email);
-    console.log('Has Participant Session:', !!participantSession);
-    console.log('Participant Session:', participantSession);
-    console.log('Has Auth:', hasAuth);
-    console.log('Has Identification:', hasIdentification);
-    console.log('Is Message Input Disabled:', isMessageInputDisabled);
-    console.log('================================');
-  }, [isConnected, wsConnected, connectionError, user, conversationId, token]);
+    sendMessage(content, metadata);
+    requestAnimationFrame(() => scrollToBottom(true));
+  }, [sendMessage, scrollToBottom]);
 
   // Compute disabled state
   const isMessageInputDisabled = useMemo(() => {
@@ -264,6 +326,9 @@ export default function ConversationPage() {
     
     return !isConnected || !hasAuth || !hasIdentification;
   }, [isConnected, token, user?.email, conversationId]);
+
+  // Enhanced MessageList that passes TTS functionality
+  const enhancedMessages = messages;
 
   if (isLoading || messagesLoading) {
     return (
@@ -284,9 +349,24 @@ export default function ConversationPage() {
 
   return (
     <div className="container mx-auto p-4 space-y-4">
-      {/* Optional: Show conversation title */}
-      <h1 className="text-2xl font-semibold">{conversation.title}</h1>
+      {/* Header with title and voice controls */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">{conversation.title}</h1>
+        
+        {/* Voice Controls */}
+        <VoiceControls
+          isSTTEnabled={isSTTEnabled}
+          isTTSEnabled={isTTSEnabled}
+          isSTTActive={isSTTActive}
+          isTTSActive={isTTSActive}
+          isSTTConnecting={isSTTConnecting}
+          onToggleSTT={toggleSTT}
+          onToggleTTS={toggleTTS}
+          className="ml-4"
+        />
+      </div>
       
+      {/* Navigation and participant management */}
       {conversation.owner_id === user?.id && (
         <div className="flex items-center space-x-4 w-full">
           <Button
@@ -331,7 +411,12 @@ export default function ConversationPage() {
                 ref={scrollContainerRef}
                 className="flex-1 min-h-0 overflow-y-auto scroll-smooth"
               >
-                <MessageList messages={messages} />
+                <MessageList 
+                  messages={enhancedMessages} 
+                  isTTSEnabled={isTTSEnabled}
+                  onSpeakMessage={speakText}
+                  isSpeaking={isTTSActive}
+                />
                 <div ref={messagesEndRef} />
               </div>
 
@@ -357,19 +442,21 @@ export default function ConversationPage() {
                 ))}
                 
                 <MessageInput
-                  onSendMessage={(content: string, metadata?: MessageMetadata) => {
-                    sendMessage(content, metadata);
-                    requestAnimationFrame(() => scrollToBottom(true));
-                  }}
+                  onSendMessage={handleSendMessage}
                   onTypingStatus={sendTypingStatus}
                   disabled={isMessageInputDisabled}
                   conversationId={conversationId}
+                  voiceTranscript={voiceTranscript + (pendingVoiceText ? ` ${pendingVoiceText}` : '')}
+                  isVoiceActive={isSTTActive}
                 />
                 
                 {/* Debug info for development */}
                 {process.env.NODE_ENV === 'development' && (
-                  <div className="mt-2 text-xs text-gray-400">
-                    WS: {wsConnected ? '✓' : '✗'} | Connected: {isConnected ? '✓' : '✗'} | Disabled: {isMessageInputDisabled ? '✓' : '✗'}
+                  <div className="mt-2 text-xs text-gray-400 space-y-1">
+                    <div>WS: {wsConnected ? '✓' : '✗'} | Connected: {isConnected ? '✓' : '✗'} | Disabled: {isMessageInputDisabled ? '✓' : '✗'}</div>
+                    <div>STT: {isSTTEnabled ? '✓' : '✗'} | TTS: {isTTSEnabled ? '✓' : '✗'} | Recording: {isSTTActive ? '✓' : '✗'} | Speaking: {isTTSActive ? '✓' : '✗'}</div>
+                    {voiceTranscript && <div>Voice: "{voiceTranscript}"</div>}
+                    {pendingVoiceText && <div>Pending: "{pendingVoiceText}"</div>}
                   </div>
                 )}
               </div>

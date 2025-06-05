@@ -13,24 +13,59 @@ export interface MessageInputProps {
   onTypingStatus?: (isTyping: boolean) => void;
   disabled?: boolean;
   conversationId: string;
+  voiceTranscript?: string;
+  isVoiceActive?: boolean;
 }
 
 const MessageInput: React.FC<MessageInputProps> = ({ 
   onSendMessage,
   onTypingStatus,
   disabled = false,
-  conversationId
+  conversationId,
+  voiceTranscript = '',
+  isVoiceActive = false
 }: MessageInputProps) => {
   const [message, setMessage] = useState('');
   const [messageMetadata, setMessageMetadata] = useState<MessageMetadata | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [pendingVoiceTranscript, setPendingVoiceTranscript] = useState('');
+  
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastVoiceTranscriptRef = useRef('');
+  
   const { token, user } = useAuth();
   const { toast } = useToast();
+
+  // Handle voice transcript updates
+  useEffect(() => {
+    if (voiceTranscript && voiceTranscript !== lastVoiceTranscriptRef.current) {
+      lastVoiceTranscriptRef.current = voiceTranscript;
+      setPendingVoiceTranscript(voiceTranscript);
+    }
+  }, [voiceTranscript]);
+
+  // Update message when voice transcript is finalized
+  const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {
+    if (finalTranscript.trim()) {
+      const currentMessage = message.trim();
+      const newMessage = currentMessage 
+        ? `${currentMessage} ${finalTranscript}`
+        : finalTranscript;
+      
+      setMessage(newMessage);
+      setPendingVoiceTranscript('');
+      
+      // Focus textarea and position cursor at end
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newMessage.length, newMessage.length);
+      }
+    }
+  }, [message]);
 
   const processFile = async (file: File) => {
     if (!file) return;
@@ -86,6 +121,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
         onSendMessage(finalMessage, fileMetadata);
         setMessage('');
         setMessageMetadata(null);
+        setPendingVoiceTranscript('');
 
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
@@ -152,6 +188,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
     
     setMessage('');
     setMessageMetadata(null);
+    setPendingVoiceTranscript('');
+    lastVoiceTranscriptRef.current = '';
     
     if (onTypingStatus && isTyping) {
       setIsTyping(false);
@@ -208,6 +246,9 @@ const MessageInput: React.FC<MessageInputProps> = ({
     };
   }, []);
 
+  // Calculate display message (includes pending voice transcript)
+  const displayMessage = message + (pendingVoiceTranscript ? ` ${pendingVoiceTranscript}` : '');
+
   return (
     <div className="flex flex-col gap-2">
       <div 
@@ -224,11 +265,13 @@ const MessageInput: React.FC<MessageInputProps> = ({
         )}
         <Textarea
           ref={textareaRef}
-          value={message}
+          value={displayMessage}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder={disabled ? "Message input temporarily unavailable" : "Type your message..."}
-          className="flex-grow min-h-[80px] max-h-[200px] resize-none pr-20 pl-4"
+          className={`flex-grow min-h-[80px] max-h-[200px] resize-none pr-20 pl-4 ${
+            isVoiceActive ? 'ring-2 ring-red-200 bg-red-50' : ''
+          }`}
           disabled={disabled}
         />
         <div className="absolute right-12 bottom-2 flex items-center gap-2">
@@ -262,6 +305,14 @@ const MessageInput: React.FC<MessageInputProps> = ({
           <Send className="h-4 w-4" />
         </Button>
       </div>
+
+      {/* Voice status indicator */}
+      {isVoiceActive && (
+        <div className="text-xs text-red-600 flex items-center gap-1">
+          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+          Listening...
+        </div>
+      )}
 
       <style jsx global>{`
         .drop-target {

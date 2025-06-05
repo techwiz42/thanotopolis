@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Message } from '@/app/conversations/[id]/types/message.types';
 import { DownloadButton } from '@/app/conversations/[id]/components/DownloadButton';
-import { Copy } from 'lucide-react';
+import { Copy, Volume2 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import FileDisplay from '@/app/conversations/[id]/components/FileDisplay';
@@ -35,6 +35,10 @@ interface Props {
   responseTime?: string;
   isStreaming?: boolean;
   streamingContent?: string;
+  // Voice props
+  isTTSEnabled?: boolean;
+  onSpeakMessage?: (text: string) => Promise<void>;
+  isSpeaking?: boolean;
 }
 
 export const formatAgentName = (agentType?: string, email?: string) => {
@@ -54,11 +58,16 @@ const MessageItem: React.FC<Props> = ({
   formatDate, 
   responseTime,
   isStreaming = false,
-  streamingContent = ''
+  streamingContent = '',
+  // Voice props with defaults
+  isTTSEnabled = false,
+  onSpeakMessage,
+  isSpeaking = false
 }) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const contentRef = useRef<HTMLDivElement>(null);
+  const [localIsSpeaking, setLocalIsSpeaking] = useState(false);
   
   // Cast message to EnhancedMessage for easier access to optional properties
   const enhancedMessage = message as EnhancedMessage;
@@ -67,6 +76,24 @@ const MessageItem: React.FC<Props> = ({
   const currentStreamingContent = streamingContent || enhancedMessage.streaming_content || '';
   const messageIsStreaming = isStreaming || enhancedMessage.is_streaming || 
     (hasMessageInfo(message) && message.message_info?.is_streaming);
+
+  // Update local speaking state when global state changes
+  useEffect(() => {
+    setLocalIsSpeaking(isSpeaking);
+  }, [isSpeaking]);
+
+  const handleSpeakMessage = async () => {
+    if (!onSpeakMessage || !message.content.trim()) return;
+    
+    try {
+      setLocalIsSpeaking(true);
+      await onSpeakMessage(message.content);
+    } catch (error) {
+      console.error('Error speaking message:', error);
+    } finally {
+      setLocalIsSpeaking(false);
+    }
+  };
 
   const getMessageClasses = () => {
     const baseClasses = "rounded-lg px-4 py-3 max-w-[70%] relative text-sm break-all";
@@ -436,6 +463,19 @@ const MessageItem: React.FC<Props> = ({
           >
             <Copy className="w-4 h-4" />  
           </button>
+          
+          {/* Voice/TTS button - only show if enabled and not system message */}
+          {isTTSEnabled && message.sender.type !== 'system' && !messageIsStreaming && (
+            <button
+              onClick={handleSpeakMessage}
+              disabled={localIsSpeaking || !message.content.trim()}
+              className={`text-gray-600 hover:text-gray-900 ${localIsSpeaking ? 'text-blue-600' : ''}`}
+              aria-label={localIsSpeaking ? "Speaking..." : "Speak message"}
+              title={localIsSpeaking ? "Speaking..." : "Speak message"}
+            >
+              <Volume2 className="w-4 h-4" />
+            </button>
+          )}
           
           {/* Only show download and print buttons for completed messages */}
           {!messageIsStreaming && (

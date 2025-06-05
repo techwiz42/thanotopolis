@@ -1,493 +1,494 @@
-# tests/test_voice_services.py
+# tests/test_voice_streaming.py
 import pytest
 import asyncio
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
 import json
-from app.services.voice.deepgram_service import DeepgramService, LiveTranscriptionSession
-from app.services.voice.elevenlabs_service import ElevenLabsService
-from app.core.config import settings
+import io
+from unittest.mock import patch, Mock, AsyncMock, MagicMock
+from httpx import AsyncClient
+from fastapi import UploadFile
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from app.main import app
+from app.services.voice import deepgram_service, elevenlabs_service
+from app.api.voice_streaming import VoiceConnectionManager
 
 
-class TestDeepgramService:
-    """Unit tests for DeepgramService."""
+class TestVoiceStreamingAPI:
+    """Tests for voice streaming API endpoints."""
     
-    @pytest.fixture
-    def deepgram_service(self):
-        """Create a DeepgramService instance for testing."""
-        with patch('app.services.voice.deepgram_service.settings') as mock_settings:
-            mock_settings.DEEPGRAM_API_KEY = "test_key"
-            mock_settings.DEEPGRAM_MODEL = "nova-2"
-            mock_settings.DEEPGRAM_LANGUAGE = "en-US"
+    @pytest.mark.asyncio
+    async def test_stt_status_endpoint(self, client: AsyncClient):
+        """Test the STT status endpoint."""
+        with patch.object(deepgram_service, 'is_available', return_value=True):
+            response = await client.get("/voice/stt/status")
             
-            with patch('app.services.voice.deepgram_service.DeepgramClient') as mock_client:
-                service = DeepgramService()
-                service.client = mock_client
-                return service
-    
-    def test_is_available_with_key(self, deepgram_service):
-        """Test service availability with valid API key."""
-        assert deepgram_service.is_available() is True
-    
-    def test_is_available_without_key(self):
-        """Test service availability without API key."""
-        with patch('app.services.voice.deepgram_service.settings') as mock_settings:
-            mock_settings.DEEPGRAM_API_KEY = "NOT_SET"
-            service = DeepgramService()
-            assert service.is_available() is False
+            assert response.status_code == 200
+            data = response.json()
+            
+            assert data["service"] == "deepgram"
+            assert data["available"] is True
+            assert "model" in data
+            assert "language" in data
     
     @pytest.mark.asyncio
-    async def test_transcribe_file_success(self, deepgram_service):
-        """Test successful file transcription."""
-        # Mock response
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {
-            "results": {
-                "channels": [{
-                    "alternatives": [{
-                        "transcript": "Hello world",
-                        "confidence": 0.95,
-                        "words": [
-                            {"word": "Hello", "start": 0.0, "end": 0.5, "confidence": 0.95},
-                            {"word": "world", "start": 0.6, "end": 1.0, "confidence": 0.93}
-                        ],
-                        "paragraphs": {
-                            "paragraphs": [{
-                                "text": "Hello world",
-                                "start": 0.0,
-                                "end": 1.0
-                            }]
-                        }
-                    }]
-                }]
+    async def test_tts_status_endpoint(self, client: AsyncClient):
+        """Test the TTS status endpoint."""
+        with patch.object(elevenlabs_service, 'is_available', return_value=True):
+            response = await client.get("/voice/tts/status")
+            
+            assert response.status_code == 200
+            data = response.json()
+            
+            assert data["service"] == "elevenlabs"
+            assert data["available"] is True
+            assert "model" in data
+            assert "voice_id" in data
+    
+    @pytest.mark.asyncio
+    async def test_voice_status_endpoint(self, client: AsyncClient):
+        """Test the combined voice status endpoint."""
+        with patch.object(deepgram_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'get_user_info', return_value={"success": True, "user_info": {"tier": "free"}}):
+            
+            response = await client.get("/voice/status")
+            
+            assert response.status_code == 200
+            data = response.json()
+            
+            assert "stt" in data
+            assert "tts" in data
+            assert "active_connections" in data
+            assert data["stt"]["available"] is True
+            assert data["tts"]["available"] is True
+
+
+class TestVoiceFileEndpoints:
+    """Tests for voice file processing endpoints."""
+    
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_file_success(self, client: AsyncClient, mock_user):
+        """Test successful audio file transcription."""
+        # Mock Deepgram service
+        with patch.object(deepgram_service, 'is_available', return_value=True), \
+             patch.object(deepgram_service, 'transcribe_file') as mock_transcribe:
+            
+            mock_transcribe.return_value = {
+                "success": True,
+                "transcript": "Hello world",
+                "confidence": 0.95,
+                "words": [],
+                "speakers": [],
+                "paragraphs": []
             }
-        }
-        
-        # Mock client methods
-        deepgram_service.client.listen.asyncprerecorded.v.return_value.transcribe_file = AsyncMock(
-            return_value=mock_response
-        )
-        
-        # Test transcription
-        audio_data = b"fake_audio_data"
-        result = await deepgram_service.transcribe_file(audio_data)
-        
-        assert result["success"] is True
-        assert result["transcript"] == "Hello world"
-        assert result["confidence"] == 0.95
-        assert len(result["words"]) == 2
-        assert len(result["paragraphs"]) == 1
+            
+            # Create mock audio file
+            audio_content = b"fake_audio_data"
+            
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.post(
+                    "/voice/stt/file",
+                    files={"audio_file": ("test.wav", io.BytesIO(audio_content), "audio/wav")},
+                    data={
+                        "language": "en-US",
+                        "model": "nova-2",
+                        "punctuate": True,
+                        "diarize": False,
+                        "smart_format": True
+                    }
+                )
+            
+            assert response.status_code == 200
+            data = response.json()
+            
+            assert data["success"] is True
+            assert data["transcript"] == "Hello world"
+            assert data["confidence"] == 0.95
+            assert "metadata" in data
     
     @pytest.mark.asyncio
-    async def test_transcribe_file_error(self, deepgram_service):
-        """Test file transcription with error."""
-        # Mock client to raise exception
-        deepgram_service.client.listen.asyncprerecorded.v.return_value.transcribe_file = AsyncMock(
-            side_effect=Exception("API error")
-        )
-        
-        audio_data = b"fake_audio_data"
-        result = await deepgram_service.transcribe_file(audio_data)
-        
-        assert result["success"] is False
-        assert "API error" in result["error"]
-        assert result["transcript"] == ""
+    async def test_transcribe_audio_file_service_unavailable(self, client: AsyncClient, mock_user):
+        """Test audio transcription when service is unavailable."""
+        with patch.object(deepgram_service, 'is_available', return_value=False):
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                audio_content = b"fake_audio_data"
+                response = await client.post(
+                    "/voice/stt/file",
+                    files={"audio_file": ("test.wav", io.BytesIO(audio_content), "audio/wav")}
+                )
+            
+            assert response.status_code == 503
+            assert "unavailable" in response.json()["detail"]
     
     @pytest.mark.asyncio
-    async def test_start_live_transcription(self, deepgram_service):
-        """Test starting live transcription session."""
-        # Mock client
-        mock_connection = Mock()
-        deepgram_service.client.listen.asynclive.v.return_value = mock_connection
-        
-        # Mock callback
-        on_message = Mock()
-        
-        # Start session
-        session = await deepgram_service.start_live_transcription(on_message)
-        
-        assert isinstance(session, LiveTranscriptionSession)
-        assert session.client == deepgram_service.client
-        assert session.on_message == on_message
-
-
-class TestLiveTranscriptionSession:
-    """Unit tests for LiveTranscriptionSession."""
-    
-    @pytest.fixture
-    def mock_client(self):
-        """Create a mock Deepgram client."""
-        return Mock()
-    
-    @pytest.fixture
-    def mock_options(self):
-        """Create mock live options."""
-        return Mock()
-    
-    @pytest.fixture
-    def session(self, mock_client, mock_options):
-        """Create a LiveTranscriptionSession for testing."""
-        on_message = Mock()
-        return LiveTranscriptionSession(mock_client, mock_options, on_message)
-    
-    @pytest.mark.asyncio
-    async def test_start_session_success(self, session, mock_client):
-        """Test successful session start."""
-        # Mock connection
-        mock_connection = Mock()
-        mock_connection.start = AsyncMock(return_value=True)
-        mock_client.listen.asynclive.v.return_value = mock_connection
-        
-        await session.start()
-        
-        assert session.is_connected is True
-        assert session.connection == mock_connection
-    
-    @pytest.mark.asyncio
-    async def test_start_session_failure(self, session, mock_client):
-        """Test session start failure."""
-        # Mock connection
-        mock_connection = Mock()
-        mock_connection.start = AsyncMock(return_value=False)
-        mock_client.listen.asynclive.v.return_value = mock_connection
-        
-        with pytest.raises(RuntimeError):
-            await session.start()
-    
-    @pytest.mark.asyncio
-    async def test_send_audio(self, session):
-        """Test sending audio data."""
-        # Setup session
-        session.is_connected = True
-        session.connection = Mock()
-        session.connection.send = AsyncMock()
-        
-        audio_data = b"audio_chunk"
-        await session.send_audio(audio_data)
-        
-        session.connection.send.assert_called_once_with(audio_data)
-    
-    @pytest.mark.asyncio
-    async def test_send_audio_not_connected(self, session):
-        """Test sending audio when not connected."""
-        session.is_connected = False
-        
-        with pytest.raises(RuntimeError):
-            await session.send_audio(b"audio")
-    
-    @pytest.mark.asyncio
-    async def test_finish_session(self, session):
-        """Test finishing transcription session."""
-        # Setup session
-        session.is_connected = True
-        session.connection = Mock()
-        session.connection.finish = AsyncMock()
-        
-        await session.finish()
-        
-        assert session.is_connected is False
-        session.connection.finish.assert_called_once()
-    
-    def test_handle_transcript(self, session):
-        """Test transcript message handling."""
-        # Mock transcript data
-        transcript_data = {
-            "channel_index": 0,
-            "duration": 2.5,
-            "start": 0.0,
-            "is_final": True,
-            "speech_final": True,
-            "channel": {
-                "alternatives": [{
-                    "transcript": "Test transcript",
-                    "confidence": 0.9,
-                    "words": []
-                }]
-            },
-            "metadata": {}
-        }
-        
-        session._handle_transcript(transcript_data)
-        
-        # Verify callback was called with formatted data
-        session.on_message.assert_called_once()
-        called_args = session.on_message.call_args[0][0]
-        assert called_args["type"] == "transcript"
-        assert called_args["transcript"] == "Test transcript"
-        assert called_args["confidence"] == 0.9
-        assert called_args["is_final"] is True
-
-
-class TestElevenLabsService:
-    """Unit tests for ElevenLabsService."""
-    
-    @pytest.fixture
-    def elevenlabs_service(self):
-        """Create an ElevenLabsService instance for testing."""
-        with patch('app.services.voice.elevenlabs_service.settings') as mock_settings:
-            mock_settings.ELEVENLABS_API_KEY = "test_key"
-            mock_settings.ELEVENLABS_VOICE_ID = "test_voice"
-            mock_settings.ELEVENLABS_MODEL = "eleven_turbo_v2_5"
-            mock_settings.ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128"
-            mock_settings.ELEVENLABS_OPTIMIZE_STREAMING_LATENCY = 3
-            return ElevenLabsService()
-    
-    def test_is_available_with_key(self, elevenlabs_service):
-        """Test service availability with valid API key."""
-        assert elevenlabs_service.is_available() is True
-    
-    def test_is_available_without_key(self):
-        """Test service availability without API key."""
-        with patch('app.services.voice.elevenlabs_service.settings') as mock_settings:
-            mock_settings.ELEVENLABS_API_KEY = "NOT_SET"
-            service = ElevenLabsService()
-            assert service.is_available() is False
-    
-    @pytest.mark.asyncio
-    @patch('aiohttp.ClientSession')
-    async def test_get_voices_success(self, mock_session_class, elevenlabs_service):
-        """Test successful voice retrieval."""
-        # Mock response
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "voices": [
-                {"voice_id": "voice1", "name": "Voice 1"},
-                {"voice_id": "voice2", "name": "Voice 2"}
-            ]
-        })
-        
-        # Mock session
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session_class.return_value.__aenter__.return_value = mock_session
-        
-        result = await elevenlabs_service.get_voices()
-        
-        assert result["success"] is True
-        assert len(result["voices"]) == 2
-    
-    @pytest.mark.asyncio
-    @patch('aiohttp.ClientSession')
-    async def test_get_voices_error(self, mock_session_class, elevenlabs_service):
-        """Test voice retrieval with API error."""
-        # Mock response
-        mock_response = AsyncMock()
-        mock_response.status = 401
-        mock_response.text = AsyncMock(return_value="Unauthorized")
-        
-        # Mock session
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session_class.return_value.__aenter__.return_value = mock_session
-        
-        result = await elevenlabs_service.get_voices()
-        
-        assert result["success"] is False
-        assert "API error" in result["error"]
-    
-    @pytest.mark.asyncio
-    @patch('aiohttp.ClientSession')
-    async def test_synthesize_speech_success(self, mock_session_class, elevenlabs_service):
+    async def test_synthesize_speech_success(self, client: AsyncClient, mock_user):
         """Test successful speech synthesis."""
-        # Mock response
-        mock_audio_data = b"fake_audio_data"
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.read = AsyncMock(return_value=mock_audio_data)
-        mock_response.headers = {"content-type": "audio/mpeg"}
-        
-        # Mock session
-        mock_session = AsyncMock()
-        mock_session.post.return_value.__aenter__.return_value = mock_response
-        mock_session_class.return_value.__aenter__.return_value = mock_session
-        
-        result = await elevenlabs_service.synthesize_speech("Hello world")
-        
-        assert result["success"] is True
-        assert result["audio_data"] == mock_audio_data
-        assert result["content_type"] == "audio/mpeg"
-        assert result["text"] == "Hello world"
+        # Mock ElevenLabs service
+        with patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'synthesize_speech') as mock_synthesize:
+            
+            mock_audio_data = b"fake_audio_data"
+            mock_synthesize.return_value = {
+                "success": True,
+                "audio_data": mock_audio_data,
+                "content_type": "audio/mpeg",
+                "voice_id": "test_voice",
+                "model_id": "eleven_turbo_v2_5",
+                "output_format": "mp3_44100_128"
+            }
+            
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.post(
+                    "/voice/tts/synthesize",
+                    data={
+                        "text": "Hello world",
+                        "voice_id": "test_voice",
+                        "stability": 0.5,
+                        "similarity_boost": 0.5
+                    }
+                )
+            
+            assert response.status_code == 200
+            assert response.content == mock_audio_data
+            assert response.headers["content-type"] == "audio/mpeg"
     
     @pytest.mark.asyncio
-    @patch('aiohttp.ClientSession')
-    async def test_synthesize_speech_error(self, mock_session_class, elevenlabs_service):
-        """Test speech synthesis with API error."""
-        # Mock response
-        mock_response = AsyncMock()
-        mock_response.status = 400
-        mock_response.text = AsyncMock(return_value="Bad request")
-        
-        # Mock session
-        mock_session = AsyncMock()
-        mock_session.post.return_value.__aenter__.return_value = mock_response
-        mock_session_class.return_value.__aenter__.return_value = mock_session
-        
-        result = await elevenlabs_service.synthesize_speech("Hello world")
-        
-        assert result["success"] is False
-        assert "API error" in result["error"]
+    async def test_synthesize_speech_service_unavailable(self, client: AsyncClient, mock_user):
+        """Test speech synthesis when service is unavailable."""
+        with patch.object(elevenlabs_service, 'is_available', return_value=False):
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.post(
+                    "/voice/tts/synthesize",
+                    data={"text": "Hello world"}
+                )
+            
+            assert response.status_code == 503
+            assert "unavailable" in response.json()["detail"]
     
     @pytest.mark.asyncio
-    @patch('aiohttp.ClientSession')
-    async def test_stream_speech_success(self, mock_session_class, elevenlabs_service):
+    async def test_stream_speech_success(self, client: AsyncClient, mock_user):
         """Test successful speech streaming."""
-        # Mock response chunks
-        mock_chunks = [b"chunk1", b"chunk2", b"chunk3"]
+        # Mock ElevenLabs service
+        async def mock_stream_generator():
+            yield b"chunk1"
+            yield b"chunk2"
+            yield b"chunk3"
         
-        async def mock_iter_chunked(chunk_size):
-            for chunk in mock_chunks:
-                yield chunk
-        
-        # Mock response
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.content.iter_chunked = mock_iter_chunked
-        
-        # Mock session
-        mock_session = AsyncMock()
-        mock_session.post.return_value.__aenter__.return_value = mock_response
-        mock_session_class.return_value.__aenter__.return_value = mock_session
-        
-        # Collect streamed chunks
-        chunks = []
-        async for chunk in elevenlabs_service.stream_speech("Hello world"):
-            chunks.append(chunk)
-        
-        assert chunks == mock_chunks
+        with patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'stream_speech', return_value=mock_stream_generator()):
+            
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.post(
+                    "/voice/tts/stream",
+                    data={"text": "Hello world"}
+                )
+            
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "audio/mpeg"
+            content = response.content
+            assert content == b"chunk1chunk2chunk3"
+
+
+class TestVoiceMetadataEndpoints:
+    """Tests for voice metadata endpoints."""
     
     @pytest.mark.asyncio
-    @patch('aiohttp.ClientSession')
-    async def test_get_user_info_success(self, mock_session_class, elevenlabs_service):
-        """Test successful user info retrieval."""
-        # Mock response
-        mock_user_info = {
-            "subscription": {"tier": "starter"},
-            "character_count": 1000,
-            "character_limit": 10000
+    async def test_get_voices_success(self, client: AsyncClient, mock_user):
+        """Test getting available voices."""
+        mock_voices = [
+            {"voice_id": "voice1", "name": "Voice 1"},
+            {"voice_id": "voice2", "name": "Voice 2"}
+        ]
+        
+        with patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'get_voices') as mock_get_voices:
+            
+            mock_get_voices.return_value = {
+                "success": True,
+                "voices": mock_voices
+            }
+            
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.get("/voice/tts/voices")
+            
+            assert response.status_code == 200
+            assert response.json() == mock_voices
+    
+    @pytest.mark.asyncio
+    async def test_get_voice_info_success(self, client: AsyncClient, mock_user):
+        """Test getting specific voice info."""
+        mock_voice_info = {
+            "voice_id": "test_voice",
+            "name": "Test Voice",
+            "category": "premade"
         }
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=mock_user_info)
         
-        # Mock session
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session_class.return_value.__aenter__.return_value = mock_session
-        
-        result = await elevenlabs_service.get_user_info()
-        
-        assert result["success"] is True
-        assert result["user_info"] == mock_user_info
+        with patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'get_voice_info') as mock_get_voice_info:
+            
+            mock_get_voice_info.return_value = {
+                "success": True,
+                "voice": mock_voice_info
+            }
+            
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.get("/voice/tts/voice/test_voice")
+            
+            assert response.status_code == 200
+            assert response.json() == mock_voice_info
     
     @pytest.mark.asyncio
-    @patch('aiohttp.ClientSession')
-    async def test_get_models_success(self, mock_session_class, elevenlabs_service):
-        """Test successful models retrieval."""
-        # Mock response
+    async def test_get_voice_info_not_found(self, client: AsyncClient, mock_user):
+        """Test getting voice info for non-existent voice."""
+        with patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'get_voice_info') as mock_get_voice_info:
+            
+            mock_get_voice_info.return_value = {
+                "success": False,
+                "error": "Voice not found"
+            }
+            
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.get("/voice/tts/voice/nonexistent")
+            
+            assert response.status_code == 404
+    
+    @pytest.mark.asyncio
+    async def test_get_models_success(self, client: AsyncClient, mock_user):
+        """Test getting available models."""
         mock_models = [
             {"model_id": "eleven_turbo_v2", "name": "Turbo v2"},
             {"model_id": "eleven_multilingual_v2", "name": "Multilingual v2"}
         ]
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=mock_models)
         
-        # Mock session
-        mock_session = AsyncMock()
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session_class.return_value.__aenter__.return_value = mock_session
-        
-        result = await elevenlabs_service.get_models()
-        
-        assert result["success"] is True
-        assert result["models"] == mock_models
-
-
-# Integration test fixtures and helpers
-@pytest.fixture
-def mock_audio_file():
-    """Create a mock audio file for testing."""
-    return b"fake_wav_audio_data"
-
-
-@pytest.fixture
-def mock_text():
-    """Create mock text for TTS testing."""
-    return "This is a test sentence for text-to-speech synthesis."
-
-
-class TestVoiceServiceIntegration:
-    """Integration tests for voice services."""
-    
-    @pytest.mark.asyncio
-    async def test_full_stt_workflow(self):
-        """Test complete STT workflow with mocked services."""
-        with patch('app.services.voice.deepgram_service.DeepgramClient') as mock_client_class:
-            # Mock client and response
-            mock_client = Mock()
-            mock_client_class.return_value = mock_client
+        with patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'get_models') as mock_get_models:
             
-            mock_response = Mock()
-            mock_response.to_dict.return_value = {
-                "results": {
-                    "channels": [{
-                        "alternatives": [{
-                            "transcript": "Integration test transcript",
-                            "confidence": 0.9
-                        }]
-                    }]
-                }
+            mock_get_models.return_value = {
+                "success": True,
+                "models": mock_models
             }
             
-            mock_client.listen.asyncprerecorded.v.return_value.transcribe_file = AsyncMock(
-                return_value=mock_response
-            )
+            # Mock authentication
+            with patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+                response = await client.get("/voice/tts/models")
             
-            # Test service
-            with patch('app.services.voice.deepgram_service.settings') as mock_settings:
-                mock_settings.DEEPGRAM_API_KEY = "test_key"
-                mock_settings.DEEPGRAM_MODEL = "nova-2"
-                mock_settings.DEEPGRAM_LANGUAGE = "en-US"
-                
-                service = DeepgramService()
-                
-                # Test transcription
-                result = await service.transcribe_file(b"fake_audio")
-                
-                assert result["success"] is True
-                assert "Integration test transcript" in result["transcript"]
+            assert response.status_code == 200
+            assert response.json() == mock_models
+
+
+class TestVoiceWebSocket:
+    """Tests for voice WebSocket endpoints."""
     
     @pytest.mark.asyncio
-    async def test_full_tts_workflow(self):
-        """Test complete TTS workflow with mocked services."""
-        with patch('aiohttp.ClientSession') as mock_session_class:
-            # Mock response
-            mock_audio_data = b"generated_audio_data"
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.read = AsyncMock(return_value=mock_audio_data)
-            mock_response.headers = {"content-type": "audio/mpeg"}
+    async def test_websocket_authentication_failure(self):
+        """Test WebSocket connection with invalid authentication."""
+        with patch('app.api.voice_streaming.authenticate_voice_websocket', return_value=None):
+            with TestClient(app) as client:
+                with pytest.raises(WebSocketDisconnect):
+                    with client.websocket_connect("/ws/voice/streaming-stt?token=invalid"):
+                        pass
+    
+    @pytest.mark.asyncio
+    async def test_websocket_service_unavailable(self, mock_user):
+        """Test WebSocket connection when Deepgram service is unavailable."""
+        with patch('app.api.voice_streaming.authenticate_voice_websocket', return_value=mock_user), \
+             patch.object(deepgram_service, 'is_available', return_value=False):
             
-            # Mock session
-            mock_session = AsyncMock()
-            mock_session.post.return_value.__aenter__.return_value = mock_response
-            mock_session_class.return_value.__aenter__.return_value = mock_session
+            with TestClient(app) as client:
+                with pytest.raises(WebSocketDisconnect):
+                    with client.websocket_connect("/ws/voice/streaming-stt?token=valid"):
+                        pass
+    
+    @pytest.mark.asyncio
+    async def test_websocket_successful_connection(self, mock_user):
+        """Test successful WebSocket connection and basic flow."""
+        # Mock the voice connection manager
+        mock_connection_manager = Mock()
+        mock_connection_manager.connect = AsyncMock(return_value="test-connection-id")
+        mock_connection_manager.disconnect = AsyncMock()
+        mock_connection_manager.get_connection = Mock(return_value={
+            "websocket": Mock(),
+            "user": mock_user,
+            "transcription_session": None,
+            "is_transcribing": False
+        })
+        
+        with patch('app.api.voice_streaming.authenticate_voice_websocket', return_value=mock_user), \
+             patch.object(deepgram_service, 'is_available', return_value=True), \
+             patch('app.api.voice_streaming.voice_connection_manager', mock_connection_manager):
             
-            # Test service
-            with patch('app.services.voice.elevenlabs_service.settings') as mock_settings:
-                mock_settings.ELEVENLABS_API_KEY = "test_key"
-                mock_settings.ELEVENLABS_VOICE_ID = "test_voice"
-                mock_settings.ELEVENLABS_MODEL = "eleven_turbo_v2_5"
-                mock_settings.ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128"
-                mock_settings.ELEVENLABS_OPTIMIZE_STREAMING_LATENCY = 3
+            with TestClient(app) as client:
+                with client.websocket_connect("/ws/voice/streaming-stt?token=valid") as websocket:
+                    # Should receive welcome message
+                    message = websocket.receive_json()
+                    assert message["type"] == "connected"
+                    assert message["connection_id"] == "test-connection-id"
+
+
+class TestVoiceConnectionManager:
+    """Tests for VoiceConnectionManager."""
+    
+    @pytest.fixture
+    def connection_manager(self):
+        """Create a VoiceConnectionManager for testing."""
+        return VoiceConnectionManager()
+    
+    @pytest.fixture
+    def mock_websocket(self):
+        """Create a mock WebSocket."""
+        websocket = AsyncMock()
+        websocket.accept = AsyncMock()
+        return websocket
+    
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock user."""
+        user = Mock()
+        user.email = "test@example.com"
+        user.id = "user123"
+        return user
+    
+    @pytest.mark.asyncio
+    async def test_connect_user(self, connection_manager, mock_websocket, mock_user):
+        """Test connecting a user."""
+        connection_id = await connection_manager.connect(mock_websocket, mock_user)
+        
+        assert connection_id is not None
+        assert connection_id in connection_manager.active_connections
+        
+        connection = connection_manager.get_connection(connection_id)
+        assert connection["user"] == mock_user
+        assert connection["websocket"] == mock_websocket
+        assert connection["is_transcribing"] is False
+        
+        mock_websocket.accept.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_disconnect_user(self, connection_manager, mock_websocket, mock_user):
+        """Test disconnecting a user."""
+        # First connect
+        connection_id = await connection_manager.connect(mock_websocket, mock_user)
+        assert connection_id in connection_manager.active_connections
+        
+        # Then disconnect
+        await connection_manager.disconnect(connection_id)
+        assert connection_id not in connection_manager.active_connections
+    
+    @pytest.mark.asyncio
+    async def test_disconnect_with_active_transcription(self, connection_manager, mock_websocket, mock_user):
+        """Test disconnecting with active transcription session."""
+        # Connect and add mock transcription session
+        connection_id = await connection_manager.connect(mock_websocket, mock_user)
+        
+        mock_transcription_session = AsyncMock()
+        mock_transcription_session.finish = AsyncMock()
+        
+        connection_manager.active_connections[connection_id]["transcription_session"] = mock_transcription_session
+        
+        # Disconnect
+        await connection_manager.disconnect(connection_id)
+        
+        # Verify transcription session was finished
+        mock_transcription_session.finish.assert_called_once()
+        assert connection_id not in connection_manager.active_connections
+    
+    def test_get_nonexistent_connection(self, connection_manager):
+        """Test getting a connection that doesn't exist."""
+        connection = connection_manager.get_connection("nonexistent")
+        assert connection is None
+
+
+class TestVoiceStreamingIntegration:
+    """Integration tests for voice streaming functionality."""
+    
+    @pytest.mark.asyncio
+    async def test_complete_transcription_workflow(self, mock_user):
+        """Test complete file transcription workflow."""
+        mock_transcript_result = {
+            "success": True,
+            "transcript": "This is a test transcription",
+            "confidence": 0.95,
+            "words": [
+                {"word": "This", "start": 0.0, "end": 0.2, "confidence": 0.95},
+                {"word": "is", "start": 0.2, "end": 0.4, "confidence": 0.93}
+            ],
+            "speakers": [],
+            "paragraphs": [{"text": "This is a test transcription", "start": 0.0, "end": 2.0}]
+        }
+        
+        with patch.object(deepgram_service, 'is_available', return_value=True), \
+             patch.object(deepgram_service, 'transcribe_file', return_value=mock_transcript_result), \
+             patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+            
+            async with AsyncClient(app=app, base_url="http://test") as client:
+                audio_content = b"fake_audio_data"
+                response = await client.post(
+                    "/voice/stt/file",
+                    files={"audio_file": ("test.wav", io.BytesIO(audio_content), "audio/wav")},
+                    data={"language": "en-US", "model": "nova-2"}
+                )
                 
-                service = ElevenLabsService()
+                assert response.status_code == 200
+                data = response.json()
                 
-                # Test synthesis
-                result = await service.synthesize_speech("Test text")
+                assert data["success"] is True
+                assert data["transcript"] == "This is a test transcription"
+                assert len(data["words"]) == 2
+                assert len(data["paragraphs"]) == 1
+    
+    @pytest.mark.asyncio
+    async def test_complete_synthesis_workflow(self, mock_user):
+        """Test complete speech synthesis workflow."""
+        mock_audio_data = b"generated_speech_audio"
+        mock_synthesis_result = {
+            "success": True,
+            "audio_data": mock_audio_data,
+            "content_type": "audio/mpeg",
+            "voice_id": "test_voice",
+            "model_id": "eleven_turbo_v2_5",
+            "output_format": "mp3_44100_128"
+        }
+        
+        with patch.object(elevenlabs_service, 'is_available', return_value=True), \
+             patch.object(elevenlabs_service, 'synthesize_speech', return_value=mock_synthesis_result), \
+             patch('app.api.voice_streaming.get_current_active_user', return_value=mock_user):
+            
+            async with AsyncClient(app=app, base_url="http://test") as client:
+                response = await client.post(
+                    "/voice/tts/synthesize",
+                    data={
+                        "text": "Hello, this is a test of speech synthesis.",
+                        "voice_id": "test_voice",
+                        "stability": 0.5,
+                        "similarity_boost": 0.75
+                    }
+                )
                 
-                assert result["success"] is True
-                assert result["audio_data"] == mock_audio_data
+                assert response.status_code == 200
+                assert response.content == mock_audio_data
+                assert response.headers["content-type"] == "audio/mpeg"
+                assert "X-Voice-ID" in response.headers
+                assert "X-Model-ID" in response.headers
+
+
+# Test fixtures
+@pytest.fixture
+def mock_user():
+    """Create a mock user for testing."""
+    user = Mock()
+    user.id = "test_user_123"
+    user.email = "test@example.com"
+    return user
 
 
 if __name__ == "__main__":

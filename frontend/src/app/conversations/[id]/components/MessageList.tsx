@@ -5,9 +5,17 @@ import { Message } from '@/app/conversations/[id]/types/message.types';
 
 interface MessageListProps {
   messages: Message[];
+  isTTSEnabled?: boolean;
+  onSpeakMessage?: (text: string) => Promise<void>;
+  isSpeaking?: boolean;
 }
 
-const MessageList: React.FC<MessageListProps> = ({ messages }) => {
+const MessageList: React.FC<MessageListProps> = ({ 
+  messages, 
+  isTTSEnabled = false,
+  onSpeakMessage,
+  isSpeaking = false
+}) => {
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleTimeString('en-US', { 
@@ -38,6 +46,9 @@ const MessageList: React.FC<MessageListProps> = ({ messages }) => {
           message={message}
           formatDate={formatDate}
           responseTime={calculateResponseTime(message, messages[index - 1])}
+          isTTSEnabled={isTTSEnabled}
+          onSpeakMessage={onSpeakMessage}
+          isSpeaking={isSpeaking}
         />
       ))}
     </div>

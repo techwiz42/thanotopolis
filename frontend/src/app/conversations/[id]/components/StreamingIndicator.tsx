@@ -1,12 +1,34 @@
 // src/app/conversations/[id]/components/StreamingIndicator.tsx
 import React, { useEffect, useRef, useMemo } from 'react';
-import { formatAgentName } from './MessageItem';
 
 interface StreamingIndicatorProps {
   agentType: string;
   streamingContent: string;
   isActive: boolean;
 }
+
+// Format agent name to be more readable
+const formatAgentName = (agentType: string): string => {
+  if (!agentType) return 'Agent';
+  
+  // Handle special cases
+  const specialCases: Record<string, string> = {
+    'general_qa': 'General Q&A',
+    'math_expert': 'Math Expert',
+    'code_writer': 'Code Writer',
+    'creative_writer': 'Creative Writer',
+    'research_analyst': 'Research Analyst'
+  };
+  
+  if (specialCases[agentType]) {
+    return specialCases[agentType];
+  }
+  
+  // Convert snake_case or kebab-case to Title Case
+  return agentType
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+};
 
 export const StreamingIndicator: React.FC<StreamingIndicatorProps> = ({
   agentType,

@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch, AsyncMock, MagicMock
 import json
 from app.services.voice.deepgram_service import DeepgramService, LiveTranscriptionSession
 from app.services.voice.elevenlabs_service import ElevenLabsService
-from app.core.config import settings
 
 
 class TestDeepgramService:
@@ -19,7 +18,9 @@ class TestDeepgramService:
             mock_settings.DEEPGRAM_MODEL = "nova-2"
             mock_settings.DEEPGRAM_LANGUAGE = "en-US"
             
-            with patch('app.services.voice.deepgram_service.DeepgramClient') as mock_client:
+            with patch('app.services.voice.deepgram_service.DeepgramClient') as mock_client_class:
+                mock_client = Mock()
+                mock_client_class.return_value = mock_client
                 service = DeepgramService()
                 service.client = mock_client
                 return service
@@ -63,9 +64,8 @@ class TestDeepgramService:
         }
         
         # Mock client methods
-        deepgram_service.client.listen.asyncprerecorded.v.return_value.transcribe_file = AsyncMock(
-            return_value=mock_response
-        )
+        mock_transcribe = AsyncMock(return_value=mock_response)
+        deepgram_service.client.listen.asyncprerecorded.v.return_value.transcribe_file = mock_transcribe
         
         # Test transcription
         audio_data = b"fake_audio_data"
@@ -81,9 +81,8 @@ class TestDeepgramService:
     async def test_transcribe_file_error(self, deepgram_service):
         """Test file transcription with error."""
         # Mock client to raise exception
-        deepgram_service.client.listen.asyncprerecorded.v.return_value.transcribe_file = AsyncMock(
-            side_effect=Exception("API error")
-        )
+        mock_transcribe = AsyncMock(side_effect=Exception("API error"))
+        deepgram_service.client.listen.asyncprerecorded.v.return_value.transcribe_file = mock_transcribe
         
         audio_data = b"fake_audio_data"
         result = await deepgram_service.transcribe_file(audio_data)
@@ -121,7 +120,12 @@ class TestLiveTranscriptionSession:
     @pytest.fixture
     def mock_options(self):
         """Create mock live options."""
-        return Mock()
+        from deepgram import LiveOptions
+        return LiveOptions(
+            model="nova-2",
+            language="en-US",
+            punctuate=True
+        )
     
     @pytest.fixture
     def session(self, mock_client, mock_options):
@@ -130,27 +134,31 @@ class TestLiveTranscriptionSession:
         return LiveTranscriptionSession(mock_client, mock_options, on_message)
     
     @pytest.mark.asyncio
-    async def test_start_session_success(self, session, mock_client):
+    async def test_start_session_success(self, session):
         """Test successful session start."""
         # Mock connection
         mock_connection = Mock()
         mock_connection.start = AsyncMock(return_value=True)
-        mock_client.listen.asynclive.v.return_value = mock_connection
+        mock_connection.on = Mock()
+        session.client.listen.asynclive.v.return_value = mock_connection
         
         await session.start()
         
         assert session.is_connected is True
         assert session.connection == mock_connection
+        # Verify event handlers were set up
+        assert mock_connection.on.call_count == 4
     
     @pytest.mark.asyncio
-    async def test_start_session_failure(self, session, mock_client):
+    async def test_start_session_failure(self, session):
         """Test session start failure."""
         # Mock connection
         mock_connection = Mock()
         mock_connection.start = AsyncMock(return_value=False)
-        mock_client.listen.asynclive.v.return_value = mock_connection
+        mock_connection.on = Mock()
+        session.client.listen.asynclive.v.return_value = mock_connection
         
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="Failed to start live transcription session"):
             await session.start()
     
     @pytest.mark.asyncio
@@ -171,7 +179,7 @@ class TestLiveTranscriptionSession:
         """Test sending audio when not connected."""
         session.is_connected = False
         
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="Transcription session not connected"):
             await session.send_audio(b"audio")
     
     @pytest.mark.asyncio
@@ -215,6 +223,20 @@ class TestLiveTranscriptionSession:
         assert called_args["transcript"] == "Test transcript"
         assert called_args["confidence"] == 0.9
         assert called_args["is_final"] is True
+    
+    def test_handle_error(self, session):
+        """Test error handling."""
+        error_data = {"error": "Test error"}
+        
+        # Mock on_error callback
+        session.on_error = Mock()
+        
+        session._handle_error(error_data)
+        
+        # Verify error callback was called
+        session.on_error.assert_called_once()
+        called_args = session.on_error.call_args[0][0]
+        assert "Test error" in str(called_args)
 
 
 class TestElevenLabsService:
@@ -287,6 +309,30 @@ class TestElevenLabsService:
     
     @pytest.mark.asyncio
     @patch('aiohttp.ClientSession')
+    async def test_get_voice_info_success(self, mock_session_class, elevenlabs_service):
+        """Test successful voice info retrieval."""
+        # Mock response
+        mock_voice_info = {
+            "voice_id": "test_voice",
+            "name": "Test Voice",
+            "category": "premade"
+        }
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value=mock_voice_info)
+        
+        # Mock session
+        mock_session = AsyncMock()
+        mock_session.get.return_value.__aenter__.return_value = mock_response
+        mock_session_class.return_value.__aenter__.return_value = mock_session
+        
+        result = await elevenlabs_service.get_voice_info("test_voice")
+        
+        assert result["success"] is True
+        assert result["voice"] == mock_voice_info
+    
+    @pytest.mark.asyncio
+    @patch('aiohttp.ClientSession')
     async def test_synthesize_speech_success(self, mock_session_class, elevenlabs_service):
         """Test successful speech synthesis."""
         # Mock response
@@ -307,6 +353,7 @@ class TestElevenLabsService:
         assert result["audio_data"] == mock_audio_data
         assert result["content_type"] == "audio/mpeg"
         assert result["text"] == "Hello world"
+        assert result["size_bytes"] == len(mock_audio_data)
     
     @pytest.mark.asyncio
     @patch('aiohttp.ClientSession')
@@ -357,6 +404,24 @@ class TestElevenLabsService:
     
     @pytest.mark.asyncio
     @patch('aiohttp.ClientSession')
+    async def test_stream_speech_error(self, mock_session_class, elevenlabs_service):
+        """Test speech streaming with API error."""
+        # Mock response
+        mock_response = AsyncMock()
+        mock_response.status = 400
+        mock_response.text = AsyncMock(return_value="Bad request")
+        
+        # Mock session
+        mock_session = AsyncMock()
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+        mock_session_class.return_value.__aenter__.return_value = mock_session
+        
+        with pytest.raises(RuntimeError, match="API error"):
+            async for chunk in elevenlabs_service.stream_speech("Hello world"):
+                pass
+    
+    @pytest.mark.asyncio
+    @patch('aiohttp.ClientSession')
     async def test_get_user_info_success(self, mock_session_class, elevenlabs_service):
         """Test successful user info retrieval."""
         # Mock response
@@ -403,19 +468,6 @@ class TestElevenLabsService:
         assert result["models"] == mock_models
 
 
-# Integration test fixtures and helpers
-@pytest.fixture
-def mock_audio_file():
-    """Create a mock audio file for testing."""
-    return b"fake_wav_audio_data"
-
-
-@pytest.fixture
-def mock_text():
-    """Create mock text for TTS testing."""
-    return "This is a test sentence for text-to-speech synthesis."
-
-
 class TestVoiceServiceIntegration:
     """Integration tests for voice services."""
     
@@ -433,15 +485,18 @@ class TestVoiceServiceIntegration:
                     "channels": [{
                         "alternatives": [{
                             "transcript": "Integration test transcript",
-                            "confidence": 0.9
+                            "confidence": 0.9,
+                            "words": [],
+                            "paragraphs": {
+                                "paragraphs": []
+                            }
                         }]
                     }]
                 }
             }
             
-            mock_client.listen.asyncprerecorded.v.return_value.transcribe_file = AsyncMock(
-                return_value=mock_response
-            )
+            mock_transcribe = AsyncMock(return_value=mock_response)
+            mock_client.listen.asyncprerecorded.v.return_value.transcribe_file = mock_transcribe
             
             # Test service
             with patch('app.services.voice.deepgram_service.settings') as mock_settings:
@@ -488,6 +543,29 @@ class TestVoiceServiceIntegration:
                 
                 assert result["success"] is True
                 assert result["audio_data"] == mock_audio_data
+    
+    @pytest.mark.asyncio
+    async def test_service_unavailable_handling(self):
+        """Test handling when services are unavailable."""
+        # Test Deepgram service unavailable
+        with patch('app.services.voice.deepgram_service.settings') as mock_settings:
+            mock_settings.DEEPGRAM_API_KEY = "NOT_SET"
+            
+            service = DeepgramService()
+            assert not service.is_available()
+            
+            with pytest.raises(RuntimeError, match="Deepgram service not available"):
+                await service.transcribe_file(b"audio")
+        
+        # Test ElevenLabs service unavailable
+        with patch('app.services.voice.elevenlabs_service.settings') as mock_settings:
+            mock_settings.ELEVENLABS_API_KEY = "NOT_SET"
+            
+            service = ElevenLabsService()
+            assert not service.is_available()
+            
+            with pytest.raises(RuntimeError, match="ElevenLabs service not available"):
+                await service.synthesize_speech("text")
 
 
 if __name__ == "__main__":

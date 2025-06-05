@@ -1,37 +1,35 @@
 # tests/conftest_voice.py
 """
 Pytest configuration and fixtures for voice service tests.
+Updated for current voice services implementation.
 """
 import pytest
 import asyncio
 import os
-from unittest.mock import Mock, patch, AsyncMock
+import io
+from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 import tempfile
 import wave
 import struct
+import json
 
 from app.main import app
 from app.auth.auth import get_current_active_user
 from app.models.models import User
+from app.services.voice import deepgram_service, elevenlabs_service
+from app.services.voice.deepgram_service import DeepgramService, LiveTranscriptionSession
+from app.services.voice.elevenlabs_service import ElevenLabsService
 
 
-# Test configuration
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
+# Voice-specific user fixtures (extending main conftest fixtures)
 @pytest.fixture
-def mock_user():
-    """Create a comprehensive mock user for testing."""
+def voice_test_user():
+    """Create a mock user specifically optimized for voice testing."""
     user = Mock(spec=User)
     user.id = "123e4567-e89b-12d3-a456-426614174000"
-    user.email = "test@cyberiad.ai"
+    user.email = "voiceuser@cyberiad.ai"
     user.username = "voicetest"
     user.first_name = "Voice"
     user.last_name = "Tester"
@@ -39,15 +37,25 @@ def mock_user():
     user.role = "user"
     user.is_active = True
     user.is_verified = True
+    
+    # Voice-specific user preferences
+    user.voice_settings = {
+        "preferred_voice_id": "21m00Tcm4TlvDq8ikWAM",
+        "preferred_model": "eleven_turbo_v2_5",
+        "default_language": "en-US",
+        "default_stability": 0.5,
+        "default_similarity_boost": 0.5
+    }
+    
     return user
 
 
 @pytest.fixture
-def mock_admin_user():
-    """Create a mock admin user for testing."""
+def voice_admin_user():
+    """Create a mock admin user for voice testing."""
     user = Mock(spec=User)
     user.id = "987e6543-e21b-12d3-a456-426614174999"
-    user.email = "admin@cyberiad.ai"
+    user.email = "voiceadmin@cyberiad.ai"
     user.username = "voiceadmin"
     user.first_name = "Voice"
     user.last_name = "Admin"
@@ -55,28 +63,50 @@ def mock_admin_user():
     user.role = "admin"
     user.is_active = True
     user.is_verified = True
+    
+    # Admin can access all voice features
+    user.voice_permissions = {
+        "can_use_premium_voices": True,
+        "can_access_analytics": True,
+        "can_manage_voice_settings": True,
+        "unlimited_usage": True
+    }
+    
     return user
 
 
+# Voice service configuration fixtures
 @pytest.fixture
-def test_settings():
-    """Create test settings for voice services."""
+def voice_test_config():
+    """Comprehensive voice service test configuration."""
     return {
+        # Deepgram settings
         "DEEPGRAM_API_KEY": "test_deepgram_key_12345",
         "DEEPGRAM_MODEL": "nova-2",
         "DEEPGRAM_LANGUAGE": "en-US",
+        
+        # ElevenLabs settings
         "ELEVENLABS_API_KEY": "test_elevenlabs_key_67890",
         "ELEVENLABS_VOICE_ID": "21m00Tcm4TlvDq8ikWAM",
         "ELEVENLABS_MODEL": "eleven_turbo_v2_5",
         "ELEVENLABS_OUTPUT_FORMAT": "mp3_44100_128",
-        "ELEVENLABS_OPTIMIZE_STREAMING_LATENCY": 3
+        "ELEVENLABS_OPTIMIZE_STREAMING_LATENCY": 3,
+        
+        # WebSocket settings
+        "WS_HEARTBEAT_INTERVAL": 30,
+        "WS_CONNECTION_TIMEOUT": 3600,
+        
+        # API settings
+        "API_VERSION": "1.0",
+        "MAX_CONTEXT_MESSAGES": 25
     }
 
 
+# Authentication fixtures for voice endpoints
 @pytest.fixture
-def client_with_auth(mock_user):
-    """Create a test client with authentication override."""
-    app.dependency_overrides[get_current_active_user] = lambda: mock_user
+def client_with_voice_auth(voice_test_user):
+    """Create a test client with voice user authentication override."""
+    app.dependency_overrides[get_current_active_user] = lambda: voice_test_user
     
     with TestClient(app) as client:
         yield client
@@ -85,9 +115,9 @@ def client_with_auth(mock_user):
 
 
 @pytest.fixture
-def client_with_admin_auth(mock_admin_user):
-    """Create a test client with admin authentication override."""
-    app.dependency_overrides[get_current_active_user] = lambda: mock_admin_user
+def client_with_voice_admin_auth(voice_admin_user):
+    """Create a test client with voice admin authentication override."""
+    app.dependency_overrides[get_current_active_user] = lambda: voice_admin_user
     
     with TestClient(app) as client:
         yield client
@@ -96,9 +126,9 @@ def client_with_admin_auth(mock_admin_user):
 
 
 @pytest.fixture
-async def async_client_with_auth(mock_user):
-    """Create an async test client with authentication override."""
-    app.dependency_overrides[get_current_active_user] = lambda: mock_user
+async def async_client_with_voice_auth(voice_test_user):
+    """Create an async test client with voice user authentication override."""
+    app.dependency_overrides[get_current_active_user] = lambda: voice_test_user
     
     async with AsyncClient(app=app, base_url="http://test") as client:
         yield client
@@ -106,423 +136,600 @@ async def async_client_with_auth(mock_user):
     app.dependency_overrides.clear()
 
 
+# Audio file fixtures
 @pytest.fixture
 def mock_wav_file():
-    """Create a mock WAV audio file for testing."""
-    # Create a temporary WAV file with sine wave
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-        # WAV file parameters
-        sample_rate = 16000
-        duration = 1.0  # 1 second
-        frequency = 440  # A4 note
-        
-        # Generate sine wave
-        frames = int(duration * sample_rate)
-        audio_data = []
-        for i in range(frames):
-            sample = int(32767 * 0.3 * (2 ** 0.5) * 
-                        (1 + (i / frames)) * 
-                        (1 if (i // (sample_rate // frequency)) % 2 == 0 else -1))
-            audio_data.append(struct.pack('<h', sample))
-        
-        # Create WAV file
-        with wave.open(temp_file.name, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(b''.join(audio_data))
-        
-        # Read the file content
-        temp_file.seek(0)
-        audio_content = temp_file.read()
-        
-        # Clean up
-        os.unlink(temp_file.name)
-        
-        return ("test_audio.wav", audio_content, "audio/wav")
+    """Create a realistic mock WAV audio file for testing."""
+    # Create a temporary WAV file with actual audio data
+    sample_rate = 16000
+    duration = 2.0  # 2 seconds
+    frequency = 440  # A4 note
+    
+    # Generate sine wave
+    frames = int(duration * sample_rate)
+    audio_samples = []
+    
+    for i in range(frames):
+        # Generate a sine wave with some variation
+        t = i / sample_rate
+        amplitude = 16000 * 0.3
+        sample = int(amplitude * 
+                    (0.5 * (1 + (i / frames))) *  # Fade in
+                    (1 if (i // (sample_rate // frequency)) % 2 == 0 else -1))  # Square wave
+        audio_samples.append(struct.pack('<h', max(-32767, min(32767, sample))))
+    
+    # Create WAV file in memory
+    wav_buffer = io.BytesIO()
+    with wave.open(wav_buffer, 'wb') as wav_file:
+        wav_file.setnchannels(1)  # Mono
+        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(b''.join(audio_samples))
+    
+    wav_buffer.seek(0)
+    audio_content = wav_buffer.read()
+    
+    return ("test_recording.wav", audio_content, "audio/wav")
 
 
 @pytest.fixture
 def mock_mp3_file():
     """Create a mock MP3 audio file for testing."""
-    # Simple MP3 header + fake data for testing
-    mp3_header = b'\xff\xfb\x90\x00'  # Basic MP3 frame header
-    fake_mp3_data = mp3_header + b'\x00' * 1024  # 1KB of fake MP3 data
+    # Create a more realistic MP3 header and data
+    mp3_header = b'\xff\xfb\x90\x00'  # MP3 frame header
+    mp3_data = mp3_header + b'\x00' * 2048  # 2KB of MP3 data
     
-    return ("test_audio.mp3", fake_mp3_data, "audio/mpeg")
+    return ("test_audio.mp3", mp3_data, "audio/mpeg")
 
 
 @pytest.fixture
-def sample_transcription_response():
-    """Create a sample successful transcription response."""
+def mock_flac_file():
+    """Create a mock FLAC audio file for testing."""
+    # FLAC file signature and minimal data
+    flac_header = b'fLaC'
+    flac_data = flac_header + b'\x00' * 1024  # Minimal FLAC data
+    
+    return ("test_audio.flac", flac_data, "audio/flac")
+
+
+@pytest.fixture
+def large_audio_file():
+    """Create a larger mock audio file for performance testing."""
+    # Simulate 30 seconds of 16kHz mono audio
+    sample_rate = 16000
+    duration = 30.0
+    frames = int(duration * sample_rate)
+    
+    # Generate audio data (simple pattern to keep it fast)
+    audio_data = b'\x00\x01\x02\x03' * (frames // 2)  # 2 bytes per sample
+    
+    return ("large_recording.wav", audio_data, "audio/wav")
+
+
+# Voice service response fixtures
+@pytest.fixture
+def comprehensive_transcription_response():
+    """Create a comprehensive transcription response with all fields."""
     return {
         "success": True,
-        "transcript": "This is a sample transcription of the audio file.",
+        "transcript": "This is a comprehensive test transcription with multiple speakers and detailed timing information.",
         "confidence": 0.92,
         "words": [
-            {"word": "This", "start": 0.0, "end": 0.2, "confidence": 0.95},
-            {"word": "is", "start": 0.25, "end": 0.35, "confidence": 0.88},
-            {"word": "a", "start": 0.4, "end": 0.45, "confidence": 0.91},
-            {"word": "sample", "start": 0.5, "end": 0.8, "confidence": 0.93},
-            {"word": "transcription", "start": 0.85, "end": 1.4, "confidence": 0.89},
-            {"word": "of", "start": 1.45, "end": 1.55, "confidence": 0.96},
-            {"word": "the", "start": 1.6, "end": 1.7, "confidence": 0.94},
-            {"word": "audio", "start": 1.75, "end": 2.0, "confidence": 0.87},
-            {"word": "file", "start": 2.05, "end": 2.3, "confidence": 0.92}
+            {"word": "This", "start": 0.0, "end": 0.25, "confidence": 0.95, "speaker": 0},
+            {"word": "is", "start": 0.3, "end": 0.45, "confidence": 0.88, "speaker": 0},
+            {"word": "a", "start": 0.5, "end": 0.6, "confidence": 0.91, "speaker": 0},
+            {"word": "comprehensive", "start": 0.65, "end": 1.3, "confidence": 0.93, "speaker": 0},
+            {"word": "test", "start": 1.35, "end": 1.6, "confidence": 0.94, "speaker": 0},
+            {"word": "transcription", "start": 1.65, "end": 2.4, "confidence": 0.89, "speaker": 0},
+            {"word": "with", "start": 2.45, "end": 2.7, "confidence": 0.96, "speaker": 0},
+            {"word": "multiple", "start": 2.75, "end": 3.2, "confidence": 0.87, "speaker": 1},
+            {"word": "speakers", "start": 3.25, "end": 3.8, "confidence": 0.92, "speaker": 1},
+            {"word": "and", "start": 3.85, "end": 4.0, "confidence": 0.94, "speaker": 1},
+            {"word": "detailed", "start": 4.05, "end": 4.5, "confidence": 0.88, "speaker": 1},
+            {"word": "timing", "start": 4.55, "end": 4.9, "confidence": 0.91, "speaker": 1},
+            {"word": "information", "start": 4.95, "end": 5.6, "confidence": 0.85, "speaker": 1}
         ],
-        "speakers": [],
-        "paragraphs": [{
-            "text": "This is a sample transcription of the audio file.",
-            "start": 0.0,
-            "end": 2.3,
-            "speaker": None
-        }]
+        "speakers": [0, 1],
+        "paragraphs": [
+            {
+                "text": "This is a comprehensive test transcription with multiple speakers and detailed timing information.",
+                "start": 0.0,
+                "end": 5.6,
+                "speaker": 0
+            }
+        ],
+        "raw_response": {
+            "metadata": {
+                "transaction_key": "deprecated",
+                "request_id": "test-request-123",
+                "sha256": "test-hash",
+                "created": "2024-01-01T12:00:00.000Z",
+                "duration": 5.6,
+                "channels": 1,
+                "models": ["nova-2"],
+                "model_info": {
+                    "nova-2": {
+                        "name": "2-general-nova",
+                        "canonical_name": "nova-2",
+                        "architecture": "nova",
+                        "languages": ["en"],
+                        "version": "2024-01-09.29447",
+                        "uuid": "test-uuid-123",
+                        "batch": False,
+                        "streaming": False
+                    }
+                }
+            }
+        }
     }
 
 
 @pytest.fixture
-def sample_synthesis_response():
-    """Create a sample successful speech synthesis response."""
-    fake_audio_data = b'\x00\x01\x02\x03' * 256  # 1KB of fake audio data
+def high_quality_synthesis_response():
+    """Create a high-quality speech synthesis response."""
+    # Generate more realistic audio data (larger file)
+    fake_audio_data = b'\x00\x01\x02\x03\x04\x05\x06\x07' * 1024  # 8KB of fake audio
     
     return {
         "success": True,
         "audio_data": fake_audio_data,
         "content_type": "audio/mpeg",
-        "text": "This is test text for speech synthesis.",
+        "text": "This is a high-quality test synthesis with advanced voice settings and premium features.",
         "voice_id": "21m00Tcm4TlvDq8ikWAM",
-        "model_id": "eleven_turbo_v2_5",
+        "model_id": "eleven_multilingual_v2",
         "output_format": "mp3_44100_128",
         "size_bytes": len(fake_audio_data)
     }
 
 
 @pytest.fixture
-def sample_voices_response():
-    """Create a sample voices list response."""
+def elevenlabs_voices_response():
+    """Create a comprehensive ElevenLabs voices response."""
     return {
         "success": True,
         "voices": [
             {
                 "voice_id": "21m00Tcm4TlvDq8ikWAM",
                 "name": "Rachel",
+                "samples": None,
                 "category": "premade",
-                "gender": "female",
-                "age": "young_adult",
-                "accent": "american",
-                "use_case": "narration"
+                "fine_tuning": {
+                    "is_allowed_to_fine_tune": False,
+                    "finetuning_state": "not_started"
+                },
+                "labels": {
+                    "accent": "american",
+                    "description": "calm",
+                    "age": "young",
+                    "gender": "female",
+                    "use_case": "narration"
+                },
+                "description": "A calm, soothing voice perfect for narration and audiobooks.",
+                "preview_url": "https://storage.googleapis.com/eleven-public-prod/premade/voices/21m00Tcm4TlvDq8ikWAM/test.mp3",
+                "available_for_tiers": ["free", "starter", "creator", "pro"],
+                "settings": None,
+                "sharing": None,
+                "high_quality_base_model_ids": ["eleven_multilingual_v2"]
             },
             {
                 "voice_id": "AZnzlk1XvdvUeBnXmlld",
                 "name": "Domi",
+                "samples": None,
                 "category": "premade",
-                "gender": "female",
-                "age": "young_adult",
-                "accent": "american",
-                "use_case": "conversation"
+                "fine_tuning": {
+                    "is_allowed_to_fine_tune": False,
+                    "finetuning_state": "not_started"
+                },
+                "labels": {
+                    "accent": "american",
+                    "description": "strong",
+                    "age": "young",
+                    "gender": "female",
+                    "use_case": "conversation"
+                },
+                "description": "A strong, confident voice ideal for conversational applications.",
+                "preview_url": "https://storage.googleapis.com/eleven-public-prod/premade/voices/AZnzlk1XvdvUeBnXmlld/test.mp3",
+                "available_for_tiers": ["free", "starter", "creator", "pro"],
+                "settings": None,
+                "sharing": None,
+                "high_quality_base_model_ids": ["eleven_multilingual_v2"]
             },
             {
-                "voice_id": "EXAVITQu4vr4xnSDxMaL",
-                "name": "Bella",
-                "category": "premade",
-                "gender": "female",
-                "age": "young_adult",
-                "accent": "american",
-                "use_case": "narration"
+                "voice_id": "custom_voice_123",
+                "name": "Custom Business Voice",
+                "samples": None,
+                "category": "cloned",
+                "fine_tuning": {
+                    "is_allowed_to_fine_tune": True,
+                    "finetuning_state": "fine_tuned"
+                },
+                "labels": {
+                    "accent": "british",
+                    "description": "professional",
+                    "age": "middle_aged",
+                    "gender": "male",
+                    "use_case": "business"
+                },
+                "description": "A professional British male voice for business applications.",
+                "preview_url": None,
+                "available_for_tiers": ["pro"],
+                "settings": {
+                    "stability": 0.75,
+                    "similarity_boost": 0.85,
+                    "style": 0.1,
+                    "use_speaker_boost": True
+                },
+                "sharing": {
+                    "status": "private",
+                    "history_item_sample_id": None,
+                    "original_voice_id": None,
+                    "public_owner_id": None,
+                    "liked_by_count": 0,
+                    "cloned_by_count": 0
+                },
+                "high_quality_base_model_ids": ["eleven_multilingual_v2"]
             }
         ]
     }
 
 
 @pytest.fixture
-def sample_models_response():
-    """Create a sample models list response."""
+def elevenlabs_models_response():
+    """Create a comprehensive ElevenLabs models response."""
     return {
         "success": True,
         "models": [
             {
-                "model_id": "eleven_turbo_v2",
-                "name": "Turbo v2",
-                "description": "Fastest model, optimized for real-time applications",
-                "languages": ["en"],
-                "max_characters": 500
-            },
-            {
                 "model_id": "eleven_turbo_v2_5",
                 "name": "Turbo v2.5",
-                "description": "Enhanced version with better quality",
-                "languages": ["en"],
-                "max_characters": 500
+                "can_be_finetuned": False,
+                "can_do_text_to_speech": True,
+                "can_do_voice_conversion": False,
+                "can_use_style": True,
+                "can_use_speaker_boost": True,
+                "serves_pro_voices": False,
+                "token_cost_factor": 1.0,
+                "description": "Our fastest model, optimized for real-time applications with low latency.",
+                "language": {
+                    "language_id": "en",
+                    "name": "English"
+                },
+                "max_characters_request_free_user": 500,
+                "max_characters_request_subscribed_user": 5000,
+                "maximum_text_length_per_request": 5000
             },
             {
                 "model_id": "eleven_multilingual_v2",
                 "name": "Multilingual v2",
-                "description": "Supports multiple languages",
-                "languages": ["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh", "ja", "hi", "ko"],
-                "max_characters": 500
+                "can_be_finetuned": True,
+                "can_do_text_to_speech": True,
+                "can_do_voice_conversion": True,
+                "can_use_style": True,
+                "can_use_speaker_boost": True,
+                "serves_pro_voices": True,
+                "token_cost_factor": 1.0,
+                "description": "Our most advanced model supporting 29 languages with the highest quality output.",
+                "language": {
+                    "language_id": "multi",
+                    "name": "Multilingual"
+                },
+                "max_characters_request_free_user": 500,
+                "max_characters_request_subscribed_user": 5000,
+                "maximum_text_length_per_request": 5000
+            },
+            {
+                "model_id": "eleven_turbo_v2",
+                "name": "Turbo v2",
+                "can_be_finetuned": False,
+                "can_do_text_to_speech": True,
+                "can_do_voice_conversion": False,
+                "can_use_style": False,
+                "can_use_speaker_boost": True,
+                "serves_pro_voices": False,
+                "token_cost_factor": 0.5,
+                "description": "Fast and efficient model for basic text-to-speech applications.",
+                "language": {
+                    "language_id": "en",
+                    "name": "English"
+                },
+                "max_characters_request_free_user": 1000,
+                "max_characters_request_subscribed_user": 10000,
+                "maximum_text_length_per_request": 10000
             }
         ]
     }
 
 
 @pytest.fixture
-def sample_user_info_response():
-    """Create a sample user info response from ElevenLabs."""
+def elevenlabs_user_info_response():
+    """Create a comprehensive user info response from ElevenLabs."""
     return {
         "success": True,
         "user_info": {
             "subscription": {
-                "tier": "starter",
-                "character_count": 1500,
-                "character_limit": 10000,
+                "tier": "creator",
+                "character_count": 15432,
+                "character_limit": 100000,
                 "can_extend_character_limit": True,
                 "allowed_to_extend_character_limit": True,
-                "next_character_count_reset_unix": 1703980800,
-                "voice_limit": 10,
-                "max_voice_add_edits": 10,
-                "voice_add_edit_counter": 0,
-                "professional_voice_limit": 1,
-                "can_extend_voice_limit": False,
+                "next_character_count_reset_unix": 1735689600,  # 2025-01-01
+                "voice_limit": 30,
+                "max_voice_add_edits": 50,
+                "voice_add_edit_counter": 12,
+                "professional_voice_limit": 5,
+                "can_extend_voice_limit": True,
                 "can_use_instant_voice_cloning": True,
                 "can_use_professional_voice_cloning": True,
+                "can_use_speech_to_speech": True,
+                "can_use_voice_conversion": True,
                 "currency": "usd",
-                "status": "active"
+                "status": "active",
+                "billing_period": "monthly_period",
+                "character_refresh_period": "monthly_period",
+                "next_invoice_date": "2025-02-01",
+                "invoice_total_characters": 100000
             },
             "is_new_user": False,
-            "xi_api_key": "redacted",
-            "can_use_delayed_payment_methods": False
+            "xi_api_key": "test_key_redacted",
+            "can_use_delayed_payment_methods": True,
+            "is_onboarding_completed": True,
+            "is_onboarding_checklist_completed": True,
+            "first_name": "Voice",
+            "last_name": "Tester",
+            "profile_picture_url": None
         }
     }
 
 
+# Service mocking fixtures
 @pytest.fixture
-def mock_deepgram_client():
-    """Create a mock Deepgram client for testing."""
-    client = Mock()
+def mock_deepgram_service():
+    """Create a comprehensive mock Deepgram service."""
+    mock_service = Mock(spec=DeepgramService)
+    mock_service.is_available.return_value = True
     
-    # Mock prerecorded transcription
-    mock_prerecorded = Mock()
-    mock_response = Mock()
-    mock_response.to_dict.return_value = {
-        "results": {
-            "channels": [{
-                "alternatives": [{
-                    "transcript": "Mock transcription result",
-                    "confidence": 0.95,
-                    "words": []
-                }]
-            }]
-        }
-    }
-    mock_prerecorded.transcribe_file = AsyncMock(return_value=mock_response)
-    client.listen.asyncprerecorded.v.return_value = mock_prerecorded
+    # Mock file transcription
+    mock_service.transcribe_file = AsyncMock(return_value={
+        "success": True,
+        "transcript": "Mock transcription result from Deepgram service",
+        "confidence": 0.95,
+        "words": [
+            {"word": "Mock", "start": 0.0, "end": 0.3, "confidence": 0.95},
+            {"word": "transcription", "start": 0.35, "end": 1.0, "confidence": 0.94},
+            {"word": "result", "start": 1.05, "end": 1.4, "confidence": 0.96}
+        ],
+        "speakers": [],
+        "paragraphs": [{
+            "text": "Mock transcription result from Deepgram service",
+            "start": 0.0,
+            "end": 1.4
+        }],
+        "raw_response": {}
+    })
     
     # Mock live transcription
-    mock_live_connection = Mock()
-    mock_live_connection.start = AsyncMock(return_value=True)
-    mock_live_connection.send = AsyncMock()
-    mock_live_connection.finish = AsyncMock()
-    mock_live_connection.on = Mock()
-    client.listen.asynclive.v.return_value = mock_live_connection
+    mock_session = Mock(spec=LiveTranscriptionSession)
+    mock_session.start = AsyncMock()
+    mock_session.send_audio = AsyncMock()
+    mock_session.finish = AsyncMock()
+    mock_session.is_connected = True
     
-    return client
+    mock_service.start_live_transcription = AsyncMock(return_value=mock_session)
+    
+    return mock_service
 
 
 @pytest.fixture
-def mock_aiohttp_session():
-    """Create a mock aiohttp session for ElevenLabs testing."""
-    session = AsyncMock()
+def mock_elevenlabs_service():
+    """Create a comprehensive mock ElevenLabs service."""
+    mock_service = Mock(spec=ElevenLabsService)
+    mock_service.is_available.return_value = True
     
-    # Mock successful responses
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.json = AsyncMock(return_value={"success": True})
-    mock_response.read = AsyncMock(return_value=b"fake_audio_data")
-    mock_response.text = AsyncMock(return_value="Success")
-    mock_response.headers = {"content-type": "audio/mpeg"}
+    # Mock speech synthesis
+    fake_audio_data = b"mock_audio_data" * 100
+    mock_service.synthesize_speech = AsyncMock(return_value={
+        "success": True,
+        "audio_data": fake_audio_data,
+        "content_type": "audio/mpeg",
+        "text": "Mock synthesis text",
+        "voice_id": "21m00Tcm4TlvDq8ikWAM",
+        "model_id": "eleven_turbo_v2_5",
+        "output_format": "mp3_44100_128",
+        "size_bytes": len(fake_audio_data)
+    })
     
-    # Mock streaming response
-    async def mock_iter_chunked(chunk_size):
-        chunks = [b"chunk1", b"chunk2", b"chunk3"]
+    # Mock speech streaming
+    async def mock_stream_speech(*args, **kwargs):
+        chunks = [b"chunk1", b"chunk2", b"chunk3", b"final_chunk"]
         for chunk in chunks:
             yield chunk
     
-    mock_response.content.iter_chunked = mock_iter_chunked
+    mock_service.stream_speech = mock_stream_speech
     
-    session.get.return_value.__aenter__.return_value = mock_response
-    session.post.return_value.__aenter__.return_value = mock_response
+    # Mock metadata methods
+    mock_service.get_voices = AsyncMock(return_value={
+        "success": True,
+        "voices": [{"voice_id": "test_voice", "name": "Test Voice"}]
+    })
     
-    return session
+    mock_service.get_voice_info = AsyncMock(return_value={
+        "success": True,
+        "voice": {"voice_id": "test_voice", "name": "Test Voice"}
+    })
+    
+    mock_service.get_models = AsyncMock(return_value={
+        "success": True,
+        "models": [{"model_id": "test_model", "name": "Test Model"}]
+    })
+    
+    mock_service.get_user_info = AsyncMock(return_value={
+        "success": True,
+        "user_info": {"subscription": {"tier": "free"}}
+    })
+    
+    return mock_service
 
 
-# Parametrized test fixtures
-@pytest.fixture(params=[
-    ("audio/wav", "audio/wav"),
-    ("audio/mp3", "audio/mpeg"),
-    ("audio/mpeg", "audio/mpeg"),
-    ("audio/flac", "audio/flac"),
-    ("audio/ogg", "audio/ogg")
-])
-def audio_format_params(request):
-    """Parametrized fixture for different audio formats."""
-    return request.param
+@pytest.fixture
+def mock_voice_services(mock_deepgram_service, mock_elevenlabs_service):
+    """Mock both voice services together."""
+    with patch('app.services.voice.deepgram_service', mock_deepgram_service), \
+         patch('app.services.voice.elevenlabs_service', mock_elevenlabs_service):
+        yield {
+            'deepgram': mock_deepgram_service,
+            'elevenlabs': mock_elevenlabs_service
+        }
 
 
-@pytest.fixture(params=[
-    {"stability": 0.5, "similarity_boost": 0.5, "style": 0.0, "use_speaker_boost": True},
-    {"stability": 0.8, "similarity_boost": 0.7, "style": 0.2, "use_speaker_boost": False},
-    {"stability": 0.3, "similarity_boost": 0.3, "style": 0.5, "use_speaker_boost": True},
-    {"stability": 1.0, "similarity_boost": 1.0, "style": 1.0, "use_speaker_boost": False}
-])
-def voice_settings_params(request):
-    """Parametrized fixture for different voice settings."""
-    return request.param
+# WebSocket testing fixtures
+@pytest.fixture
+def mock_websocket():
+    """Create a mock WebSocket connection for testing."""
+    websocket = AsyncMock()
+    websocket.accept = AsyncMock()
+    websocket.send_json = AsyncMock()
+    websocket.send_bytes = AsyncMock()
+    websocket.receive = AsyncMock()
+    websocket.receive_json = AsyncMock()
+    websocket.receive_bytes = AsyncMock()
+    websocket.close = AsyncMock()
+    
+    # Add realistic message simulation
+    websocket.messages = []
+    
+    def add_message(msg):
+        websocket.messages.append(msg)
+    
+    websocket.add_test_message = add_message
+    
+    return websocket
 
 
-@pytest.fixture(params=[
-    "mp3_44100_128",
-    "mp3_44100_64",
-    "mp3_22050_32",
-    "pcm_16000",
-    "pcm_22050",
-    "pcm_24000",
-    "pcm_44100"
-])
-def output_format_params(request):
-    """Parametrized fixture for different output formats."""
-    return request.param
-
-
-# Cleanup fixtures
-@pytest.fixture(autouse=True)
-def cleanup_test_files():
-    """Automatically clean up any test files created during testing."""
-    yield
-    # Cleanup code would go here if needed
-    pass
+@pytest.fixture
+def websocket_auth_token(voice_test_user):
+    """Create a valid WebSocket authentication token."""
+    from app.auth.auth import AuthService
+    
+    token = AuthService.create_access_token(
+        data={
+            "sub": voice_test_user.id,
+            "email": voice_test_user.email,
+            "role": voice_test_user.role
+        }
+    )
+    return token
 
 
 # Performance testing fixtures
 @pytest.fixture
-def performance_test_text():
-    """Create text of various lengths for performance testing."""
-    base_text = "This is a test sentence for performance evaluation. "
+def performance_text_samples():
+    """Create text samples of various lengths for performance testing."""
+    base_text = "This is a comprehensive performance test sentence with multiple words and complex punctuation. "
+    
     return {
+        "tiny": "Hello world!",
         "short": base_text,
-        "medium": base_text * 10,  # ~500 characters
-        "long": base_text * 50,    # ~2500 characters
-        "very_long": base_text * 100  # ~5000 characters
+        "medium": base_text * 5,    # ~500 characters
+        "long": base_text * 20,     # ~2000 characters  
+        "very_long": base_text * 50, # ~5000 characters
+        "extreme": base_text * 100   # ~10000 characters
     }
-
-
-@pytest.fixture
-def large_audio_file():
-    """Create a larger mock audio file for performance testing."""
-    # Simulate 10 seconds of audio data
-    sample_rate = 16000
-    duration = 10.0
-    frames = int(duration * sample_rate)
-    
-    # Generate basic audio data
-    audio_data = b'\x00\x01' * frames  # Simple pattern
-    
-    return ("large_audio.wav", audio_data, "audio/wav")
 
 
 # Error simulation fixtures
 @pytest.fixture
-def mock_network_error():
-    """Create a mock network error for testing error handling."""
-    import aiohttp
-    return aiohttp.ClientError("Network connection failed")
-
-
-@pytest.fixture
-def mock_api_rate_limit_error():
-    """Create a mock API rate limit error."""
+def mock_api_errors():
+    """Create various API error responses for testing error handling."""
     return {
-        "success": False,
-        "error": "Rate limit exceeded. Please try again later."
+        "network_error": Exception("Network connection failed"),
+        "rate_limit": {
+            "success": False,
+            "error": "Rate limit exceeded. Please try again in 60 seconds."
+        },
+        "quota_exceeded": {
+            "success": False,
+            "error": "Monthly character quota exceeded. Please upgrade your plan."
+        },
+        "invalid_voice": {
+            "success": False,
+            "error": "Voice ID not found or not accessible with current subscription."
+        },
+        "audio_too_long": {
+            "success": False,
+            "error": "Audio file is too long. Maximum duration is 10 minutes."
+        },
+        "unsupported_format": {
+            "success": False,
+            "error": "Unsupported audio format. Please use WAV, MP3, or FLAC."
+        },
+        "api_key_invalid": {
+            "success": False,
+            "error": "Invalid API key. Please check your authentication credentials."
+        }
     }
 
 
-@pytest.fixture
-def mock_api_quota_error():
-    """Create a mock API quota exceeded error."""
-    return {
-        "success": False,
-        "error": "Character quota exceeded for this month."
-    }
-
-
-# Utility functions for tests
-def create_mock_websocket_message(message_type: str, data: dict = None):
-    """Helper function to create mock WebSocket messages."""
-    message = {"type": message_type}
+# Utility functions
+def create_websocket_message(msg_type: str, data: dict = None, binary_data: bytes = None):
+    """Helper function to create WebSocket test messages."""
+    if binary_data:
+        return {"type": "websocket.receive", "bytes": binary_data}
+    
+    message = {"type": msg_type}
     if data:
         message.update(data)
-    return message
-
-
-def assert_audio_response_headers(response, expected_content_type: str = "audio/mpeg"):
-    """Helper function to assert audio response headers."""
-    assert response.headers["content-type"] == expected_content_type
-    assert "content-length" in response.headers or "transfer-encoding" in response.headers
     
-    # Check for custom headers
-    custom_headers = ["X-Text-Length", "X-Voice-ID", "X-Model-ID", "X-Output-Format"]
-    for header in custom_headers:
-        if header in response.headers:
-            assert response.headers[header] is not None
+    return {"type": "websocket.receive", "text": json.dumps(message)}
 
 
-def assert_transcription_response(response_data: dict):
-    """Helper function to assert transcription response structure."""
-    required_fields = ["success", "transcript", "confidence", "words", "speakers", "paragraphs"]
-    for field in required_fields:
-        assert field in response_data
+def assert_voice_response_format(response_data: dict, response_type: str = "transcription"):
+    """Helper function to assert voice response formats."""
+    assert "success" in response_data
     
-    if response_data["success"]:
-        assert isinstance(response_data["transcript"], str)
-        assert isinstance(response_data["confidence"], (int, float))
-        assert isinstance(response_data["words"], list)
-        assert isinstance(response_data["speakers"], list)
-        assert isinstance(response_data["paragraphs"], list)
-
-
-def assert_synthesis_response(response_data: dict):
-    """Helper function to assert synthesis response structure."""
-    required_fields = ["success", "audio_data", "content_type", "text", "voice_id", "model_id"]
-    for field in required_fields:
-        assert field in response_data
+    if response_type == "transcription":
+        if response_data["success"]:
+            required_fields = ["transcript", "confidence", "words", "speakers", "paragraphs"]
+            for field in required_fields:
+                assert field in response_data
     
-    if response_data["success"]:
-        assert isinstance(response_data["audio_data"], bytes)
-        assert len(response_data["audio_data"]) > 0
-        assert response_data["content_type"].startswith("audio/")
+    elif response_type == "synthesis":
+        if response_data["success"]:
+            required_fields = ["audio_data", "content_type", "text", "voice_id", "model_id"]
+            for field in required_fields:
+                assert field in response_data
+            assert len(response_data["audio_data"]) > 0
 
 
-# Test markers
-def pytest_configure(config):
-    """Configure custom pytest markers."""
-    config.addinivalue_line(
-        "markers", "voice: mark test as a voice service test"
-    )
-    config.addinivalue_line(
-        "markers", "stt: mark test as a speech-to-text test"
-    )
-    config.addinivalue_line(
-        "markers", "tts: mark test as a text-to-speech test"
-    )
-    config.addinivalue_line(
-        "markers", "websocket: mark test as a WebSocket test"
-    )
-    config.addinivalue_line(
-        "markers", "integration: mark test as an integration test"
-    )
-    config.addinivalue_line(
-        "markers", "performance: mark test as a performance test"
-    )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow running"
-    )
+def create_realistic_audio_data(duration_seconds: float = 1.0, sample_rate: int = 16000) -> bytes:
+    """Helper function to create realistic audio data for testing."""
+    frames = int(duration_seconds * sample_rate)
+    audio_samples = []
+    
+    for i in range(frames):
+        # Simple sine wave
+        t = i / sample_rate
+        frequency = 440  # A4 note
+        sample = int(16000 * 0.3 * (2 ** 0.5) * (1 + (i / frames)) * 
+                    (1 if (i // (sample_rate // frequency)) % 2 == 0 else -1))
+        audio_samples.append(struct.pack('<h', max(-32767, min(32767, sample))))
+    
+    return b''.join(audio_samples)
+
+
+# Cleanup and teardown
+@pytest.fixture(autouse=True)
+async def voice_test_cleanup():
+    """Automatically clean up voice test resources."""
+    yield
+    
+    # Clean up any test files, connections, etc.
+    try:
+        # Clear any mock patches
+        if hasattr(patch, '_active_patches'):
+            for active_patch in patch._active_patches[:]:
+                try:
+                    active_patch.stop()
+                except:
+                    pass
+    except:
+        pass
