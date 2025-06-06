@@ -38,19 +38,15 @@ export interface Message {
 
 export interface MessageResponse {
   id: string;
+  conversation_id: string;
   content: string;
-  created_at: string;
-  participant_id?: string;
-  agent_id?: string;
+  message_type: string;
+  user_id?: string;
   agent_type?: string;
-  message_info?: {
-    is_owner?: boolean;
-    participant_name?: string;
-    participant_email?: string;
-    source?: string;
-    file_name?: string;
-    file_type?: string;
-    file_size?: number;
-    [key: string]: unknown;
-  };
+  participant_id?: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+  updated_at?: string;
+  sender_name?: string;
+  sender_type?: string;
 }

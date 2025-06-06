@@ -28,28 +28,34 @@ const transformMessageResponse = (msg: MessageResponse): Message => {
     senderType = msg.agent_type === 'MODERATOR' ? 'moderator' : 'agent';
     // Use agent type or fallback to 'Agent'
     senderName = msg.agent_type || 'Agent';
+    senderEmail = `${msg.agent_type?.toLowerCase()}@thanotopolis.local`;
   }
-  // Check if this is a participant/user message by looking for participant_id
+  // Check if this is a user message by looking for user_id
+  else if (msg.user_id) {
+    // Check for owner status from sender_type or derived from context
+    isOwner = msg.sender_type === 'user' || true; // Default to true for user messages
+    senderType = 'user';
+    
+    // Use sender_name from backend or fallback
+    senderName = msg.sender_name || 'User';
+    senderEmail = ''; // Will be set from context if available
+  }
+  // Check if this is a participant message by looking for participant_id
   else if (msg.participant_id) {
-    // Check for owner status in message_info
-    isOwner = msg.message_info?.is_owner === true;
+    // Check for owner status in message_info or metadata
+    isOwner = (msg.metadata as any)?.is_owner === true;
     senderType = 'user';
     
     // Extract participant name, fallback to email or Unknown
-    senderName = msg.message_info?.participant_name || 
-                 msg.message_info?.participant_email ||
-                 'Unknown';
-                 
-    // Extract email
-    senderEmail = msg.message_info?.participant_email || '';
-  } 
-  // Check if this is an agent message through agent_id
-  else if (msg.agent_id) {
+    senderName = msg.sender_name || 'Participant';
+    senderEmail = ''; // Will be extracted from metadata if available
+  }
+  // Fallback to system message
+  else {
     isOwner = false;
-    // Set appropriate sender type based on agent type
-    senderType = msg.message_info?.source === 'MODERATOR' ? 'moderator' : 'agent';
-    // Use agent type or fallback to 'Agent'
-    senderName = msg.message_info?.source || 'Agent';
+    senderType = 'system';
+    senderName = 'System';
+    senderEmail = 'system@thanotopolis.local';
   }
 
   const transformed: Message = {
@@ -57,20 +63,13 @@ const transformMessageResponse = (msg: MessageResponse): Message => {
     content: msg.content,
     timestamp: msg.created_at,
     sender: {
-      identifier: senderEmail || msg.participant_id || msg.agent_id || 'unknown',
+      identifier: senderEmail || msg.user_id || msg.participant_id || msg.agent_type || 'unknown',
       is_owner: isOwner,
       name: senderName,
       email: senderEmail,
       type: senderType
     },
-    message_info: {
-      // Copy message_info fields or create empty object
-      ...(msg.message_info || {}),
-      is_file: Boolean(msg.message_info?.file_name),
-      file_name: msg.message_info?.file_name,
-      file_type: msg.message_info?.file_type,
-      file_size: msg.message_info?.file_size
-    },
+    message_metadata: msg.metadata,
     // Add agent_type to the message if it exists
     agent_type: msg.agent_type
   };

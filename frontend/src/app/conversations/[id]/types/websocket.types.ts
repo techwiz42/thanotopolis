@@ -15,8 +15,11 @@ export interface MessageWebSocketMessage extends BaseWebSocketMessage {
   agent_type?: string;
   name?: string;
   email?: string;
+  sender_name?: string;
+  sender_type?: string;
   timestamp: string;
   message_metadata?: MessageMetadata;
+  agent_metadata?: MessageMetadata;
 }
 
 export interface TypingStatusMessage extends BaseWebSocketMessage {

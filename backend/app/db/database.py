@@ -58,8 +58,9 @@ async def check_db_connection():
     """Check if database connection is working."""
     try:
         # Try to execute a simple query
+        from sqlalchemy import text
         async with AsyncSessionLocal() as session:
-            await session.execute("SELECT 1")
+            await session.execute(text("SELECT 1"))
         return True
     except Exception as e:
         print(f"Database connection check failed: {e}")

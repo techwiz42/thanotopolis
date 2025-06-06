@@ -97,13 +97,13 @@ export const useWebSocket = ({
                                 sender: {
                                     identifier: message.identifier,
                                     is_owner: message.is_owner || false,
-                                    name: message.agent_type || message.name || '',
+                                    name: message.agent_type || message.sender_name || message.name || '',
                                     email: message.email || '',
-                                    type: message.agent_type ? 'agent' : 'user',
-                                    message_metadata: message.message_metadata || undefined
+                                    type: message.sender_type === 'agent' || message.agent_type ? 'agent' : 'user',
+                                    message_metadata: message.agent_metadata || message.message_metadata || undefined
                                 },
                                 timestamp: message.timestamp,
-                                message_metadata: message.message_metadata || undefined,
+                                message_metadata: message.agent_metadata || message.message_metadata || undefined,
                                 agent_type: message.agent_type  // Add agent_type to top level for easier access
                             };
                             onMessage(transformedMessage);
