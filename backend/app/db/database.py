@@ -13,8 +13,24 @@ DATABASE_URL = settings.DATABASE_URL if hasattr(settings, 'DATABASE_URL') else o
     "postgresql+asyncpg://user:password@localhost/thanotopolis"
 )
 
-engine = create_async_engine(DATABASE_URL)
-AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+# Configure engine with connection pooling for 100+ concurrent users
+# Each user might have 2-3 connections (websocket + API calls)
+engine = create_async_engine(
+    DATABASE_URL,
+    pool_size=50,          # Base pool size
+    max_overflow=100,      # Additional connections beyond pool_size
+    pool_timeout=30,       # Timeout waiting for connection from pool
+    pool_recycle=3600,     # Recycle connections after 1 hour
+    pool_pre_ping=True,    # Validate connections before use
+    echo=False             # Set to True for SQL debugging
+)
+
+AsyncSessionLocal = async_sessionmaker(
+    autocommit=False, 
+    autoflush=False, 
+    bind=engine, 
+    expire_on_commit=False
+)
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Async dependency to get database session."""

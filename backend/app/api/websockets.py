@@ -15,7 +15,7 @@ import traceback
 from app.auth.auth import get_current_user, get_tenant_from_request
 from app.core.config import settings
 from app.core.buffer_manager import buffer_manager
-from app.db.database import get_db
+from app.db.database import get_db, get_db_context
 from app.models.models import (
     User, Tenant, Message, Conversation, ConversationAgent, 
     ConversationUser, MessageType
@@ -108,11 +108,24 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[UUID, Dict[str, WebSocket]] = {}
         self.user_connections: Dict[str, Set[UUID]] = {}
+        self.connection_timestamps: Dict[str, datetime] = {}
         self.lock = asyncio.Lock()
+        self.max_connections_per_user = 10  # Prevent abuse
+        self.connection_timeout = 300  # 5 minutes without activity
     
     async def connect(self, websocket: WebSocket, conversation_id: UUID, user_email: str) -> str:
         """Register a new connection"""
         async with self.lock:
+            # Check connection limits per user
+            user_connection_count = sum(
+                len(conversations) for email, conversations in self.user_connections.items() 
+                if email == user_email
+            )
+            
+            if user_connection_count >= self.max_connections_per_user:
+                logger.warning(f"User {user_email} has reached connection limit: {user_connection_count}")
+                raise HTTPException(status_code=429, detail="Too many connections")
+            
             connection_id = str(uuid4())
             
             # Initialize conversation connections if needed
@@ -121,13 +134,14 @@ class ConnectionManager:
             
             # Add connection
             self.active_connections[conversation_id][connection_id] = websocket
+            self.connection_timestamps[connection_id] = datetime.utcnow()
             
             # Track user connections
             if user_email not in self.user_connections:
                 self.user_connections[user_email] = set()
             self.user_connections[user_email].add(conversation_id)
             
-            logger.info(f"Connected: {user_email} to conversation {conversation_id}")
+            logger.info(f"Connected: {user_email} to conversation {conversation_id} (total connections: {len(self.connection_timestamps)})")
             return connection_id
     
     async def disconnect(self, conversation_id: UUID, connection_id: str, user_email: str):
@@ -149,7 +163,10 @@ class ConnectionManager:
                 if not self.user_connections[user_email]:
                     del self.user_connections[user_email]
             
-            logger.info(f"Disconnected: {user_email} from conversation {conversation_id}")
+            # Clean up connection timestamp
+            self.connection_timestamps.pop(connection_id, None)
+            
+            logger.info(f"Disconnected: {user_email} from conversation {conversation_id} (total connections: {len(self.connection_timestamps)})")
     
     async def broadcast(self, conversation_id: UUID, message: dict):
         """Broadcast message to all connections in a conversation"""
@@ -178,6 +195,44 @@ class ConnectionManager:
             
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+    
+    async def cleanup_stale_connections(self):
+        """Remove connections that have been inactive for too long"""
+        async with self.lock:
+            current_time = datetime.utcnow()
+            stale_connections = []
+            
+            for conn_id, timestamp in self.connection_timestamps.items():
+                if (current_time - timestamp).total_seconds() > self.connection_timeout:
+                    stale_connections.append(conn_id)
+            
+            for conn_id in stale_connections:
+                logger.info(f"Cleaning up stale connection: {conn_id}")
+                # Find and remove the stale connection
+                for conversation_id, connections in self.active_connections.items():
+                    if conn_id in connections:
+                        connections.pop(conn_id, None)
+                        if not connections:
+                            del self.active_connections[conversation_id]
+                        break
+                
+                self.connection_timestamps.pop(conn_id, None)
+            
+            if stale_connections:
+                logger.info(f"Cleaned up {len(stale_connections)} stale connections")
+    
+    def get_connection_stats(self) -> dict:
+        """Get connection statistics"""
+        total_connections = len(self.connection_timestamps)
+        total_conversations = len(self.active_connections)
+        total_users = len(self.user_connections)
+        
+        return {
+            "total_connections": total_connections,
+            "total_conversations": total_conversations,
+            "total_users": total_users,
+            "max_connections_per_user": self.max_connections_per_user
+        }
 
 # Create singleton instance
 connection_manager = ConnectionManager()
@@ -472,8 +527,7 @@ async def _handle_user_message(
 async def websocket_endpoint(
     websocket: WebSocket,
     conversation_id: UUID,
-    token: str,
-    db: AsyncSession = Depends(get_db)
+    token: str
 ):
     """Main WebSocket endpoint for conversations"""
     connection_id = None
@@ -484,17 +538,19 @@ async def websocket_endpoint(
         await websocket.accept()
         logger.info(f"WebSocket connection accepted for conversation {conversation_id}")
         
-        # Authenticate
-        user = await authenticate_websocket(token, db)
-        if not user:
-            logger.error("WebSocket authentication failed")
-            await websocket.send_json({
-                "type": "error",
-                "content": "Authentication failed",
-                "timestamp": datetime.utcnow().isoformat()
-            })
-            await websocket.close(code=4001, reason="Authentication failed")
-            return
+        # Authenticate using a discrete database session
+        from app.db.database import get_db_context
+        async with get_db_context() as db:
+            user = await authenticate_websocket(token, db)
+            if not user:
+                logger.error("WebSocket authentication failed")
+                await websocket.send_json({
+                    "type": "error",
+                    "content": "Authentication failed",
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+                await websocket.close(code=4001, reason="Authentication failed")
+                return
         
         logger.info(f"User {user.email} authenticated for WebSocket")
         
@@ -516,27 +572,28 @@ async def websocket_endpoint(
         }
         await websocket.send_json(welcome_message)
         
-        # Fetch and send previous messages
+        # Fetch and send previous messages using a discrete database session
         try:
             # Get recent messages from the database
             from sqlalchemy import select
             from app.models.models import Message
             
-            # Query for all messages with no limit
-            logger.info(f"Fetching all messages for conversation {conversation_id}")
-            message_query = (
-                select(Message)
-                .options(
-                    joinedload(Message.user),
-                    joinedload(Message.participant)
+            async with get_db_context() as db:
+                # Query for all messages with no limit
+                logger.info(f"Fetching all messages for conversation {conversation_id}")
+                message_query = (
+                    select(Message)
+                    .options(
+                        joinedload(Message.user),
+                        joinedload(Message.participant)
+                    )
+                    .where(Message.conversation_id == conversation_id)
+                    .order_by(Message.created_at)
+                    # No limit - retrieve all messages
                 )
-                .where(Message.conversation_id == conversation_id)
-                .order_by(Message.created_at)
-                # No limit - retrieve all messages
-            )
-            message_result = await db.execute(message_query)
-            messages = message_result.scalars().all()
-            logger.info(f"Found {len(messages)} messages for conversation {conversation_id}")
+                message_result = await db.execute(message_query)
+                messages = message_result.scalars().all()
+                logger.info(f"Found {len(messages)} messages for conversation {conversation_id}")
             
             # Send historical messages to the newly connected client
             for msg in messages:
@@ -623,6 +680,7 @@ async def websocket_endpoint(
                         user_email = msg.user.email
                     else:
                         # Query for user info if not loaded through joinedload
+                        # Note: This runs inside the existing db context above
                         from app.models.models import User
                         user_query = select(User).where(User.id == msg.user_id)
                         user_result = await db.execute(user_query)
@@ -638,6 +696,7 @@ async def websocket_endpoint(
                     if msg.participant:
                         sender_name = msg.participant.name or msg.participant.identifier
                     else:
+                        # Note: This runs inside the existing db context above
                         from app.models.models import Participant
                         part_query = select(Participant).where(Participant.id == msg.participant_id)
                         part_result = await db.execute(part_query)
@@ -735,7 +794,9 @@ async def websocket_endpoint(
                 if message_type == "message":
                     content = message.get("content")
                     if content:
-                        await _handle_user_message(db, conversation_id, user, content)
+                        # Use discrete database session for message handling
+                        async with get_db_context() as db:
+                            await _handle_user_message(db, conversation_id, user, content)
                 
                 elif message_type == "typing_status":
                     is_typing = message.get("is_typing", False)
@@ -819,11 +880,19 @@ async def get_active_users(
         "timestamp": datetime.utcnow().isoformat()
     }
 
+@router.get("/websocket/stats")
+async def get_websocket_stats(
+    current_user: User = Depends(get_current_user)
+):
+    """Get WebSocket connection statistics"""
+    stats = connection_manager.get_connection_stats()
+    stats["timestamp"] = datetime.utcnow().isoformat()
+    return stats
+
 @router.websocket("/ws/notifications")
 async def websocket_notifications(
     websocket: WebSocket,
-    token: str,
-    db: AsyncSession = Depends(get_db)
+    token: str
 ):
     """WebSocket endpoint for user-specific notifications"""
     connection_id = None
@@ -832,11 +901,12 @@ async def websocket_notifications(
     try:
         await websocket.accept()
         
-        # Authenticate
-        user = await authenticate_websocket(token, db)
-        if not user:
-            await websocket.close(code=4001, reason="Authentication failed")
-            return
+        # Authenticate using discrete database session
+        async with get_db_context() as db:
+            user = await authenticate_websocket(token, db)
+            if not user:
+                await websocket.close(code=4001, reason="Authentication failed")
+                return
         
         # Add monitoring for this notification WebSocket
         import uuid

@@ -158,17 +158,33 @@ class BaseAgent(Agent, Generic[T]):
         tools = []
         for func in functions:
             if isinstance(func, Tool):
+                # Add get_name method if it doesn't exist
+                if not hasattr(func, 'get_name'):
+                    tool_name = getattr(func, 'name', 'unknown_tool')
+                    func.get_name = lambda name=tool_name: name
                 tools.append(func)
             else:
                 try:
                     # Check if the function is already wrapped in a function_tool decorator
                     if hasattr(func, 'schema'):  # Check for the schema attribute directly
                         # The function already has a schema, this is likely an SDK function_tool
+                        # Add get_name method if it doesn't exist
+                        if not hasattr(func, 'get_name'):
+                            func_name = getattr(func, '__name__', 'unknown_function')
+                            func.get_name = lambda name=func_name: name
+                        # Also ensure it has a name attribute for compatibility
+                        if not hasattr(func, 'name'):
+                            func.name = getattr(func, '__name__', 'unknown_function')
                         tools.append(func)
                     else:
                         # Attempt to convert to a function tool
                         # function_tool is already imported at the top of the file
                         tool = function_tool(func)
+                        
+                        # Add get_name method if it doesn't exist
+                        if not hasattr(tool, 'get_name'):
+                            tool_name = getattr(tool, 'name', getattr(func, '__name__', 'unknown_function'))
+                            tool.get_name = lambda name=tool_name: name
                         
                         # Validate the schema
                         self._validate_function_schema(func, tool)
@@ -273,6 +289,9 @@ class BaseAgent(Agent, Generic[T]):
                 on_invoke_tool=lambda ctx, args: safe_wrapper(ctx, args)
             )
             
+            # Add get_name method
+            tool.get_name = lambda name=func_name: name
+            
             return tool
         
         except Exception as e:
@@ -297,12 +316,17 @@ class BaseAgent(Agent, Generic[T]):
             no_op_function.schema = schema
             
             # Return a no-op function tool
-            return FunctionTool(
+            tool = FunctionTool(
                 name=func_name,
                 description=schema["description"],
                 params_json_schema=schema["parameters"],
                 on_invoke_tool=lambda ctx, args: no_op_function()
             )
+            
+            # Add get_name method
+            tool.get_name = lambda: func_name
+            
+            return tool
     
     @property
     def functions(self) -> List[Any]:
@@ -338,13 +362,36 @@ class BaseAgent(Agent, Generic[T]):
         
         # Add the function as a tool
         if isinstance(func, Tool):
+            # Add get_name method if it doesn't exist
+            if not hasattr(func, 'get_name'):
+                tool_name = getattr(func, 'name', 'unknown_tool')
+                func.get_name = lambda name=tool_name: name
             self.tools.append(func)
         else:
             try:
-                # function_tool is already imported at the top of the file
-                tool = function_tool(func)
-                self._validate_function_schema(func, tool)
-                self.tools.append(tool)
+                # Check if the function is already wrapped in a function_tool decorator
+                if hasattr(func, 'schema'):  # Check for the schema attribute directly
+                    # The function already has a schema, this is likely an SDK function_tool
+                    # Add get_name method if it doesn't exist
+                    if not hasattr(func, 'get_name'):
+                        func_name = getattr(func, '__name__', 'unknown_function')
+                        func.get_name = lambda name=func_name: name
+                    # Also ensure it has a name attribute for compatibility
+                    if not hasattr(func, 'name'):
+                        func.name = getattr(func, '__name__', 'unknown_function')
+                    self.tools.append(func)
+                else:
+                    # Attempt to convert to a function tool
+                    # function_tool is already imported at the top of the file
+                    tool = function_tool(func)
+                    
+                    # Add get_name method if it doesn't exist
+                    if not hasattr(tool, 'get_name'):
+                        tool_name = getattr(tool, 'name', getattr(func, '__name__', 'unknown_function'))
+                        tool.get_name = lambda name=tool_name: name
+                    
+                    self._validate_function_schema(func, tool)
+                    self.tools.append(tool)
             except Exception as e:
                 logger.error(f"Error adding function {getattr(func, '__name__', 'unknown')}: {str(e)}")
                 self.tools.append(self._create_sanitized_function_tool(func))

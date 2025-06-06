@@ -355,15 +355,10 @@ class CollaborationManager:
                     
                     # Cancel any pending tasks
                     for task in pending:
-                        # Use get_name safely with proper function call or fallback to task name
+                        # Get task name safely
                         task_name = 'unknown-task'
                         try:
-                            if hasattr(task, 'get_name'):
-                                if callable(task.get_name):
-                                    task_name = task.get_name()
-                                else:
-                                    task_name = str(task.get_name)
-                            elif hasattr(task, 'name'):
+                            if hasattr(task, 'name') and task.name:
                                 task_name = task.name
                         except Exception:
                             pass
@@ -385,15 +380,10 @@ class CollaborationManager:
                             session.response_parts[agent_name] = response
                             logger.info(f"Got supporting response from {agent_name}")
                         except Exception as e:
-                            # Use get_name safely with proper function call or fallback to task name
+                            # Get task name safely
                             task_name = 'unknown-task'
                             try:
-                                if hasattr(task, 'get_name'):
-                                    if callable(task.get_name):
-                                        task_name = task.get_name()
-                                    else:
-                                        task_name = str(task.get_name)
-                                elif hasattr(task, 'name'):
+                                if hasattr(task, 'name') and task.name:
                                     task_name = task.name
                             except Exception:
                                 pass

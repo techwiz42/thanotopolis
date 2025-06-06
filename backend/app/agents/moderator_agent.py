@@ -175,10 +175,21 @@ Use EXACTLY the agent names as they appear in the AVAILABLE AGENTS list.
                     selection_result["primary_agent"] = agent_name
                     break
             else:
-                # If still no match, use fallback
-                fallback = "MODERATOR" if "MODERATOR" in agent_options else agent_options[0]
+                # If still no match, use fallback (prefer non-MODERATOR)
+                non_moderator_agents = [a for a in agent_options if a != "MODERATOR"]
+                if non_moderator_agents:
+                    fallback = non_moderator_agents[0]
+                else:
+                    fallback = "MODERATOR" if "MODERATOR" in agent_options else agent_options[0]
                 logger.warning(f"Primary agent '{primary_agent}' not in available agents, using {fallback}")
                 selection_result["primary_agent"] = fallback
+        
+        # If MODERATOR was selected as primary, pick a different agent
+        if selection_result["primary_agent"] == "MODERATOR":
+            non_moderator_agents = [a for a in agent_options if a != "MODERATOR"]
+            if non_moderator_agents:
+                selection_result["primary_agent"] = non_moderator_agents[0]
+                logger.info(f"Redirected from MODERATOR to {selection_result['primary_agent']}")
         
         # Validate supporting agents (limit to max 2)
         valid_supporting = []
@@ -209,8 +220,12 @@ Use EXACTLY the agent names as they appear in the AVAILABLE AGENTS list.
         logger.error(f"Error in agent selection: {e}")
         logger.error(traceback.format_exc())
         
-        # Default to MODERATOR if available, otherwise first agent
-        fallback = "MODERATOR" if "MODERATOR" in agent_options else agent_options[0]
+        # Default to first non-MODERATOR agent, or MODERATOR as last resort
+        non_moderator_agents = [a for a in agent_options if a != "MODERATOR"]
+        if non_moderator_agents:
+            fallback = non_moderator_agents[0]
+        else:
+            fallback = "MODERATOR" if "MODERATOR" in agent_options else agent_options[0]
         
         # Update context with fallback
         try:
@@ -444,10 +459,10 @@ class ModeratorAgent(BaseAgent):
             instructions="""You are a moderator agent responsible for coordinating conversations and routing queries to specialist agents.
 
 YOUR PRIMARY ROLE:
-- Analyze queries to select the most appropriate specialist agent(s)
-- Determine when multiple agents should collaborate
-- Route queries to the correct specialist(s)
-- Do NOT answer queries directly - your job is ONLY to route
+- When acting as a router: analyze queries to select the most appropriate specialist agent(s)
+- When selected as primary agent: provide helpful, general assistance
+- Determine when multiple agents should collaborate when routing
+- Be helpful and conversational when responding directly to users
 
 AGENT SELECTION PROCESS:
 1. Analyze the query to understand its primary topic and required expertise
@@ -470,11 +485,11 @@ When selecting agents, respond with a JSON object:
   "supporting_agents": ["AGENT2", "AGENT3"]
 }
 
-IMPORTANT: You should ONLY route queries, not answer them directly! 
-USE THE TOOLS PROVIDED to select agents and determine collaboration needs.
-ALWAYS SELECT AGENTS EXACTLY AS THEY APPEAR IN THE AVAILABLE AGENTS LIST.""",
+WHEN ROUTING: Use the tools provided to select agents and determine collaboration needs.
+WHEN RESPONDING: Provide helpful, direct answers to user queries.
+ALWAYS SELECT AGENTS EXACTLY AS THEY APPEAR IN THE AVAILABLE AGENTS LIST when routing.""",
             functions=[select_agent, check_collaboration_need],
-            tool_choice="required",  # Force tool usage
+            tool_choice="auto",  # Allow tool usage when appropriate
             parallel_tool_calls=True,
             hooks=ModeratorAgentHooks()
         )

@@ -36,11 +36,24 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Database initialization failed: {e}")
         raise
     
+    # Start background task for websocket cleanup
+    import asyncio
+    cleanup_task = asyncio.create_task(websocket_cleanup_task())
+    logger.info("✅ WebSocket cleanup task started")
+    
     logger.info("✅ Application startup complete")
     yield
     
     # Shutdown
     logger.info("🛑 Shutting down application...")
+    
+    # Cancel background tasks
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        logger.info("✅ WebSocket cleanup task cancelled")
+    
     # Clean up voice streaming handlers if any are active
     try:
         from app.api.voice_streaming import shutdown_all_handlers
@@ -50,6 +63,23 @@ async def lifespan(app: FastAPI):
         logger.error(f"⚠️  Error shutting down voice handlers: {e}")
     
     logger.info("✅ Application shutdown complete")
+
+# Background task for websocket cleanup
+async def websocket_cleanup_task():
+    """Background task to periodically clean up stale websocket connections"""
+    import asyncio
+    from app.api.websockets import connection_manager
+    
+    while True:
+        try:
+            await asyncio.sleep(60)  # Run every minute
+            await connection_manager.cleanup_stale_connections()
+        except asyncio.CancelledError:
+            logger.info("🧹 WebSocket cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"⚠️  Error in websocket cleanup: {e}")
+            await asyncio.sleep(10)  # Wait before retrying
 
 # Create FastAPI app
 app = FastAPI(

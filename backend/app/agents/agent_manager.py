@@ -387,8 +387,27 @@ class AgentManager:
                 if moderator:
                     try:
                         # Use a direct tool call with timeout protection
-                        select_tool = next((t for t in moderator.tools 
-                                           if hasattr(t, 'name') and t.name == 'select_agent'), None)
+                        select_tool = None
+                        for t in moderator.tools:
+                            tool_name = None
+                            try:
+                                # Try different ways to get the tool name
+                                if hasattr(t, 'name'):
+                                    tool_name = t.name
+                                elif hasattr(t, 'get_name'):
+                                    try:
+                                        tool_name = t.get_name()
+                                    except (AttributeError, TypeError):
+                                        pass
+                                elif hasattr(t, '__name__'):
+                                    tool_name = t.__name__
+                                
+                                if tool_name == 'select_agent':
+                                    select_tool = t
+                                    break
+                            except Exception as e:
+                                logger.warning(f"Error getting name for tool {t}: {e}")
+                                continue
                         
                         if select_tool and hasattr(select_tool, 'on_invoke_tool'):
                             try:
@@ -436,15 +455,21 @@ class AgentManager:
                         logger.error(f"Error using moderator for agent selection: {e}")
                         logger.error(traceback.format_exc())
             
-            # Fallback: use MODERATOR if available, otherwise first agent
-            if "MODERATOR" in available_agents:
-                logger.info("Using fallback selection: MODERATOR")
+            # Fallback: use first non-MODERATOR agent, or MODERATOR as last resort
+            non_moderator_agents = [a for a in available_agents if a != "MODERATOR"]
+            if non_moderator_agents:
+                first_agent = non_moderator_agents[0]
+                logger.info(f"Using fallback selection: {first_agent}")
+                context.selected_agent = first_agent
+                return first_agent
+            elif "MODERATOR" in available_agents:
+                logger.warning("Only MODERATOR available, using as last resort")
                 context.selected_agent = "MODERATOR"
                 return "MODERATOR"
             
             # Last resort: use first available agent
             first_agent = available_agents[0]
-            logger.warning(f"Using first available agent as last resort: {first_agent}")
+            logger.warning(f"Using first available agent as absolute last resort: {first_agent}")
             context.selected_agent = first_agent
             return first_agent
             
@@ -452,9 +477,12 @@ class AgentManager:
             logger.error(f"Error selecting agent: {e}")
             logger.error(traceback.format_exc())
             
-            # Find a fallback agent
+            # Find a fallback agent (prefer non-MODERATOR)
             available_agents = self.get_available_agents()
-            if "MODERATOR" in available_agents:
+            non_moderator_agents = [a for a in available_agents if a != "MODERATOR"]
+            if non_moderator_agents:
+                return non_moderator_agents[0]
+            elif "MODERATOR" in available_agents:
                 return "MODERATOR"
             elif available_agents:
                 return available_agents[0]
