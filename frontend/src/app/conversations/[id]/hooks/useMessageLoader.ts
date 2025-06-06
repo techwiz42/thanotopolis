@@ -85,6 +85,7 @@ export const useMessageLoader = ({
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const mountedRef = useRef(true);
+  const hasLoadedInitialMessages = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -94,10 +95,23 @@ export const useMessageLoader = ({
   }, []);
 
   const addMessage = useCallback((message: Message) => {
+    // Skip historical messages if we haven't loaded initial messages yet
+    if (!hasLoadedInitialMessages.current && 'is_history' in message && message.is_history) {
+      console.log('Skipping historical message during initial load');
+      return;
+    }
+    
     setMessages(prev => {
       // Check for duplicates using the message ID
       const isDuplicate = prev.some(m => m.id === message.id);
       if (isDuplicate) {
+        console.log(`Duplicate message detected: ${message.id}, skipping...`);
+        return prev;
+      }
+      // Also check if this is a historical message that we already have
+      const isHistorical = 'is_history' in message && message.is_history;
+      if (isHistorical && prev.some(m => m.content === message.content && Math.abs(new Date(m.timestamp).getTime() - new Date(message.timestamp).getTime()) < 1000)) {
+        console.log(`Historical duplicate detected by content match, skipping...`);
         return prev;
       }
       return [...prev, message];
@@ -154,6 +168,7 @@ export const useMessageLoader = ({
         }
 
         setMessages(transformedMessages);
+        hasLoadedInitialMessages.current = true;
       }
     } catch (error) {
       console.error('Error loading messages:', error);
@@ -170,6 +185,8 @@ export const useMessageLoader = ({
       return;
     }
 
+    // Reset the flag when conversation changes
+    hasLoadedInitialMessages.current = false;
     loadMessages();
   }, [conversationId, loadMessages]);
 

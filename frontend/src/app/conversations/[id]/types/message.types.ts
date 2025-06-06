@@ -34,6 +34,7 @@ export interface Message {
   agent_type?: string;
   is_streaming?: boolean;
   streaming_content?: string;
+  is_history?: boolean;
 }
 
 export interface MessageResponse {

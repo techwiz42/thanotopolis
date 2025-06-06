@@ -20,6 +20,7 @@ export interface MessageWebSocketMessage extends BaseWebSocketMessage {
   timestamp: string;
   message_metadata?: MessageMetadata;
   agent_metadata?: MessageMetadata;
+  is_history?: boolean;
 }
 
 export interface TypingStatusMessage extends BaseWebSocketMessage {

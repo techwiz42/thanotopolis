@@ -20,9 +20,22 @@ class WebSocketService {
   }
 
   async connect(conversationId: string, token: string, userId: string): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already connected');
+    // Check if already connected to the same conversation
+    if (this.ws?.readyState === WebSocket.OPEN && this.conversationId === conversationId) {
+      console.log('WebSocket already connected to this conversation');
       return;
+    }
+
+    // If connecting or already connected, skip
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      console.log('WebSocket connection already in progress');
+      return;
+    }
+
+    // If connected to a different conversation, disconnect first
+    if (this.ws?.readyState === WebSocket.OPEN && this.conversationId !== conversationId) {
+      console.log('Disconnecting from previous conversation');
+      this.disconnect();
     }
 
     this.conversationId = conversationId;
@@ -78,7 +91,10 @@ class WebSocketService {
 
         this.ws.onclose = (event) => {
           console.log('WebSocket closed:', event.code, event.reason);
-          this.handleReconnect();
+          // Only reconnect if not a normal closure
+          if (event.code !== 1000 && event.code !== 1001) {
+            this.handleReconnect();
+          }
         };
       } catch (error) {
         console.error('Error creating WebSocket:', error);
@@ -100,9 +116,19 @@ class WebSocketService {
 
   disconnect(): void {
     if (this.ws) {
+      // Remove event listeners before closing
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onerror = null;
+      this.ws.onclose = null;
       this.ws.close();
       this.ws = null;
     }
+    this.conversationId = null;
+    this.token = null;
+    this.userId = null;
+    this.reconnectAttempts = 0;
+    // Clear handlers on disconnect
     this.messageHandlers.clear();
   }
 

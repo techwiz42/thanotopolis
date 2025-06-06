@@ -31,9 +31,26 @@ export const useWebSocket = ({
     const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const retryCountRef = useRef(0);
     const maxRetries = 3;
+    const connectingRef = useRef(false);
+    const connectedConversationRef = useRef<string | null>(null);
 
     const connect = useCallback(async () => {
         if (!mountedRef.current) return;
+        
+        // Prevent multiple simultaneous connection attempts
+        if (connectingRef.current) {
+            console.log('Connection already in progress, skipping...');
+            return;
+        }
+        
+        // Check if already connected to this conversation
+        if (websocketService.isConnected && connectedConversationRef.current === conversationId) {
+            console.log('Already connected to this conversation via service');
+            setWsConnected(true);
+            return;
+        }
+        
+        connectingRef.current = true;
 
         try {
             console.log('=== WebSocket Connection Attempt ===');
@@ -71,6 +88,7 @@ export const useWebSocket = ({
 
             if (mountedRef.current) {
                 setWsConnected(true);
+                connectedConversationRef.current = conversationId;
                 retryCountRef.current = 0; // Reset retry count on successful connection
                 console.log('WebSocket connected successfully');
 
@@ -104,7 +122,8 @@ export const useWebSocket = ({
                                 },
                                 timestamp: message.timestamp,
                                 message_metadata: message.agent_metadata || message.message_metadata || undefined,
-                                agent_type: message.agent_type  // Add agent_type to top level for easier access
+                                agent_type: message.agent_type,  // Add agent_type to top level for easier access
+                                is_history: message.is_history
                             };
                             onMessage(transformedMessage);
                             break;
@@ -128,6 +147,7 @@ export const useWebSocket = ({
             console.error('WebSocket connection error:', error);
             setConnectionError(error instanceof Error ? error.message : 'Connection failed');
             setWsConnected(false);
+            connectedConversationRef.current = null;
 
             // Retry logic with exponential backoff
             if (retryCountRef.current < maxRetries && mountedRef.current) {
@@ -141,6 +161,8 @@ export const useWebSocket = ({
                     }
                 }, retryDelay);
             }
+        } finally {
+            connectingRef.current = false;
         }
     }, [conversationId, token, userId, userEmail, onMessage, onTypingStatus, onToken]);
 
@@ -218,18 +240,27 @@ export const useWebSocket = ({
 
     useEffect(() => {
         mountedRef.current = true;
-        connect();
+        
+        // Only connect if we have the necessary credentials
+        if (conversationId && (token || participantStorage.getSession(conversationId))) {
+            connect();
+        }
 
         return () => {
             mountedRef.current = false;
+            connectingRef.current = false;
+            connectedConversationRef.current = null;
             if (retryTimeoutRef.current) {
                 clearTimeout(retryTimeoutRef.current);
             }
             if (unsubscribeRef.current) {
                 unsubscribeRef.current();
+                unsubscribeRef.current = null;
             }
+            // Disconnect the websocket when component unmounts
+            websocketService.disconnect();
         };
-    }, [connect]);
+    }, [conversationId]); // Remove connect from dependencies to prevent loops
 
     // Enhanced participation check
     const isAllowedToParticipate = useCallback(() => {
