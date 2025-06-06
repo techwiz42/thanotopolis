@@ -64,7 +64,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
         }
       }
     }
-  }, [voiceTranscript, pendingVoiceTranscript.length, isVoiceActive, handleVoiceTranscriptFinal]);
+  }, [voiceTranscript, pendingVoiceTranscript.length, isVoiceActive]);
 
   // Update message when voice transcript is finalized
   const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {

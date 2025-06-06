@@ -18,7 +18,7 @@ interface User {
   created_at: string
 }
 
-interface AuthTokens {
+export interface AuthTokens {
   access_token: string
   refresh_token: string
   token_type: string

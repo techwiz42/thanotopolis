@@ -176,7 +176,10 @@ class ElevenLabsService:
                 
                 url = f"{self.base_url}/text-to-speech/{voice_id}"
                 
+                logger.info(f"Making TTS request to {url} with voice_id={voice_id}, model={model_id}")
                 async with session.post(url, headers=headers, json=data, params=params) as response:
+                    logger.info(f"TTS response status: {response.status}")
+                    
                     if response.status == 200:
                         audio_data = await response.read()
                         
@@ -197,7 +200,10 @@ class ElevenLabsService:
                         }
                     else:
                         error_text = await response.text()
-                        logger.error(f"Failed to synthesize speech: {response.status} - {error_text}")
+                        logger.error(f"TTS API failed: {response.status} - {error_text}")
+                        logger.error(f"Request headers: {headers}")
+                        logger.error(f"Request data: {data}")
+                        logger.error(f"Request params: {params}")
                         return {
                             "success": False,
                             "error": f"API error: {response.status} - {error_text}"

@@ -360,6 +360,9 @@ async def synthesize_speech(
             "use_speaker_boost": use_speaker_boost
         }
         
+        # Log TTS request details
+        logger.info(f"TTS request from user {current_user.email}: text_len={len(text)}, voice={voice_id}, model={model_id}")
+        
         # Synthesize speech
         result = await elevenlabs_service.synthesize_speech(
             text=text,
@@ -370,10 +373,11 @@ async def synthesize_speech(
         )
         
         if not result["success"]:
+            logger.error(f"TTS synthesis failed for user {current_user.email}: {result['error']}")
             raise HTTPException(status_code=500, detail=result["error"])
         
         # Log synthesis
-        logger.info(f"Synthesized {len(text)} characters for user {current_user.email}")
+        logger.info(f"Successfully synthesized {len(text)} characters for user {current_user.email}")
         
         # Track TTS usage
         word_count = count_words(text)
