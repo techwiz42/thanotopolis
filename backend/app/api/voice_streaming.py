@@ -142,7 +142,11 @@ async def websocket_streaming_stt(
                 # Receive message
                 message = await websocket.receive()
                 
-                if message["type"] == "websocket.receive":
+                # Handle different message types
+                if message["type"] == "websocket.disconnect":
+                    logger.info(f"Voice WebSocket disconnected: {connection_id}")
+                    break
+                elif message["type"] == "websocket.receive":
                     if "bytes" in message:
                         # Audio data received
                         audio_data = message["bytes"]

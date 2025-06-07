@@ -167,6 +167,75 @@ if (websocketService.isConnected && connectedConversationRef.current === convers
 - `/frontend/src/app/conversations/[id]/page.tsx` - Main conversation page
 - `/backend/app/api/websockets.py` - Backend WebSocket handler (sends historical messages)
 
+## Issue 3: TTS Auto-Play for Streaming Messages (June 7, 2025)
+
+### Problem
+When TTS (Text-to-Speech) was enabled on the conversation page, text output was not automatically rendered as speech when agent messages arrived. The speaker icons on individual messages worked for manual replay, but new streaming messages were not automatically spoken.
+
+### Root Cause
+**Stale Closure Issue**: The `handleMessage` callback in the WebSocket was created with an outdated `isTTSEnabled` value. Even when TTS was enabled in the UI, the callback still had `isTTSEnabled: false` from when it was initially created, preventing auto-play from working.
+
+### Investigation Process
+1. **Timing Issue Discovered**: Logs showed that when agent messages arrived, `isTTSEnabled` was `false`, but later became `true`
+2. **Attempted Retroactive TTS**: Initially tried to speak recent messages when TTS was enabled, but this caused unwanted behavior
+3. **Identified Stale Closure**: The WebSocket callback wasn't seeing the current TTS state due to closure capture
+
+### Solution Implemented
+
+#### 1. Fixed Stale Closure with Refs (`/frontend/src/app/conversations/[id]/page.tsx`)
+```typescript
+// Use refs to avoid stale closure issues
+const currentTTSEnabledRef = useRef(isTTSEnabled);
+const currentSpeakTextRef = useRef(speakText);
+
+// Update refs when values change
+useEffect(() => {
+  currentTTSEnabledRef.current = isTTSEnabled;
+  currentSpeakTextRef.current = speakText;
+}, [isTTSEnabled, speakText]);
+
+// In handleMessage callback - use refs instead of closure values
+const currentTTSEnabled = currentTTSEnabledRef.current;
+const currentSpeakTextFn = currentSpeakTextRef.current;
+
+if (currentTTSEnabled && message.content.trim() && message.id && !completedMessagesRef.current.has(message.id)) {
+  // TTS logic using current values
+}
+```
+
+#### 2. Removed Unwanted Retroactive TTS
+- Initially implemented retroactive TTS to speak recent messages when TTS was enabled
+- This caused unwanted behavior (speaking old messages when toggling TTS)
+- Removed retroactive feature entirely - only auto-play NEW messages
+
+#### 3. Differentiated Streaming vs Non-Streaming Messages
+```typescript
+if (hasStreamingContent) {
+  // Wait for streaming to complete
+  setTimeout(() => {
+    if (!isStillStreaming) {
+      currentSpeakTextFn(message.content);
+    }
+  }, 1500);
+} else {
+  // Non-streaming message, speak immediately
+  currentSpeakTextFn(message.content);
+}
+```
+
+### Final Behavior
+1. **✅ Auto-play for new messages**: When TTS is enabled, new agent responses automatically play as speech
+2. **✅ Manual replay preserved**: Speaker icons on individual messages still work for replaying any message  
+3. **✅ No unwanted retroactive speech**: Enabling TTS doesn't speak existing messages
+
+### Key Learning
+**React Closure Gotcha**: `useCallback` dependencies ensure the callback is recreated when values change, but external services (like WebSocket handlers) may cache the old callback. Using refs ensures access to current values regardless of when the callback was created.
+
+### Testing
+1. Enable TTS → Should NOT speak any existing message
+2. Send message to get agent response → Should auto-play the new response
+3. Click speaker icons → Should still work for manual replay
+
 ## Future Improvements
 1. Consider implementing a message cache to avoid reloading messages
 2. Add reconnection status indicator for users

@@ -47,7 +47,7 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
   // Cleanup function
   const cleanup = useCallback(() => {
     // Stop recording
-    if (mediaRecorderRef.current && voiceState.isRecording) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
     
@@ -74,7 +74,7 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       clearInterval(recordingIntervalRef.current);
       recordingIntervalRef.current = null;
     }
-  }, [voiceState.isRecording]);
+  }, []); // Remove dependency to fix stale closure
 
   // Initialize STT WebSocket connection
   const initializeSTT = useCallback(async () => {
@@ -186,7 +186,7 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
   // Stop STT
   const stopSTT = useCallback(() => {
-    if (mediaRecorderRef.current && voiceState.isRecording) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
     
@@ -207,7 +207,7 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       isSTTActive: false, 
       isRecording: false 
     }));
-  }, [voiceState.isRecording]);
+  }, []);
 
   // Toggle STT
   const toggleSTT = useCallback(async () => {
@@ -224,19 +224,26 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
   // Toggle TTS
   const toggleTTS = useCallback(() => {
-    setVoiceState(prev => ({ ...prev, isTTSEnabled: !prev.isTTSEnabled }));
-    
-    // Stop any currently playing audio when disabling TTS
-    if (voiceState.isTTSEnabled && currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-      setVoiceState(prev => ({ ...prev, isTTSActive: false }));
-    }
-  }, [voiceState.isTTSEnabled]);
+    setVoiceState(prev => {
+      // Stop any currently playing audio when disabling TTS
+      if (prev.isTTSEnabled && currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+      
+      return { 
+        ...prev, 
+        isTTSEnabled: !prev.isTTSEnabled,
+        isTTSActive: prev.isTTSEnabled ? false : prev.isTTSActive
+      };
+    });
+  }, []);
 
   // Speak text using TTS
   const speakText = useCallback(async (text: string) => {
-    if (!voiceState.isTTSEnabled || !token || !text.trim()) {
+    // Check current state to avoid stale closure
+    const currentState = voiceState;
+    if (!currentState.isTTSEnabled || !token || !text.trim()) {
       return;
     }
 
@@ -296,7 +303,7 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
         variant: "destructive"
       });
     }
-  }, [voiceState.isTTSEnabled, token, toast]);
+  }, [voiceState, token, toast]);
 
   // Stop speaking
   const stopSpeaking = useCallback(() => {

@@ -28,11 +28,8 @@ class DeepgramService:
             self.client = None
         else:
             try:
-                config = DeepgramClientOptions(
-                    api_key=settings.DEEPGRAM_API_KEY,
-                    options={"keepalive": "true"}
-                )
-                self.client = DeepgramClient(config)
+                # Simple client without extra options to avoid auth issues
+                self.client = DeepgramClient(settings.DEEPGRAM_API_KEY)
                 logger.info("Deepgram client initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Deepgram client: {e}")
@@ -238,8 +235,8 @@ class LiveTranscriptionSession:
     async def start(self):
         """Start the live transcription session."""
         try:
-            # Create connection
-            self.connection = self.client.listen.asynclive.v("1")
+            # Create connection using the new asyncwebsocket API
+            self.connection = self.client.listen.asyncwebsocket.v("1")
             
             # Set up event handlers
             self.connection.on(LiveTranscriptionEvents.Transcript, self._handle_transcript)
@@ -285,7 +282,7 @@ class LiveTranscriptionSession:
                 if self.on_error:
                     self.on_error(e)
     
-    def _handle_transcript(self, *args, **kwargs):
+    async def _handle_transcript(self, *args, **kwargs):
         """Handle transcript messages from Deepgram."""
         try:
             # Extract transcript data from the response
@@ -325,7 +322,7 @@ class LiveTranscriptionSession:
             if self.on_error:
                 self.on_error(e)
     
-    def _handle_error(self, *args, **kwargs):
+    async def _handle_error(self, *args, **kwargs):
         """Handle error messages from Deepgram."""
         try:
             error_data = args[0] if args else {"error": "Unknown error"}
@@ -337,7 +334,7 @@ class LiveTranscriptionSession:
         except Exception as e:
             logger.error(f"Error handling Deepgram error: {e}")
     
-    def _handle_warning(self, *args, **kwargs):
+    async def _handle_warning(self, *args, **kwargs):
         """Handle warning messages from Deepgram."""
         try:
             warning_data = args[0] if args else {"warning": "Unknown warning"}
@@ -345,7 +342,7 @@ class LiveTranscriptionSession:
         except Exception as e:
             logger.error(f"Error handling Deepgram warning: {e}")
     
-    def _handle_metadata(self, *args, **kwargs):
+    async def _handle_metadata(self, *args, **kwargs):
         """Handle metadata messages from Deepgram."""
         try:
             metadata = args[0] if args else {}
