@@ -191,8 +191,33 @@ export default function ConversationPage() {
   // Track completed agent messages for TTS
   const completedMessagesRef = useRef<Set<string>>(new Set());
   const pendingTTSRef = useRef<{ [messageId: string]: NodeJS.Timeout }>({}); 
+  const prevTTSEnabledRef = useRef(isTTSEnabled);
+  
+  // Use refs to avoid stale closure issues
+  const currentTTSEnabledRef = useRef(isTTSEnabled);
+  const currentSpeakTextRef = useRef(speakText);
+  
+  // Update refs when values change
+  useEffect(() => {
+    currentTTSEnabledRef.current = isTTSEnabled;
+    currentSpeakTextRef.current = speakText;
+  }, [isTTSEnabled, speakText]);
+
+  // Update the previous TTS state ref
+  useEffect(() => {
+    prevTTSEnabledRef.current = isTTSEnabled;
+  }, [isTTSEnabled]);
 
   const handleMessage = useCallback((message: Message) => {
+    console.log('TTS Debug: handleMessage called:', {
+      messageId: message.id,
+      senderType: message.sender.type,
+      isOwner: message.sender.is_owner,
+      agentName: message.sender.name,
+      isTTSEnabled,
+      contentPreview: message.content.substring(0, 50) + '...'
+    });
+
     if (!message.sender.is_owner) {
       setHideAwaitingMessage(true);
       if (awaitingInputTimeoutRef.current) {
@@ -208,31 +233,57 @@ export default function ConversationPage() {
           resetStreamingForAgent(message.sender.name, message.id);
         }
         
-        // Schedule TTS for agent messages after ensuring streaming is complete
-        if (isTTSEnabled && message.content.trim() && message.id && !completedMessagesRef.current.has(message.id)) {
-          // Clear any existing timeout for this message
-          if (pendingTTSRef.current[message.id]) {
-            clearTimeout(pendingTTSRef.current[message.id]);
-          }
+        // Handle TTS for agent messages - use refs to avoid stale closure
+        const currentTTSEnabled = currentTTSEnabledRef.current;
+        const currentSpeakTextFn = currentSpeakTextRef.current;
+        
+        console.log('TTS Debug: Checking TTS conditions:', {
+          isTTSEnabled,
+          currentTTSEnabled,
+          hasContent: !!message.content.trim(),
+          hasId: !!message.id,
+          alreadySpoken: completedMessagesRef.current.has(message.id),
+          finalCondition: currentTTSEnabled && message.content.trim() && message.id && !completedMessagesRef.current.has(message.id)
+        });
+        
+        if (currentTTSEnabled && message.content.trim() && message.id && !completedMessagesRef.current.has(message.id)) {
+          const agentStreamingState = streamingState[message.sender.name || ''];
+          const hasStreamingContent = !!agentStreamingState?.tokens;
           
-          // Wait a bit to ensure no more tokens are coming
-          pendingTTSRef.current[message.id] = setTimeout(() => {
-            // Check if streaming is still active for this agent
-            const agentStreamingState = streamingState[message.sender.name || ''];
-            const isStillStreaming = agentStreamingState?.active && agentStreamingState?.lastMessageId === message.id;
-            
-            if (!isStillStreaming && !completedMessagesRef.current.has(message.id)) {
-              completedMessagesRef.current.add(message.id);
-              speakText(message.content);
-              
-              // Clean up after a while to prevent memory leak
-              setTimeout(() => {
-                completedMessagesRef.current.delete(message.id);
-              }, 60000); // Clean up after 1 minute
+          console.log('TTS: Processing agent message for auto-play:', {
+            messageId: message.id,
+            agentName: message.sender.name,
+            hasStreamingContent,
+            contentPreview: message.content.substring(0, 50) + '...'
+          });
+          
+          if (hasStreamingContent) {
+            // This was a streaming message, wait a bit to ensure it's complete
+            if (pendingTTSRef.current[message.id]) {
+              clearTimeout(pendingTTSRef.current[message.id]);
             }
             
-            delete pendingTTSRef.current[message.id];
-          }, 1500); // Wait 1.5 seconds to ensure streaming is complete
+            pendingTTSRef.current[message.id] = setTimeout(() => {
+              const isStillStreaming = streamingState[message.sender.name || '']?.active;
+              
+              if (!isStillStreaming && !completedMessagesRef.current.has(message.id)) {
+                console.log('TTS: Speaking completed streaming message');
+                completedMessagesRef.current.add(message.id);
+                currentSpeakTextFn(message.content);
+                
+                setTimeout(() => completedMessagesRef.current.delete(message.id), 60000);
+              }
+              
+              delete pendingTTSRef.current[message.id];
+            }, 1500);
+          } else {
+            // This is a non-streaming message, speak it immediately
+            console.log('TTS: Speaking non-streaming message immediately');
+            completedMessagesRef.current.add(message.id);
+            currentSpeakTextFn(message.content);
+            
+            setTimeout(() => completedMessagesRef.current.delete(message.id), 60000);
+          }
         }
         
         setTimeout(() => {
