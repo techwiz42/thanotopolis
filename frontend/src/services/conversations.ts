@@ -227,10 +227,15 @@ export const conversationService = {
   },
 
   // Message operations
-  async getMessages(conversationId: string, token: string, skip = 0, limit = 50): Promise<{ data: MessageResponse[] }> {
+  async getMessages(conversationId: string, token: string, skip = 0, limit?: number): Promise<{ data: MessageResponse[] }> {
     try {
+      const params: any = { skip };
+      if (limit !== undefined) {
+        params.limit = limit;
+      }
+      
       const response = await api.get<MessageResponse[]>(`/conversations/${conversationId}/messages`, {
-        params: { skip, limit },
+        params,
         headers: {
           'Authorization': `Bearer ${token}`
         }

@@ -391,7 +391,7 @@ async def send_message(
 async def get_messages(
     conversation_id: UUID,
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: Optional[int] = Query(None, ge=1),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -416,8 +416,11 @@ async def get_messages(
         .where(Message.conversation_id == conversation_id)
         .order_by(Message.created_at)  # Order by creation time (oldest first)
         .offset(skip)
-        .limit(limit)
     )
+    
+    # Only apply limit if one is specified
+    if limit is not None:
+        query = query.limit(limit)
     
     result = await db.execute(query)
     messages = result.scalars().all()
