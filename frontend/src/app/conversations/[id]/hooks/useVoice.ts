@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/use-toast';
+import { PCMRecorder } from './usePCMRecorder';
 
 interface VoiceState {
   isSTTEnabled: boolean;
@@ -39,22 +40,15 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
   // Refs for managing resources
   const sttWebSocketRef = useRef<WebSocket | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioStreamRef = useRef<MediaStream | null>(null);
+  const pcmRecorderRef = useRef<PCMRecorder | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup function
   const cleanup = useCallback(() => {
-    // Stop recording
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
-    
-    // Close audio stream
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach(track => track.stop());
-      audioStreamRef.current = null;
+    // Stop PCM recorder
+    if (pcmRecorderRef.current) {
+      pcmRecorderRef.current.stop();
+      pcmRecorderRef.current = null;
     }
     
     // Close STT WebSocket
@@ -68,13 +62,7 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
-
-    // Clear intervals
-    if (recordingIntervalRef.current) {
-      clearInterval(recordingIntervalRef.current);
-      recordingIntervalRef.current = null;
-    }
-  }, []); // Remove dependency to fix stale closure
+  }, []);
 
   // Initialize STT WebSocket connection
   const initializeSTT = useCallback(async () => {
@@ -90,18 +78,6 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
     try {
       setVoiceState(prev => ({ ...prev, isSTTConnecting: true }));
 
-      // Request microphone permission
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
-        } 
-      });
-      
-      audioStreamRef.current = stream;
-
       // Create WebSocket connection to STT service
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const backendHost = process.env.NEXT_PUBLIC_API_URL ? new URL(process.env.NEXT_PUBLIC_API_URL).host : 'localhost:8000';
@@ -111,33 +87,35 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       sttWebSocketRef.current = ws;
 
       return new Promise<boolean>((resolve) => {
-        ws.onopen = () => {
+        ws.onopen = async () => {
           console.log('STT WebSocket connected');
           
-          // Initialize MediaRecorder for audio capture
-          const mediaRecorder = new MediaRecorder(stream, {
-            mimeType: 'audio/webm;codecs=opus'
-          });
-          
-          mediaRecorderRef.current = mediaRecorder;
+          try {
+            // Use PCM recorder to send raw audio
+            const recorder = new PCMRecorder();
+            pcmRecorderRef.current = recorder;
+            
+            await recorder.start(ws);
+            console.log('PCM recorder started - sending raw PCM audio');
 
-          mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-              ws.send(event.data);
-            }
-          };
-
-          setVoiceState(prev => ({ 
-            ...prev, 
-            isSTTConnecting: false, 
-            isSTTActive: true,
-            isRecording: true
-          }));
-
-          // Start recording
-          mediaRecorder.start(100); // Send data every 100ms
-          
-          resolve(true);
+            setVoiceState(prev => ({ 
+              ...prev, 
+              isSTTConnecting: false, 
+              isSTTActive: true,
+              isRecording: true
+            }));
+            
+            resolve(true);
+          } catch (error) {
+            console.error('Error starting PCM recorder:', error);
+            toast({
+              title: "Microphone Error",
+              description: "Failed to access microphone",
+              variant: "destructive"
+            });
+            setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
+            resolve(false);
+          }
         };
 
         ws.onmessage = (event) => {
@@ -186,8 +164,9 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
   // Stop STT
   const stopSTT = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
+    if (pcmRecorderRef.current) {
+      pcmRecorderRef.current.stop();
+      pcmRecorderRef.current = null;
     }
     
     if (sttWebSocketRef.current) {
@@ -195,11 +174,6 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       sttWebSocketRef.current.send(JSON.stringify({ type: 'stop_transcription' }));
       sttWebSocketRef.current.close();
       sttWebSocketRef.current = null;
-    }
-    
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach(track => track.stop());
-      audioStreamRef.current = null;
     }
 
     setVoiceState(prev => ({ 
@@ -241,9 +215,7 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
   // Speak text using TTS
   const speakText = useCallback(async (text: string) => {
-    // Check current state to avoid stale closure
-    const currentState = voiceState;
-    if (!currentState.isTTSEnabled || !token || !text.trim()) {
+    if (!voiceState.isTTSEnabled || !token || !text.trim()) {
       return;
     }
 

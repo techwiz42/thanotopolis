@@ -151,6 +151,14 @@ async def websocket_streaming_stt(
                         # Audio data received
                         audio_data = message["bytes"]
                         
+                        # Check if audio contains actual data (not silence)
+                        import struct
+                        samples = struct.unpack(f'<{len(audio_data)//2}h', audio_data)
+                        max_amplitude = max(abs(s) for s in samples) if samples else 0
+                        avg_amplitude = sum(abs(s) for s in samples) / len(samples) if samples else 0
+                        
+                        logger.info(f"Received audio data: {len(audio_data)} bytes, max_amp: {max_amplitude}, avg_amp: {avg_amplitude:.1f}")
+                        
                         # Start transcription session if not active
                         if not connection["is_transcribing"]:
                             logger.info("Starting live transcription session")
@@ -192,10 +200,18 @@ async def websocket_streaming_stt(
                                 }))
                             
                             # Create transcription session
+                            # Frontend now sends resampled PCM audio at 16kHz
+                            logger.info("Starting Deepgram session with: encoding=linear16, sample_rate=16000, channels=1")
                             transcription_session = await deepgram_service.start_live_transcription(
                                 on_message=on_transcript_message,
                                 on_error=on_transcript_error,
-                                interim_results=True
+                                interim_results=True,
+                                punctuate=True,
+                                smart_format=True,
+                                language="en-US",
+                                encoding="linear16",
+                                sample_rate=16000,
+                                channels=1
                             )
                             
                             await transcription_session.start()

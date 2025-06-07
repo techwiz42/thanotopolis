@@ -69,10 +69,10 @@ class DeepgramService:
         
         try:
             # Prepare audio source
-            source = FileSource(
-                buffer=audio_data,
-                mimetype=content_type
-            )
+            source = {
+                "buffer": audio_data,
+                "mimetype": content_type
+            }
             
             # Configure options
             options = PrerecordedOptions(
@@ -86,7 +86,7 @@ class DeepgramService:
             )
             
             # Send to Deepgram
-            response = await self.client.listen.asyncprerecorded.v("1").transcribe_file(
+            response = await self.client.listen.asyncrest.v("1").transcribe_file(
                 source, options
             )
             
@@ -238,11 +238,33 @@ class LiveTranscriptionSession:
             # Create connection using the new asyncwebsocket API
             self.connection = self.client.listen.asyncwebsocket.v("1")
             
-            # Set up event handlers
-            self.connection.on(LiveTranscriptionEvents.Transcript, self._handle_transcript)
-            self.connection.on(LiveTranscriptionEvents.Error, self._handle_error)
-            self.connection.on(LiveTranscriptionEvents.Warning, self._handle_warning)
-            self.connection.on(LiveTranscriptionEvents.Metadata, self._handle_metadata)
+            # Set up event handlers using async closure functions
+            async def transcript_handler(self_ref, *args, **kwargs):
+                logger.info(f"transcript_handler called with self_ref: {type(self_ref)}, args: {len(args)}, types: {[type(arg).__name__ for arg in args]}")
+                logger.info(f"kwargs: {kwargs}")
+                
+                # Check if transcript data is in kwargs
+                if kwargs:
+                    # Look for common transcript data fields in kwargs
+                    transcript_data = kwargs
+                    logger.info(f"Found kwargs as transcript_data: {str(transcript_data)[:200]}")
+                    await self._handle_transcript_data(transcript_data)
+                elif args:
+                    # First arg should be transcript data
+                    transcript_data = args[0]
+                    logger.info(f"transcript_data type: {type(transcript_data)}, content: {str(transcript_data)[:200]}")
+                    await self._handle_transcript_data(transcript_data)
+                else:
+                    logger.warning("No args or kwargs in transcript_handler")
+            
+            async def error_handler(self_ref, *args, **kwargs):
+                if args:
+                    await self._handle_error_data(args[0])
+                elif kwargs:
+                    await self._handle_error_data(kwargs)
+            
+            self.connection.on(LiveTranscriptionEvents.Transcript, transcript_handler)
+            self.connection.on(LiveTranscriptionEvents.Error, error_handler)
             
             # Start connection
             if await self.connection.start(self.options):
@@ -263,6 +285,8 @@ class LiveTranscriptionSession:
             raise RuntimeError("Transcription session not connected")
         
         try:
+            # Log audio data info for debugging
+            logger.info(f"Sending audio data: {len(audio_data)} bytes")
             await self.connection.send(audio_data)
         except Exception as e:
             logger.error(f"Error sending audio data: {e}")
@@ -282,50 +306,89 @@ class LiveTranscriptionSession:
                 if self.on_error:
                     self.on_error(e)
     
-    async def _handle_transcript(self, *args, **kwargs):
-        """Handle transcript messages from Deepgram."""
+    async def _handle_transcript_data(self, transcript_data):
+        """Handle transcript data directly."""
         try:
-            # Extract transcript data from the response
-            if args:
-                transcript_data = args[0]
+            logger.info(f"_handle_transcript_data called with: {type(transcript_data)}")
+            
+            if not transcript_data:
+                logger.warning("No transcript data received")
+                return
+            
+            # Extract the result from the kwargs structure
+            if isinstance(transcript_data, dict) and 'result' in transcript_data:
+                result = transcript_data['result']
+                logger.info(f"Extracted result: {result}")
                 
-                # Format the response
-                formatted_data = {
-                    "type": "transcript",
-                    "channel_index": transcript_data.get("channel_index", 0),
-                    "duration": transcript_data.get("duration", 0.0),
-                    "start": transcript_data.get("start", 0.0),
-                    "is_final": transcript_data.get("is_final", False),
-                    "speech_final": transcript_data.get("speech_final", False),
-                    "channel": transcript_data.get("channel", {}),
-                    "metadata": transcript_data.get("metadata", {})
-                }
-                
-                # Extract alternatives
-                if (transcript_data.get("channel") and 
-                    transcript_data["channel"].get("alternatives")):
-                    
-                    alternatives = transcript_data["channel"]["alternatives"]
-                    if alternatives:
-                        best_alternative = alternatives[0]
-                        formatted_data.update({
-                            "transcript": best_alternative.get("transcript", ""),
-                            "confidence": best_alternative.get("confidence", 0.0),
-                            "words": best_alternative.get("words", [])
-                        })
-                
-                # Call the message handler
-                self.on_message(formatted_data)
+                # Check if we can access the transcript from the result
+                if hasattr(result, 'channel') and hasattr(result.channel, 'alternatives'):
+                    alternatives = result.channel.alternatives
+                    if alternatives and len(alternatives) > 0:
+                        transcript_text = alternatives[0].transcript
+                        confidence = alternatives[0].confidence
+                        is_final = getattr(result, 'is_final', False)
+                        
+                        logger.info(f"Extracted transcript: '{transcript_text}', confidence: {confidence}, is_final: {is_final}")
+                        
+                        # Only process non-empty transcripts
+                        if transcript_text and transcript_text.strip():
+                            # Convert words to serializable format
+                            words_data = []
+                            if hasattr(alternatives[0], 'words') and alternatives[0].words:
+                                for word in alternatives[0].words:
+                                    words_data.append({
+                                        "word": getattr(word, 'word', ''),
+                                        "start": getattr(word, 'start', 0.0),
+                                        "end": getattr(word, 'end', 0.0),
+                                        "confidence": getattr(word, 'confidence', 0.0),
+                                        "punctuated_word": getattr(word, 'punctuated_word', ''),
+                                        "speaker": getattr(word, 'speaker', None)
+                                    })
+                            
+                            # Create formatted data for our handler
+                            formatted_data = {
+                                "type": "transcript",
+                                "transcript": transcript_text,
+                                "confidence": confidence,
+                                "is_final": is_final,
+                                "speech_final": getattr(result, 'speech_final', False),
+                                "duration": getattr(result, 'duration', 0.0),
+                                "start": getattr(result, 'start', 0.0),
+                                "words": words_data
+                            }
+                            
+                            logger.info(f"Calling message handler with: {formatted_data}")
+                            self.on_message(formatted_data)
+                        else:
+                            logger.debug(f"Skipping empty transcript (is_final: {is_final})")
+                    else:
+                        logger.debug("No alternatives in transcript result")
+                else:
+                    logger.warning("Result does not have expected channel/alternatives structure")
+            else:
+                logger.warning(f"Unexpected transcript_data structure: {type(transcript_data)}")
+                return
                 
         except Exception as e:
             logger.error(f"Error handling transcript: {e}")
             if self.on_error:
                 self.on_error(e)
     
+    async def _handle_error_data(self, error_data):
+        """Handle error data directly."""
+        try:
+            logger.error(f"Deepgram error: {error_data}")
+            
+            if self.on_error:
+                self.on_error(Exception(f"Deepgram error: {error_data}"))
+                
+        except Exception as e:
+            logger.error(f"Error handling Deepgram error: {e}")
+    
     async def _handle_error(self, *args, **kwargs):
         """Handle error messages from Deepgram."""
         try:
-            error_data = args[0] if args else {"error": "Unknown error"}
+            error_data = args[-1] if args else {"error": "Unknown error"}
             logger.error(f"Deepgram error: {error_data}")
             
             if self.on_error:
@@ -337,7 +400,7 @@ class LiveTranscriptionSession:
     async def _handle_warning(self, *args, **kwargs):
         """Handle warning messages from Deepgram."""
         try:
-            warning_data = args[0] if args else {"warning": "Unknown warning"}
+            warning_data = args[-1] if args else {"warning": "Unknown warning"}
             logger.warning(f"Deepgram warning: {warning_data}")
         except Exception as e:
             logger.error(f"Error handling Deepgram warning: {e}")
@@ -345,7 +408,7 @@ class LiveTranscriptionSession:
     async def _handle_metadata(self, *args, **kwargs):
         """Handle metadata messages from Deepgram."""
         try:
-            metadata = args[0] if args else {}
+            metadata = args[-1] if args else {}
             logger.debug(f"Deepgram metadata: {metadata}")
         except Exception as e:
             logger.error(f"Error handling Deepgram metadata: {e}")

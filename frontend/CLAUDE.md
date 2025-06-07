@@ -1,5 +1,11 @@
 # Thanotopolis Frontend - WebSocket Connection Issues
 
+## IMPORTANT: Git Commit Policy
+**NEVER COMMIT CODE TO GIT ON BEHALF OF THE USER**
+- User explicitly forbids automated git commits
+- Always let the user handle their own git operations
+- Only suggest what changes could be committed, never execute git commit commands
+
 ## Issue 1: Message Streaming on Login
 When a user logs in and resumes a conversation, messages would stream into the conversation page repeatedly. After refreshing the browser (forcing re-login), messages would stream correctly only once. This unstable behavior only occurred on the first login.
 

@@ -127,6 +127,11 @@ export default function ConversationPage() {
   useEffect(() => {
     currentTTSEnabledRef.current = isTTSEnabled;
     currentSpeakTextRef.current = speakText;
+    
+    // Clear completed messages when TTS is disabled to allow future auto-play
+    if (!isTTSEnabled) {
+      completedMessagesRef.current.clear();
+    }
   }, [isTTSEnabled, speakText]);
   
   // Auto-scroll when new streaming content arrives
@@ -203,12 +208,16 @@ export default function ConversationPage() {
   const completedMessagesRef = useRef<Set<string>>(new Set());
 
   const handleMessage = useCallback((message: Message) => {
+    // Use refs to get current TTS state - avoid stale closure
+    const currentTTSEnabled = currentTTSEnabledRef.current;
+    const currentSpeakTextFn = currentSpeakTextRef.current;
+    
     console.log('TTS Debug: handleMessage called:', {
       messageId: message.id,
       senderType: message.sender.type,
       isOwner: message.sender.is_owner,
       agentName: message.sender.name,
-      isTTSEnabled,
+      currentTTSEnabled,
       contentPreview: message.content.substring(0, 50) + '...'
     });
 
@@ -227,10 +236,7 @@ export default function ConversationPage() {
           resetStreamingForAgent(message.sender.name, message.id);
         }
         
-        // Handle TTS for agent messages - use refs to avoid stale closure
-        const currentTTSEnabled = currentTTSEnabledRef.current;
-        const currentSpeakTextFn = currentSpeakTextRef.current;
-        
+        // Handle TTS for NEW agent messages only
         if (currentTTSEnabled && message.content.trim() && message.id) {
           // Only speak if we haven't spoken this message before
           if (!completedMessagesRef.current.has(message.id)) {

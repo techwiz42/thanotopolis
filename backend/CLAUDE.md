@@ -1,5 +1,11 @@
 # Thanotopolis Backend Project Status
 
+## IMPORTANT: Git Commit Policy
+**NEVER COMMIT CODE TO GIT ON BEHALF OF THE USER**
+- User explicitly forbids automated git commits
+- Always let the user handle their own git operations
+- Only suggest what changes could be committed, never execute git commit commands
+
 ## Overview
 This is a multi-tenant backend system with authentication, conversations, and RAG (Retrieval Augmented Generation) capabilities. The code uses FastAPI, SQLAlchemy with asyncpg for PostgreSQL, and includes voice service integrations.
 
