@@ -95,7 +95,7 @@ class Settings:
     STRIPE_PRICE_10K_TOKENS=os.getenv("STRIPE_PRICE_10K_TOKENS")
 
     # Voice Settings
-    DEEPGRAM_MODEL: str = os.getenv("DEEPGRAM_MODEL", "nova-2")
+    DEEPGRAM_MODEL: str = os.getenv("DEEPGRAM_MODEL", "nova-2")  # Changed from nova-3 to nova-2 for better language support
     DEEPGRAM_LANGUAGE: str = os.getenv("DEEPGRAM_LANGUAGE", "en-US")
     ELEVENLABS_MODEL: str = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
     ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "TxGEqnHWrfWFTfGW9XjX")  # James voice

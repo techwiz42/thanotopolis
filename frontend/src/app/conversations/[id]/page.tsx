@@ -12,6 +12,7 @@ import { Loader2, ChevronLeft, UserPlus } from 'lucide-react';
 import MessageList from '@/app/conversations/[id]/components/MessageList';
 import MessageInput from '@/app/conversations/[id]/components/MessageInput';
 import VoiceControls from '@/app/conversations/[id]/components/VoiceControls';
+import { LanguageSelector } from '@/app/conversations/[id]/components/LanguageSelector';
 import { TypingIndicator } from '@/app/conversations/[id]/components/TypingIndicator';
 import { StreamingIndicator } from '@/app/conversations/[id]/components/StreamingIndicator';
 
@@ -50,6 +51,35 @@ export default function ConversationPage() {
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [pendingVoiceText, setPendingVoiceText] = useState('');
   
+  // Initialize language from localStorage or default to en-US
+  const [selectedLanguage, setSelectedLanguage] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('stt-language') || 'en-US';
+    }
+    return 'en-US';
+  });
+  
+  // Save language preference to localStorage when it changes
+  const handleLanguageChange = useCallback((language: string) => {
+    console.log('Language change requested:', language);
+    setSelectedLanguage(language);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('stt-language', language);
+    }
+    
+    // Restore focus to message input after language change
+    setTimeout(() => {
+      // More specific selector for the message input textarea
+      const messageInput = document.querySelector('textarea[data-testid="message-input"], textarea') as HTMLTextAreaElement;
+      if (messageInput) {
+        messageInput.focus();
+        // Ensure cursor is at the end if there's existing text
+        const length = messageInput.value.length;
+        messageInput.setSelectionRange(length, length);
+      }
+    }, 150); // Slightly longer delay to ensure STT restart is complete
+  }, []);
+  
   // Streaming tokens handling
   const { streamingState, handleToken, resetStreamingForAgent } = useStreamingTokens();
   
@@ -81,6 +111,7 @@ export default function ConversationPage() {
   // Track accumulated transcript across utterances
   const accumulatedTranscriptRef = useRef<string>('');
   const lastFinalTranscriptRef = useRef<string>('');
+  const lastInterimTranscriptRef = useRef<string>('');
 
   // Voice transcript handler - Accumulate across utterances
   const handleVoiceTranscript = useCallback((transcript: string, isFinal: boolean, speechFinal?: boolean) => {
@@ -99,34 +130,46 @@ export default function ConversationPage() {
       // Speech is final - this utterance is complete, append to accumulated
       console.log('Speech final - appending to accumulated transcript');
       
-      if (accumulatedTranscriptRef.current) {
-        accumulatedTranscriptRef.current += ' ' + transcript;
-      } else {
-        accumulatedTranscriptRef.current = transcript;
+      // Only append if this transcript is different from the last final
+      if (transcript !== lastFinalTranscriptRef.current) {
+        if (accumulatedTranscriptRef.current) {
+          accumulatedTranscriptRef.current += ' ' + transcript;
+        } else {
+          accumulatedTranscriptRef.current = transcript;
+        }
       }
       
       lastFinalTranscriptRef.current = '';
+      lastInterimTranscriptRef.current = '';
       setVoiceTranscript(accumulatedTranscriptRef.current);
       setPendingVoiceText('');
     } else if (isFinal) {
       // Final but not speech final - update current utterance
       console.log('Final transcript (not speech final)');
       
-      // Show accumulated + current final transcript
-      const displayTranscript = accumulatedTranscriptRef.current 
-        ? accumulatedTranscriptRef.current + ' ' + transcript
-        : transcript;
-      
-      lastFinalTranscriptRef.current = transcript;
-      setVoiceTranscript(displayTranscript);
-      setPendingVoiceText('');
+      // Only update if different from last final
+      if (transcript !== lastFinalTranscriptRef.current) {
+        lastFinalTranscriptRef.current = transcript;
+        
+        // Show accumulated + current final transcript
+        const displayTranscript = accumulatedTranscriptRef.current 
+          ? accumulatedTranscriptRef.current + ' ' + transcript
+          : transcript;
+        
+        setVoiceTranscript(displayTranscript);
+        setPendingVoiceText('');
+      }
     } else {
-      // Interim transcript
-      const displayTranscript = accumulatedTranscriptRef.current 
-        ? accumulatedTranscriptRef.current + ' ' + transcript
-        : transcript;
-      
-      setPendingVoiceText(displayTranscript);
+      // Interim transcript - only update if different
+      if (transcript !== lastInterimTranscriptRef.current) {
+        lastInterimTranscriptRef.current = transcript;
+        
+        const displayTranscript = accumulatedTranscriptRef.current 
+          ? accumulatedTranscriptRef.current + ' ' + transcript
+          : transcript;
+        
+        setPendingVoiceText(displayTranscript);
+      }
     }
   }, []); // No dependencies to avoid stale closures
 
@@ -138,6 +181,7 @@ export default function ConversationPage() {
     // Reset transcript tracking refs
     accumulatedTranscriptRef.current = '';
     lastFinalTranscriptRef.current = '';
+    lastInterimTranscriptRef.current = '';
   }, []);
 
   // Using the voice hook
@@ -153,7 +197,8 @@ export default function ConversationPage() {
     stopSpeaking
   } = useVoice({
     conversationId,
-    onTranscript: handleVoiceTranscript
+    onTranscript: handleVoiceTranscript,
+    languageCode: selectedLanguage
   });
   
   // Use refs to avoid stale closure issues with TTS
@@ -411,17 +456,34 @@ export default function ConversationPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">{conversation.title}</h1>
         
-        {/* Voice Controls */}
-        <VoiceControls
-          isSTTEnabled={isSTTEnabled}
-          isTTSEnabled={isTTSEnabled}
-          isSTTActive={isSTTActive}
-          isTTSActive={isTTSActive}
-          isSTTConnecting={isSTTConnecting}
-          onToggleSTT={toggleSTT}
-          onToggleTTS={toggleTTS}
-          className="ml-4"
-        />
+        <div className="flex items-center space-x-4">
+          {/* Language Selector - Only visible when STT is enabled */}
+          {isSTTEnabled && (
+            <LanguageSelector
+              value={selectedLanguage}
+              onChange={handleLanguageChange}
+              disabled={false}
+            />
+          )}
+          
+          {/* Debug info for language selector */}
+          {isSTTEnabled && (
+            <div className="text-xs text-gray-400">
+              Lang: {selectedLanguage} | Active: {isSTTActive ? '✓' : '✗'} | Disabled: {isSTTActive ? 'Yes' : 'No'}
+            </div>
+          )}
+          
+          {/* Voice Controls */}
+          <VoiceControls
+            isSTTEnabled={isSTTEnabled}
+            isTTSEnabled={isTTSEnabled}
+            isSTTActive={isSTTActive}
+            isTTSActive={isTTSActive}
+            isSTTConnecting={isSTTConnecting}
+            onToggleSTT={toggleSTT}
+            onToggleTTS={toggleTTS}
+          />
+        </div>
       </div>
       
       {/* Navigation and participant management */}

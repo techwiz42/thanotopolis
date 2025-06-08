@@ -102,6 +102,8 @@ async def authenticate_stt_websocket(websocket: WebSocket, token: str, db: Async
 async def websocket_streaming_stt(
     websocket: WebSocket,
     token: str,
+    language: Optional[str] = None,
+    model: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """WebSocket endpoint for real-time speech-to-text streaming."""
@@ -149,7 +151,7 @@ async def websocket_streaming_stt(
                         
                         # Start transcription session if not active
                         if not connection["is_transcribing"]:
-                            logger.info("Starting live transcription session")
+                            logger.info(f"Starting live transcription session with language: {language or 'auto-detect'}")
                             
                             def on_transcript_message(transcript_data):
                                 """Handle transcript messages."""
@@ -168,7 +170,8 @@ async def websocket_streaming_stt(
                                             model_name=settings.DEEPGRAM_MODEL
                                         ))
                                 
-                                asyncio.create_task(websocket.send_json({
+                                # Include detected language if available
+                                response_data = {
                                     "type": "transcript",
                                     "is_final": transcript_data.get("is_final", False),
                                     "speech_final": transcript_data.get("speech_final", False),
@@ -176,7 +179,13 @@ async def websocket_streaming_stt(
                                     "confidence": transcript_data.get("confidence", 0.0),
                                     "words": transcript_data.get("words", []),
                                     "timestamp": datetime.utcnow().isoformat()
-                                }))
+                                }
+                                
+                                # Add detected language if available
+                                if transcript_data.get("detected_language"):
+                                    response_data["detected_language"] = transcript_data["detected_language"]
+                                
+                                asyncio.create_task(websocket.send_json(response_data))
                             
                             def on_transcript_error(error):
                                 """Handle transcript errors."""
@@ -187,15 +196,26 @@ async def websocket_streaming_stt(
                                     "timestamp": datetime.utcnow().isoformat()
                                 }))
                             
-                            # Create transcription session with auto language detection
+                            # Create transcription session with specified language or auto-detection
+                            # Check for language preference from control message first, then URL params
+                            session_language = connection.get("language", language)
+                            session_model = connection.get("model", model)
+                            
+                            # If language is 'auto' or None, enable auto-detection
+                            use_language = None if session_language in [None, 'auto', 'auto-detect'] else session_language
+                            enable_detection = session_language in [None, 'auto', 'auto-detect']
+                            
+                            logger.info(f"Creating transcription session - Language: {use_language or 'auto-detect'}, Model: {session_model or settings.DEEPGRAM_MODEL}")
+                            
                             transcription_session = await deepgram_service.start_live_transcription(
                                 on_message=on_transcript_message,
                                 on_error=on_transcript_error,
                                 interim_results=True,
                                 punctuate=True,
                                 smart_format=True,
-                                language=None,  # None enables auto-detection
-                                detect_language=True,  # Enable language detection
+                                language=use_language,
+                                detect_language=enable_detection,
+                                model=session_model,
                                 encoding="linear16",
                                 sample_rate=16000,
                                 channels=1
@@ -205,9 +225,20 @@ async def websocket_streaming_stt(
                             connection["transcription_session"] = transcription_session
                             connection["is_transcribing"] = True
                         
-                        # Send audio to transcription
+                        # Send audio to transcription with validation
                         if transcription_session and audio_data:
-                            await transcription_session.send_audio(audio_data)
+                            try:
+                                # Validate audio data size (prevent too small or too large chunks)
+                                if len(audio_data) < 10:
+                                    logger.debug(f"Skipping tiny audio chunk: {len(audio_data)} bytes")
+                                    continue
+                                if len(audio_data) > 32768:  # 32KB max chunk
+                                    logger.warning(f"Large audio chunk: {len(audio_data)} bytes")
+                                
+                                await transcription_session.send_audio(audio_data)
+                            except Exception as audio_error:
+                                logger.error(f"Error sending audio data (language: {connection.get('language', 'auto')}): {audio_error}")
+                                # Don't break the loop for audio send errors - just log and continue
                     
                     elif "text" in message:
                         # Control message
@@ -216,10 +247,22 @@ async def websocket_streaming_stt(
                             control_type = control_data.get("type")
                             
                             if control_type == "start_transcription":
+                                # Extract language and model from control message
+                                control_language = control_data.get("language")
+                                control_model = control_data.get("model")
+                                
+                                # Store language preference in connection for later use
+                                if control_language:
+                                    connection["language"] = control_language
+                                if control_model:
+                                    connection["model"] = control_model
+                                
                                 if not connection["is_transcribing"]:
                                     await websocket.send_json({
                                         "type": "transcription_ready",
                                         "message": "Ready to receive audio",
+                                        "language": control_language or language or "auto-detect",
+                                        "model": control_model or model or settings.DEEPGRAM_MODEL,
                                         "timestamp": datetime.utcnow().isoformat()
                                     })
                             
@@ -249,15 +292,20 @@ async def websocket_streaming_stt(
                             })
                 
             except WebSocketDisconnect:
-                logger.info(f"STT WebSocket disconnected: {connection_id}")
+                logger.info(f"STT WebSocket disconnected: {connection_id} (language: {connection.get('language', 'auto')})")
                 break
             except Exception as e:
-                logger.error(f"Error in STT WebSocket loop: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "message": str(e),
-                    "timestamp": datetime.utcnow().isoformat()
-                })
+                logger.error(f"Error in STT WebSocket loop for {connection_id} (language: {connection.get('language', 'auto')}): {e}")
+                logger.error(f"Exception type: {type(e).__name__}")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(e),
+                        "language": connection.get('language', 'auto'),
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                except Exception as send_error:
+                    logger.error(f"Failed to send error message: {send_error}")
                 break
     
     except Exception as e:

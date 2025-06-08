@@ -18,6 +18,91 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def map_language_code_to_deepgram(language: str) -> str:
+    """
+    Map standard locale codes to Deepgram's expected format.
+    
+    Deepgram uses simplified language codes:
+    - 'en' or 'en-US' for English
+    - 'fr' for French (not 'fr-FR')
+    - 'fr-CA' for Canadian French
+    - etc.
+    """
+    if not language:
+        return None
+    
+    # Map common locale codes to Deepgram format
+    language_mapping = {
+        'fr-FR': 'fr',      # French (France) -> French
+        'en-GB': 'en-GB',   # English (UK) stays as is
+        'en-US': 'en-US',   # English (US) stays as is
+        'es-ES': 'es',      # Spanish (Spain) -> Spanish
+        'es-MX': 'es',      # Spanish (Mexico) -> Spanish
+        'de-DE': 'de',      # German (Germany) -> German
+        'de-CH': 'de-CH',   # German (Switzerland) -> German (Swiss)
+        'it-IT': 'it',      # Italian (Italy) -> Italian
+        'pt-PT': 'pt',      # Portuguese (Portugal) -> Portuguese
+        'pt-BR': 'pt-BR',   # Portuguese (Brazil) stays as is
+        'nl-NL': 'nl',      # Dutch (Netherlands) -> Dutch
+        'ja-JP': 'ja',      # Japanese (Japan) -> Japanese
+        'ko-KR': 'ko',      # Korean (Korea) -> Korean
+        'zh-CN': 'zh-CN',   # Chinese (Simplified) stays as is
+        'zh-TW': 'zh-TW',   # Chinese (Traditional) stays as is
+        'ru-RU': 'ru',      # Russian (Russia) -> Russian
+        'ar-SA': 'ar',      # Arabic (Saudi Arabia) -> Arabic
+        'hi-IN': 'hi',      # Hindi (India) -> Hindi
+        'sv-SE': 'sv',      # Swedish (Sweden) -> Swedish
+        'da-DK': 'da',      # Danish (Denmark) -> Danish
+        'fi-FI': 'fi',      # Finnish (Finland) -> Finnish
+        'no-NO': 'no',      # Norwegian (Norway) -> Norwegian
+        'pl-PL': 'pl',      # Polish (Poland) -> Polish
+        'uk-UA': 'uk',      # Ukrainian (Ukraine) -> Ukrainian
+        'tr-TR': 'tr',      # Turkish (Turkey) -> Turkish
+        'id-ID': 'id',      # Indonesian (Indonesia) -> Indonesian
+        'th-TH': 'th',      # Thai (Thailand) -> Thai
+        'ms-MY': 'ms',      # Malay (Malaysia) -> Malay
+        'vi-VN': 'vi',      # Vietnamese (Vietnam) -> Vietnamese
+        'he-IL': 'he',      # Hebrew (Israel) -> Hebrew (note: not in Nova-2 docs)
+        'el-GR': 'el',      # Greek (Greece) -> Greek
+        'cs-CZ': 'cs',      # Czech (Czech Republic) -> Czech
+        'sk-SK': 'sk',      # Slovak (Slovakia) -> Slovak
+        'hu-HU': 'hu',      # Hungarian (Hungary) -> Hungarian
+        'ro-RO': 'ro',      # Romanian (Romania) -> Romanian
+    }
+    
+    # Return mapped value or original if not in mapping
+    mapped = language_mapping.get(language, language)
+    logger.debug(f"Language mapping: {language} -> {mapped}")
+    return mapped
+
+
+def get_compatible_model_for_language(language: str, requested_model: str) -> str:
+    """
+    Get a compatible model for the specified language.
+    
+    Nova-3 model has limited language support. For unsupported languages,
+    fallback to nova-2 or base model.
+    """
+    if not language:
+        return requested_model
+    
+    # Nova-3 supported languages (confirmed through testing and Deepgram docs)
+    # Nova-3 has more limited language support compared to nova-2 and base models
+    nova3_supported_languages = {
+        'en', 'en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN', 'en-NZ', 'en-ZA',  # English variants
+        'es', 'es-ES',  # Spanish (confirmed)
+        # Note: French (fr), German (de), and many other languages are NOT supported by nova-3
+        # They work fine with nova-2 and base models
+    }
+    
+    # If requesting nova-3 but language is not supported, fallback to nova-2
+    if requested_model == 'nova-3' and language not in nova3_supported_languages:
+        logger.warning(f"Nova-3 model does not support language '{language}', falling back to nova-2")
+        return 'nova-2'
+    
+    return requested_model
+
+
 class DeepgramService:
     """Service for handling Speech-to-Text using Deepgram."""
     
@@ -75,9 +160,22 @@ class DeepgramService:
                 "mimetype": content_type
             }
             
+            # Determine the model to use
+            requested_model = model or settings.DEEPGRAM_MODEL
+            
+            # Get mapped language first to check compatibility
+            mapped_language = None
+            if not detect_language and language:
+                mapped_language = map_language_code_to_deepgram(language)
+            elif not detect_language:
+                mapped_language = map_language_code_to_deepgram(settings.DEEPGRAM_LANGUAGE)
+            
+            # Get compatible model for the language
+            compatible_model = get_compatible_model_for_language(mapped_language, requested_model)
+            
             # Configure options
             options = PrerecordedOptions(
-                model=model or settings.DEEPGRAM_MODEL,
+                model=compatible_model,
                 punctuate=punctuate,
                 diarize=diarize,
                 smart_format=smart_format,
@@ -94,10 +192,13 @@ class DeepgramService:
                     pass
             
             # Only set language if not detecting and language is provided
-            if not detect_language and language:
-                options.language = language
-            elif not detect_language:
-                options.language = settings.DEEPGRAM_LANGUAGE
+            if not detect_language and mapped_language:
+                options.language = mapped_language
+                logger.info(f"Using language: {language} -> {mapped_language} with model: {compatible_model}")
+                
+                # Log model fallback information if applicable
+                if compatible_model != requested_model:
+                    logger.info(f"Model changed from {requested_model} to {compatible_model} for language compatibility")
             
             # Send to Deepgram
             response = await self.client.listen.asyncrest.v("1").transcribe_file(
@@ -212,30 +313,67 @@ class DeepgramService:
         if not self.is_available():
             raise RuntimeError("Deepgram service not available")
         
+        # Determine the model to use
+        requested_model = model or settings.DEEPGRAM_MODEL
+        
+        # Get mapped language first to check compatibility
+        mapped_language = None
+        if not detect_language and language:
+            mapped_language = map_language_code_to_deepgram(language)
+        elif not detect_language:
+            mapped_language = map_language_code_to_deepgram(settings.DEEPGRAM_LANGUAGE)
+        
+        # Get compatible model for the language
+        compatible_model = get_compatible_model_for_language(mapped_language, requested_model)
+        
         options = LiveOptions(
-            model=model or settings.DEEPGRAM_MODEL,
+            model=compatible_model,
             punctuate=punctuate,
             interim_results=interim_results,
             smart_format=smart_format,
             encoding=encoding,
             sample_rate=sample_rate,
             channels=channels,
-            utterance_end_ms=1000,  # End utterance after 1 second of silence
+            utterance_end_ms=1500,  # Increased to 1.5 seconds for better multilingual support
             vad_events=True,        # Enable voice activity detection events
-            endpointing=True        # Enable endpointing to detect utterance boundaries
+            endpointing=True,       # Enable endpointing to detect utterance boundaries
+            # Additional options for better multilingual stability
+            no_delay=True,          # Reduce latency
+            numerals=True,          # Better number handling across languages
+            multichannel=False      # Ensure single channel processing
         )
         
         # For live transcription, language auto-detection is enabled by not setting a language
         # Only set language if explicitly provided and not auto-detecting
         if not detect_language and language:
-            options.language = language
-            logger.info(f"Using specified language: {language}")
+            options.language = mapped_language
+            logger.info(f"Using specified language: {language} -> {mapped_language} with model: {compatible_model}")
         elif not detect_language:
-            options.language = settings.DEEPGRAM_LANGUAGE
-            logger.info(f"Using default language: {settings.DEEPGRAM_LANGUAGE}")
+            options.language = mapped_language
+            logger.info(f"Using default language: {settings.DEEPGRAM_LANGUAGE} -> {mapped_language} with model: {compatible_model}")
         else:
             # If detect_language=True, we don't set any language (enables auto-detection)
-            logger.info("Language auto-detection enabled - no language specified")
+            logger.info(f"Language auto-detection enabled - no language specified with model: {compatible_model}")
+        
+        # Log the complete options being sent to Deepgram
+        options_dict = {
+            'model': options.model,
+            'language': getattr(options, 'language', None),
+            'punctuate': options.punctuate,
+            'interim_results': options.interim_results,
+            'smart_format': options.smart_format,
+            'encoding': options.encoding,
+            'sample_rate': options.sample_rate,
+            'channels': options.channels,
+            'utterance_end_ms': getattr(options, 'utterance_end_ms', None),
+            'vad_events': getattr(options, 'vad_events', None),
+            'endpointing': getattr(options, 'endpointing', None)
+        }
+        logger.info(f"Complete LiveOptions being sent to Deepgram: {options_dict}")
+        
+        # Log model fallback information if applicable
+        if compatible_model != requested_model:
+            logger.info(f"Model changed from {requested_model} to {compatible_model} for language compatibility")
         
         return LiveTranscriptionSession(
             self.client,
@@ -268,6 +406,9 @@ class LiveTranscriptionSession:
             # Create connection using the new asyncwebsocket API
             self.connection = self.client.listen.asyncwebsocket.v("1")
             
+            # Log the exact options being used for connection
+            logger.info(f"Starting Deepgram connection with options: {self.options.__dict__}")
+            
             # Set up event handlers using async closure functions
             async def transcript_handler(self_ref, *args, **kwargs):
                 # Check if transcript data is in kwargs
@@ -281,6 +422,7 @@ class LiveTranscriptionSession:
                     logger.warning("No args or kwargs in transcript_handler")
             
             async def error_handler(self_ref, *args, **kwargs):
+                logger.error(f"Deepgram error handler called with args: {args}, kwargs: {kwargs}")
                 if args:
                     await self._handle_error_data(args[0])
                 elif kwargs:
@@ -290,14 +432,25 @@ class LiveTranscriptionSession:
             self.connection.on(LiveTranscriptionEvents.Error, error_handler)
             
             # Start connection
-            if await self.connection.start(self.options):
+            logger.info("Attempting to start Deepgram connection...")
+            connection_result = await self.connection.start(self.options)
+            logger.info(f"Deepgram connection start result: {connection_result}")
+            
+            if connection_result:
                 self.is_connected = True
-                logger.info("Live transcription session started")
+                logger.info("Live transcription session started successfully")
             else:
+                logger.error("Deepgram connection.start() returned False")
                 raise RuntimeError("Failed to start live transcription session")
                 
         except Exception as e:
             logger.error(f"Error starting live transcription: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Exception details: {str(e)}")
+            if hasattr(e, 'response'):
+                logger.error(f"HTTP Response: {e.response}")
+            if hasattr(e, 'status_code'):
+                logger.error(f"Status code: {e.status_code}")
             if self.on_error:
                 self.on_error(e)
             raise
@@ -310,7 +463,17 @@ class LiveTranscriptionSession:
         try:
             await self.connection.send(audio_data)
         except Exception as e:
-            logger.error(f"Error sending audio data: {e}")
+            # Enhanced error logging for audio transmission issues
+            logger.error(f"Error sending audio data (model: {getattr(self.options, 'model', 'unknown')}, language: {getattr(self.options, 'language', 'auto')}): {e}")
+            logger.error(f"Audio data size: {len(audio_data)} bytes")
+            logger.error(f"Connection status: connected={self.is_connected}")
+            
+            # Provide specific error context for debugging
+            if 'connection' in str(e).lower():
+                logger.error("Audio transmission failed due to connection issue - may need reconnection")
+            elif 'invalid' in str(e).lower():
+                logger.error("Audio data format may be invalid for the selected language/model")
+            
             if self.on_error:
                 self.on_error(e)
             raise
@@ -349,6 +512,9 @@ class LiveTranscriptionSession:
                         if transcript_text and transcript_text.strip():
                             # Pass through raw Deepgram results - let frontend handle accumulation
                             speech_final = getattr(result, 'speech_final', False)
+                            
+                            # Log transcript details for debugging
+                            logger.debug(f"Transcript received - Text: '{transcript_text[:50]}...', is_final: {is_final}, speech_final: {speech_final}")
                             
                             # Check for detected language information
                             detected_language = None

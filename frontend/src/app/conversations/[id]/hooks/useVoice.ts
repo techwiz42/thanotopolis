@@ -41,25 +41,25 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const isTogglingSTTRef = useRef<boolean>(false);
 
-  // Initialize streaming STT service
-  const sttService = useStreamingSpeechToText({
+  // Create STT options that include the current language
+  const sttOptions = useMemo(() => ({
     token: token || '', // Pass the authentication token
-    languageCode: languageCode || 'auto', // Use auto-detection by default
-    model: 'nova-2',
-    onTranscription: (text, isFinal) => {
+    languageCode: languageCode || 'auto', // Use current language or auto-detection
+    model: 'nova-2', // Use nova-2 for better multilingual support
+    onTranscription: (text: string, isFinal: boolean) => {
       if (onTranscript) {
         onTranscript(text, isFinal, isFinal); // speechFinal = isFinal for simplicity
       }
     },
-    onConnectionChange: (isConnected) => {
+    onConnectionChange: (isConnected: boolean) => {
       console.log('STT connection change:', isConnected);
       setVoiceState(prev => ({ 
         ...prev, 
         isSTTActive: isConnected && prev.isSTTEnabled,
-        isSTTConnecting: !isConnected && prev.isSTTEnabled && sttService.isListening
+        isSTTConnecting: !isConnected && prev.isSTTEnabled
       }));
     },
-    onError: (error) => {
+    onError: (error: string) => {
       console.error('STT Error:', error);
       toast({
         title: "Voice Input Error",
@@ -73,7 +73,10 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
         isSTTConnecting: false
       }));
     }
-  });
+  }), [token, languageCode, onTranscript, toast]);
+
+  // Initialize streaming STT service with current options
+  const sttService = useStreamingSpeechToText(sttOptions);
 
   // Cleanup function
   const cleanup = useCallback(() => {
@@ -279,6 +282,22 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
     setVoiceState(prev => ({ ...prev, isTTSActive: false }));
   }, []);
 
+  // Handle language changes while STT is enabled
+  useEffect(() => {
+    // If STT is enabled and language changed, restart the connection
+    if (voiceState.isSTTEnabled && languageCode) {
+      console.log('Language changed to:', languageCode, '- restarting STT connection');
+      
+      // Stop current connection
+      sttService.stopListening();
+      
+      // Wait a bit for cleanup, then restart with new language
+      setTimeout(async () => {
+        await initializeSTT();
+      }, 500);
+    }
+  }, [languageCode]); // Only react to language changes
+  
   // Cleanup on unmount
   useEffect(() => {
     return () => {

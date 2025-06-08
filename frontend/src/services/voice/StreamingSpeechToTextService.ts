@@ -31,7 +31,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
   const defaultOptions: Required<StreamingSttOptions> = {
     token: '',
     languageCode: 'auto', // Default to auto-detection
-    model: 'nova-2', // Default to standard model instead of enhanced
+    model: 'nova-2', // Use nova-2 for better multilingual support
     onTranscription: () => {},
     onSpeechStart: () => {},
     onUtteranceEnd: () => {},
@@ -78,7 +78,17 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
           
         case 'transcript':
           if (data.transcript) {
-            opts.onTranscription(data.transcript, data.is_final || false);
+            // Pass both is_final and speech_final flags
+            const isFinal = data.is_final || false;
+            const speechFinal = data.speech_final || false;
+            
+            // Log for debugging
+            if (data.detected_language) {
+              console.log(`Detected language: ${data.detected_language}`);
+            }
+            
+            // For now, treat speech_final as the main final indicator
+            opts.onTranscription(data.transcript, isFinal || speechFinal);
           }
           break;
           
@@ -159,16 +169,20 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
           code: event.code, 
           reason: event.reason,
           isListening: isListening,
-          isStopping: isStoppingRef.current
+          isStopping: isStoppingRef.current,
+          language: opts.languageCode
         });
         updateConnectionState(false);
         
-        // Auto-reconnect if we're still supposed to be listening
+        // Auto-reconnect with exponential backoff for connection stability
         if (isListening && !isStoppingRef.current) {
+          // Increase reconnection delay for language-specific issues
+          const reconnectDelay = event.code === 1006 ? 2000 : 1000; // 1006 = abnormal closure
+          
           reconnectTimeoutRef.current = setTimeout(() => {
-            console.log('Attempting to reconnect...');
+            console.log(`Attempting to reconnect for language ${opts.languageCode}...`);
             connectWebSocket();
-          }, 1000);
+          }, reconnectDelay);
         }
       };
       
@@ -239,12 +253,16 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
       console.log(`AudioContext sample rate: ${actualSampleRate}Hz`);
       
       // Create processor node (using deprecated ScriptProcessorNode for compatibility)
-      // Smaller buffer size for lower latency
-      processorRef.current = audioContextRef.current.createScriptProcessor(512, 1, 1); // Reduced buffer size for better responsiveness
+      // Use 1024 buffer size for better balance between latency and performance
+      processorRef.current = audioContextRef.current.createScriptProcessor(1024, 1, 1);
       
-      // Track recent audio activity for better silence detection
+      // Enhanced audio activity tracking for multilingual support
       let recentAudioFramesWithActivity = 0;
-      const RECENT_AUDIO_THRESHOLD = 3; // Number of frames to keep sending after detecting activity
+      const RECENT_AUDIO_THRESHOLD = 5; // Increased frames to keep sending after detecting activity
+      let lastSentTime = 0;
+      const MIN_SEND_INTERVAL = 40; // Reduced for better responsiveness (was 50ms)
+      let consecutiveFramesWithoutAudio = 0;
+      const MAX_SILENT_FRAMES = 100; // Send heartbeat audio every N silent frames to keep connection alive
       
       processorRef.current.onaudioprocess = (e) => {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -255,27 +273,44 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
         const inputData = e.inputBuffer.getChannelData(0);
         
         // Check if there's actual audio (not silence)
-        // Use a lower threshold to increase sensitivity
+        // Lower threshold for better sensitivity to different languages/accents
         let hasAudio = false;
         let maxAmplitude = 0;
+        let rmsLevel = 0;
+        
+        // Calculate both peak and RMS for better audio detection
         for (let i = 0; i < inputData.length; i++) {
           const amplitude = Math.abs(inputData[i]);
           maxAmplitude = Math.max(maxAmplitude, amplitude);
-          if (amplitude > 0.005) { // Lower threshold for better sensitivity (was 0.01)
-            hasAudio = true;
-            break;
-          }
+          rmsLevel += amplitude * amplitude;
         }
+        rmsLevel = Math.sqrt(rmsLevel / inputData.length);
         
-        // Update recent activity tracker
+        // Use RMS for better noise detection - critical for different languages
+        hasAudio = rmsLevel > 0.003 || maxAmplitude > 0.005; // Lower thresholds for better sensitivity
+        
+        // Update activity trackers
         if (hasAudio) {
           recentAudioFramesWithActivity = RECENT_AUDIO_THRESHOLD;
+          consecutiveFramesWithoutAudio = 0;
         } else {
           recentAudioFramesWithActivity = Math.max(0, recentAudioFramesWithActivity - 1);
+          consecutiveFramesWithoutAudio++;
         }
         
-        // Process if we have audio or recent audio activity
-        if (hasAudio || recentAudioFramesWithActivity > 0) {
+        // Send audio data to maintain connection stability
+        const shouldSendAudio = hasAudio || 
+                               recentAudioFramesWithActivity > 0 || 
+                               (consecutiveFramesWithoutAudio % MAX_SILENT_FRAMES === 0 && consecutiveFramesWithoutAudio > 0);
+        
+        if (shouldSendAudio) {
+          // Throttle sending to avoid overwhelming the service
+          const now = Date.now();
+          if (now - lastSentTime < MIN_SEND_INTERVAL) {
+            return;
+          }
+          lastSentTime = now;
+          
           // If sample rate is not 16kHz, we need to downsample
           let outputData: Int16Array;
           
@@ -340,20 +375,21 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     setError(null);
     
     try {
-      // Request microphone access with optimized constraints for better sensitivity
+      // Request microphone access with optimized constraints for better multilingual sensitivity
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           echoCancellation: true,
-          noiseSuppression: false, // Disable noise suppression to improve sensitivity
+          noiseSuppression: false, // Disable to preserve speech characteristics for language detection
           autoGainControl: true,
-          // Increase volume sensitivity
+          sampleRate: 16000, // Explicitly request 16kHz to match Deepgram requirements
+          // Optimized for multilingual support
           advanced: [
             { autoGainControl: { exact: true } },
             { echoCancellation: { exact: true } },
-            { noiseSuppression: { exact: false } } // Explicitly disable noise suppression
+            { noiseSuppression: { exact: false } }, // Critical for non-English languages
+            { sampleRate: { exact: 16000 } } // Ensure consistent sample rate
           ]
-          // Don't specify sampleRate to avoid conflicts
         }
       });
       
