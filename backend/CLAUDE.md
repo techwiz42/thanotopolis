@@ -15,6 +15,13 @@ This is a multi-tenant backend system with authentication, conversations, and RA
 - Foreign key constraint violations
 - JSON serialization problems
 - API endpoint URL mismatches in tests
+- **NEW: Backend STT Implementation Complete**
+  - Created dedicated streaming STT API (`/app/api/streaming_stt.py`)
+  - Added new WebSocket endpoint `/api/ws/stt/stream` for real-time transcription
+  - Added HTTP endpoint `/api/stt/file` for audio file transcription
+  - Added status endpoint `/api/stt/status` for service monitoring
+  - Integrated with main application router and shutdown handlers
+  - Includes usage tracking, error handling, and authentication
 
 ## Remaining Issues
 

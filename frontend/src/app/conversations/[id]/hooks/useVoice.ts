@@ -1,8 +1,8 @@
 // src/app/conversations/[id]/hooks/useVoice.ts
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/use-toast';
-import { PCMRecorder } from './usePCMRecorder';
+import { useStreamingSpeechToText } from '@/services/voice/StreamingSpeechToTextService';
 
 interface VoiceState {
   isSTTEnabled: boolean;
@@ -10,12 +10,11 @@ interface VoiceState {
   isSTTActive: boolean;
   isTTSActive: boolean;
   isSTTConnecting: boolean;
-  isRecording: boolean;
 }
 
 interface UseVoiceProps {
   conversationId: string;
-  onTranscript?: (transcript: string, isFinal: boolean) => void;
+  onTranscript?: (transcript: string, isFinal: boolean, speechFinal?: boolean) => void;
 }
 
 interface UseVoiceReturn extends VoiceState {
@@ -34,27 +33,53 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
     isTTSEnabled: false,
     isSTTActive: false,
     isTTSActive: false,
-    isSTTConnecting: false,
-    isRecording: false
+    isSTTConnecting: false
   });
 
   // Refs for managing resources
-  const sttWebSocketRef = useRef<WebSocket | null>(null);
-  const pcmRecorderRef = useRef<PCMRecorder | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Initialize streaming STT service
+  const sttService = useStreamingSpeechToText({
+    token: token || '', // Pass the authentication token
+    languageCode: 'en-US',
+    model: 'nova-2',
+    onTranscription: (text, isFinal) => {
+      if (onTranscript) {
+        onTranscript(text, isFinal, isFinal); // speechFinal = isFinal for simplicity
+      }
+    },
+    onConnectionChange: (isConnected) => {
+      console.log('STT connection change:', isConnected);
+      setVoiceState(prev => ({ 
+        ...prev, 
+        isSTTActive: isConnected,
+        isSTTConnecting: !isConnected && prev.isSTTEnabled
+      }));
+    },
+    onError: (error) => {
+      console.error('STT Error:', error);
+      toast({
+        title: "Voice Input Error",
+        description: error,
+        variant: "destructive"
+      });
+      setVoiceState(prev => ({ 
+        ...prev, 
+        isSTTEnabled: false,
+        isSTTActive: false,
+        isSTTConnecting: false
+      }));
+    }
+  });
 
   // Cleanup function
   const cleanup = useCallback(() => {
-    // Stop PCM recorder
-    if (pcmRecorderRef.current) {
-      pcmRecorderRef.current.stop();
-      pcmRecorderRef.current = null;
-    }
-    
-    // Close STT WebSocket
-    if (sttWebSocketRef.current) {
-      sttWebSocketRef.current.close();
-      sttWebSocketRef.current = null;
+    console.log('Voice hook cleanup called');
+    // Stop STT service
+    if (sttService.isListening) {
+      console.log('Stopping STT service from cleanup');
+      sttService.stopListening();
     }
 
     // Stop any playing audio
@@ -62,9 +87,9 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
-  }, []);
+  }, []); // Remove sttService dependency to prevent constant re-runs
 
-  // Initialize STT WebSocket connection
+  // Initialize STT service
   const initializeSTT = useCallback(async () => {
     if (!token) {
       toast({
@@ -77,79 +102,21 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
     try {
       setVoiceState(prev => ({ ...prev, isSTTConnecting: true }));
-
-      // Create WebSocket connection to STT service
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const backendHost = process.env.NEXT_PUBLIC_API_URL ? new URL(process.env.NEXT_PUBLIC_API_URL).host : 'localhost:8000';
-      const wsUrl = `${protocol}//${backendHost}/api/ws/voice/streaming-stt?token=${encodeURIComponent(token)}`;
       
-      const ws = new WebSocket(wsUrl);
-      sttWebSocketRef.current = ws;
-
-      return new Promise<boolean>((resolve) => {
-        ws.onopen = async () => {
-          console.log('STT WebSocket connected');
-          
-          try {
-            // Use PCM recorder to send raw audio
-            const recorder = new PCMRecorder();
-            pcmRecorderRef.current = recorder;
-            
-            await recorder.start(ws);
-            console.log('PCM recorder started - sending raw PCM audio');
-
-            setVoiceState(prev => ({ 
-              ...prev, 
-              isSTTConnecting: false, 
-              isSTTActive: true,
-              isRecording: true
-            }));
-            
-            resolve(true);
-          } catch (error) {
-            console.error('Error starting PCM recorder:', error);
-            toast({
-              title: "Microphone Error",
-              description: "Failed to access microphone",
-              variant: "destructive"
-            });
-            setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
-            resolve(false);
-          }
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'transcript' && data.transcript) {
-              onTranscript?.(data.transcript, data.is_final || data.speech_final);
-            }
-          } catch (error) {
-            console.error('Error parsing STT message:', error);
-          }
-        };
-
-        ws.onerror = (error) => {
-          console.error('STT WebSocket error:', error);
-          toast({
-            title: "Voice Input Error",
-            description: "Failed to connect to speech recognition service",
-            variant: "destructive"
-          });
-          setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
-          resolve(false);
-        };
-
-        ws.onclose = () => {
-          console.log('STT WebSocket closed');
-          setVoiceState(prev => ({ 
-            ...prev, 
-            isSTTActive: false, 
-            isRecording: false 
-          }));
-        };
-      });
+      await sttService.startListening();
+      
+      if (sttService.isConnected) {
+        setVoiceState(prev => ({ 
+          ...prev, 
+          isSTTConnecting: false,
+          isSTTActive: true
+        }));
+        return true;
+      } else {
+        setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
+        return false;
+      }
+      
     } catch (error) {
       console.error('Error initializing STT:', error);
       toast({
@@ -160,28 +127,21 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
       return false;
     }
-  }, [token, toast, onTranscript]);
+  }, [token, toast, sttService]);
 
   // Stop STT
   const stopSTT = useCallback(() => {
-    if (pcmRecorderRef.current) {
-      pcmRecorderRef.current.stop();
-      pcmRecorderRef.current = null;
-    }
+    console.log('Stopping STT...');
     
-    if (sttWebSocketRef.current) {
-      // Send stop signal
-      sttWebSocketRef.current.send(JSON.stringify({ type: 'stop_transcription' }));
-      sttWebSocketRef.current.close();
-      sttWebSocketRef.current = null;
-    }
+    sttService.stopListening();
 
     setVoiceState(prev => ({ 
       ...prev, 
-      isSTTActive: false, 
-      isRecording: false 
+      isSTTActive: false
     }));
-  }, []);
+    
+    console.log('STT stopped');
+  }, [sttService]);
 
   // Toggle STT
   const toggleSTT = useCallback(async () => {
@@ -195,6 +155,15 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       }
     }
   }, [voiceState.isSTTEnabled, initializeSTT, stopSTT]);
+
+  // Update state based on service state
+  useEffect(() => {
+    setVoiceState(prev => ({
+      ...prev,
+      isSTTActive: sttService.isConnected,
+      isSTTConnecting: sttService.isListening && !sttService.isConnected
+    }));
+  }, [sttService.isConnected, sttService.isListening]);
 
   // Toggle TTS
   const toggleTTS = useCallback(() => {

@@ -204,7 +204,10 @@ class DeepgramService:
             smart_format=smart_format,
             encoding=encoding,
             sample_rate=sample_rate,
-            channels=channels
+            channels=channels,
+            utterance_end_ms=1000,  # End utterance after 1 second of silence
+            vad_events=True,        # Enable voice activity detection events
+            endpointing=True        # Enable endpointing to detect utterance boundaries
         )
         
         return LiveTranscriptionSession(
@@ -240,19 +243,12 @@ class LiveTranscriptionSession:
             
             # Set up event handlers using async closure functions
             async def transcript_handler(self_ref, *args, **kwargs):
-                logger.info(f"transcript_handler called with self_ref: {type(self_ref)}, args: {len(args)}, types: {[type(arg).__name__ for arg in args]}")
-                logger.info(f"kwargs: {kwargs}")
-                
                 # Check if transcript data is in kwargs
                 if kwargs:
-                    # Look for common transcript data fields in kwargs
                     transcript_data = kwargs
-                    logger.info(f"Found kwargs as transcript_data: {str(transcript_data)[:200]}")
                     await self._handle_transcript_data(transcript_data)
                 elif args:
-                    # First arg should be transcript data
                     transcript_data = args[0]
-                    logger.info(f"transcript_data type: {type(transcript_data)}, content: {str(transcript_data)[:200]}")
                     await self._handle_transcript_data(transcript_data)
                 else:
                     logger.warning("No args or kwargs in transcript_handler")
@@ -285,8 +281,6 @@ class LiveTranscriptionSession:
             raise RuntimeError("Transcription session not connected")
         
         try:
-            # Log audio data info for debugging
-            logger.info(f"Sending audio data: {len(audio_data)} bytes")
             await self.connection.send(audio_data)
         except Exception as e:
             logger.error(f"Error sending audio data: {e}")
@@ -309,16 +303,12 @@ class LiveTranscriptionSession:
     async def _handle_transcript_data(self, transcript_data):
         """Handle transcript data directly."""
         try:
-            logger.info(f"_handle_transcript_data called with: {type(transcript_data)}")
-            
             if not transcript_data:
-                logger.warning("No transcript data received")
                 return
             
             # Extract the result from the kwargs structure
             if isinstance(transcript_data, dict) and 'result' in transcript_data:
                 result = transcript_data['result']
-                logger.info(f"Extracted result: {result}")
                 
                 # Check if we can access the transcript from the result
                 if hasattr(result, 'channel') and hasattr(result.channel, 'alternatives'):
@@ -328,10 +318,11 @@ class LiveTranscriptionSession:
                         confidence = alternatives[0].confidence
                         is_final = getattr(result, 'is_final', False)
                         
-                        logger.info(f"Extracted transcript: '{transcript_text}', confidence: {confidence}, is_final: {is_final}")
-                        
                         # Only process non-empty transcripts
                         if transcript_text and transcript_text.strip():
+                            # Pass through raw Deepgram results - let frontend handle accumulation
+                            speech_final = getattr(result, 'speech_final', False)
+                            
                             # Convert words to serializable format
                             words_data = []
                             if hasattr(alternatives[0], 'words') and alternatives[0].words:
@@ -345,19 +336,18 @@ class LiveTranscriptionSession:
                                         "speaker": getattr(word, 'speaker', None)
                                     })
                             
-                            # Create formatted data for our handler
+                            # Send raw transcript data - frontend will handle proper accumulation
                             formatted_data = {
                                 "type": "transcript",
-                                "transcript": transcript_text,
+                                "transcript": transcript_text,  # Send raw transcript from Deepgram
                                 "confidence": confidence,
                                 "is_final": is_final,
-                                "speech_final": getattr(result, 'speech_final', False),
+                                "speech_final": speech_final,
                                 "duration": getattr(result, 'duration', 0.0),
                                 "start": getattr(result, 'start', 0.0),
                                 "words": words_data
                             }
                             
-                            logger.info(f"Calling message handler with: {formatted_data}")
                             self.on_message(formatted_data)
                         else:
                             logger.debug(f"Skipping empty transcript (is_final: {is_final})")
@@ -412,6 +402,7 @@ class LiveTranscriptionSession:
             logger.debug(f"Deepgram metadata: {metadata}")
         except Exception as e:
             logger.error(f"Error handling Deepgram metadata: {e}")
+    
 
 
 # Singleton instance

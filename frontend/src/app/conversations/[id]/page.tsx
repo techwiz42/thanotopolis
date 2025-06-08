@@ -56,7 +56,6 @@ export default function ConversationPage() {
   const messageQueueRef = useRef<Message[]>([]);
   const isProcessingRef = useRef(false);
   const awaitingInputTimeoutRef = useRef<NodeJS.Timeout>();
-  const lastFinalTranscriptRef = useRef('');
   const pendingTTSRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
 
   // Using the conversation hook
@@ -79,27 +78,65 @@ export default function ConversationPage() {
     scrollToBottom
   } = useScrollManager(messages);
 
-  // Voice transcript handler
-  const handleVoiceTranscript = useCallback((transcript: string, isFinal: boolean) => {
-    if (isFinal && transcript.trim() && transcript !== lastFinalTranscriptRef.current) {
-      // This is a final transcript, add it to the voice transcript state
-      lastFinalTranscriptRef.current = transcript;
-      setVoiceTranscript(prev => {
-        const newTranscript = prev.trim() ? `${prev} ${transcript}` : transcript;
-        return newTranscript;
-      });
-      setPendingVoiceText('');
-    } else if (!isFinal) {
-      // This is interim text, show it as pending
-      setPendingVoiceText(transcript);
+  // Track accumulated transcript across utterances
+  const accumulatedTranscriptRef = useRef<string>('');
+  const lastFinalTranscriptRef = useRef<string>('');
+
+  // Voice transcript handler - Accumulate across utterances
+  const handleVoiceTranscript = useCallback((transcript: string, isFinal: boolean, speechFinal?: boolean) => {
+    console.log('=== Transcript Event ===', { 
+      transcript: transcript.substring(0, 50) + '...', // Log first 50 chars
+      isFinal, 
+      speechFinal,
+      timestamp: new Date().toISOString()
+    });
+    
+    if (!transcript.trim()) {
+      return; // Skip empty transcripts
     }
-  }, []);
+    
+    if (speechFinal && isFinal) {
+      // Speech is final - this utterance is complete, append to accumulated
+      console.log('Speech final - appending to accumulated transcript');
+      
+      if (accumulatedTranscriptRef.current) {
+        accumulatedTranscriptRef.current += ' ' + transcript;
+      } else {
+        accumulatedTranscriptRef.current = transcript;
+      }
+      
+      lastFinalTranscriptRef.current = '';
+      setVoiceTranscript(accumulatedTranscriptRef.current);
+      setPendingVoiceText('');
+    } else if (isFinal) {
+      // Final but not speech final - update current utterance
+      console.log('Final transcript (not speech final)');
+      
+      // Show accumulated + current final transcript
+      const displayTranscript = accumulatedTranscriptRef.current 
+        ? accumulatedTranscriptRef.current + ' ' + transcript
+        : transcript;
+      
+      lastFinalTranscriptRef.current = transcript;
+      setVoiceTranscript(displayTranscript);
+      setPendingVoiceText('');
+    } else {
+      // Interim transcript
+      const displayTranscript = accumulatedTranscriptRef.current 
+        ? accumulatedTranscriptRef.current + ' ' + transcript
+        : transcript;
+      
+      setPendingVoiceText(displayTranscript);
+    }
+  }, []); // No dependencies to avoid stale closures
 
   // Handle final voice transcript from MessageInput
   const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {
     // Clear the voice transcript state since it's now been committed to the message
     setVoiceTranscript('');
     setPendingVoiceText('');
+    // Reset transcript tracking refs
+    accumulatedTranscriptRef.current = '';
     lastFinalTranscriptRef.current = '';
   }, []);
 
@@ -212,14 +249,7 @@ export default function ConversationPage() {
     const currentTTSEnabled = currentTTSEnabledRef.current;
     const currentSpeakTextFn = currentSpeakTextRef.current;
     
-    console.log('TTS Debug: handleMessage called:', {
-      messageId: message.id,
-      senderType: message.sender.type,
-      isOwner: message.sender.is_owner,
-      agentName: message.sender.name,
-      currentTTSEnabled,
-      contentPreview: message.content.substring(0, 50) + '...'
-    });
+    // Handle message processing
 
     if (!message.sender.is_owner) {
       setHideAwaitingMessage(true);
@@ -240,12 +270,6 @@ export default function ConversationPage() {
         if (currentTTSEnabled && message.content.trim() && message.id) {
           // Only speak if we haven't spoken this message before
           if (!completedMessagesRef.current.has(message.id)) {
-            console.log('TTS: Auto-playing new agent message:', { 
-              messageId: message.id, 
-              agentName: message.sender.name,
-              currentTTSEnabled
-            });
-            
             // Mark as completed immediately to prevent duplicates
             completedMessagesRef.current.add(message.id);
             
@@ -344,6 +368,8 @@ export default function ConversationPage() {
     // Clear voice transcript when sending
     setVoiceTranscript('');
     setPendingVoiceText('');
+    // Reset transcript tracking refs
+    accumulatedTranscriptRef.current = '';
     lastFinalTranscriptRef.current = '';
     
     sendMessage(content, metadata);

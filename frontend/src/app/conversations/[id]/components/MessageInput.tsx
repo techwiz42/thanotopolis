@@ -44,46 +44,43 @@ const MessageInput: React.FC<MessageInputProps> = ({
 
   // Handle voice transcript updates
   useEffect(() => {
-    if (voiceTranscript && voiceTranscript !== lastVoiceTranscriptRef.current) {
+    if (voiceTranscript !== lastVoiceTranscriptRef.current) {
       lastVoiceTranscriptRef.current = voiceTranscript;
       
-      // Check if this is a final transcript (ending with punctuation or significant pause)
-      const trimmedTranscript = voiceTranscript.trim();
-      const endsWithPunctuation = /[.!?]$/.test(trimmedTranscript);
-      
-      if (endsWithPunctuation || trimmedTranscript.length > pendingVoiceTranscript.length + 10) {
-        // Treat as final transcript
-        handleVoiceTranscriptFinal(trimmedTranscript);
-      } else {
-        // Treat as interim transcript
-        setPendingVoiceTranscript(trimmedTranscript);
+      if (voiceTranscript) {
+        // Simply set the message to the voice transcript
+        // The parent component already handles final vs interim logic
+        setMessage(voiceTranscript);
         
-        // Auto-focus when voice input starts
+        // Auto-focus when voice input is active
         if (textareaRef.current && isVoiceActive) {
           textareaRef.current.focus();
+          textareaRef.current.setSelectionRange(voiceTranscript.length, voiceTranscript.length);
         }
       }
     }
-  }, [voiceTranscript, pendingVoiceTranscript.length, isVoiceActive]);
+  }, [voiceTranscript, isVoiceActive]);
 
   // Update message when voice transcript is finalized
   const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {
     if (finalTranscript.trim()) {
-      const currentMessage = message.trim();
-      const newMessage = currentMessage 
-        ? `${currentMessage} ${finalTranscript}`
-        : finalTranscript;
-      
-      setMessage(newMessage);
+      // Simply replace the message with the final transcript
+      // Deepgram already provides the complete utterance
+      setMessage(finalTranscript);
       setPendingVoiceTranscript('');
       
       // Focus textarea and position cursor at end
       if (textareaRef.current) {
         textareaRef.current.focus();
-        textareaRef.current.setSelectionRange(newMessage.length, newMessage.length);
+        textareaRef.current.setSelectionRange(finalTranscript.length, finalTranscript.length);
+      }
+      
+      // Notify parent that transcript has been finalized
+      if (onVoiceTranscriptFinal) {
+        onVoiceTranscriptFinal(finalTranscript);
       }
     }
-  }, [message]);
+  }, [onVoiceTranscriptFinal]);
 
   const processFile = async (file: File) => {
     if (!file) return;
@@ -264,8 +261,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
     };
   }, []);
 
-  // Calculate display message (includes pending voice transcript)
-  const displayMessage = message + (pendingVoiceTranscript ? ` ${pendingVoiceTranscript}` : '');
+  // Use message directly since voice transcript is already included
+  const displayMessage = message;
 
   return (
     <div className="flex flex-col gap-2">

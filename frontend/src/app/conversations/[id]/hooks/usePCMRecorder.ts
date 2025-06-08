@@ -1,75 +1,172 @@
-// PCM audio recorder using Web Audio API for STT
+// Enhanced PCM audio recorder using Web Audio API for STT
+// Based on working implementation from cyberiad_dev project
 import { useRef } from 'react';
 
+/**
+ * Type for streaming STT options
+ */
+export interface StreamingSttOptions {
+  /** Language code for speech recognition */
+  languageCode?: string;
+  /** Model to use (nova-2, nova, etc.) */
+  model?: string;
+  /** Callback when transcription is received */
+  onTranscription?: (text: string, isFinal: boolean) => void;
+  /** Callback when speech starts */
+  onSpeechStart?: () => void;
+  /** Callback when utterance ends */
+  onUtteranceEnd?: () => void;
+  /** Callback when connection status changes */
+  onConnectionChange?: (isConnected: boolean) => void;
+  /** Callback when error occurs */
+  onError?: (error: string) => void;
+}
+
+/**
+ * Enhanced PCM recorder with sophisticated audio processing
+ */
 export class PCMRecorder {
-  private audioContext: AudioContext;
+  private audioContext: AudioContext | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private processor: ScriptProcessorNode | null = null;
   private websocket: WebSocket | null = null;
   private stream: MediaStream | null = null;
   private targetSampleRate: number = 16000;
+  private isStoppingRef: boolean = false;
 
   constructor() {
-    this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    // Don't initialize AudioContext here - wait for user interaction
   }
 
   async start(websocket: WebSocket): Promise<void> {
     this.websocket = websocket;
+    this.isStoppingRef = false;
     
-    // Get microphone stream - don't specify sample rate, let browser decide
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
+    try {
+      // Request microphone access with optimized constraints for better sensitivity
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: false, // Disable noise suppression to improve sensitivity
+          autoGainControl: true,
+          // Increase volume sensitivity
+          advanced: [
+            { autoGainControl: { exact: true } },
+            { echoCancellation: { exact: true } },
+            { noiseSuppression: { exact: false } } // Explicitly disable noise suppression
+          ]
+          // Don't specify sampleRate to avoid conflicts
+        }
+      });
 
-    // Create audio nodes
-    this.source = this.audioContext.createMediaStreamSource(this.stream);
-    
-    // Create script processor (buffer size, input channels, output channels)
-    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
-    
-    // Log actual sample rates for debugging
-    console.log(`Audio context sample rate: ${this.audioContext.sampleRate}Hz`);
-    console.log(`Target sample rate: ${this.targetSampleRate}Hz`);
-    
-    // Process audio
-    this.processor.onaudioprocess = (e) => {
-      if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
-        return;
-      }
+      // Don't specify sample rate - let it use the default to avoid Firefox issues
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      // Create audio nodes
+      this.source = this.audioContext.createMediaStreamSource(this.stream);
+      
+      // Get the actual sample rate
+      const actualSampleRate = this.audioContext.sampleRate;
+      console.log(`AudioContext sample rate: ${actualSampleRate}Hz`);
+      
+      // Create script processor (buffer size, input channels, output channels)
+      // Smaller buffer size for lower latency
+      this.processor = this.audioContext.createScriptProcessor(512, 1, 1); // Reduced buffer size for better responsiveness
+      
+      // Track recent audio activity for better silence detection
+      let recentAudioFramesWithActivity = 0;
+      const RECENT_AUDIO_THRESHOLD = 3; // Number of frames to keep sending after detecting activity
+      
+      // Process audio
+      this.processor.onaudioprocess = (e) => {
+        if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN || this.isStoppingRef) {
+          return;
+        }
 
-      const inputData = e.inputBuffer.getChannelData(0);
-      const inputSampleRate = this.audioContext.sampleRate;
-      
-      // Resample if needed
-      let processedData = inputData;
-      if (inputSampleRate !== this.targetSampleRate) {
-        processedData = this.resample(inputData, inputSampleRate, this.targetSampleRate);
-      }
-      
-      // Convert float32 to int16 PCM
-      const pcm = new Int16Array(processedData.length);
-      for (let i = 0; i < processedData.length; i++) {
-        const s = Math.max(-1, Math.min(1, processedData[i]));
-        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-      }
-      
-      // Send raw PCM data
-      this.websocket.send(pcm.buffer);
-    };
+        // Get audio data
+        const inputData = e.inputBuffer.getChannelData(0);
+        
+        // Check if there's actual audio (not silence)
+        // Use a lower threshold to increase sensitivity
+        let hasAudio = false;
+        let maxAmplitude = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          const amplitude = Math.abs(inputData[i]);
+          maxAmplitude = Math.max(maxAmplitude, amplitude);
+          if (amplitude > 0.005) { // Lower threshold for better sensitivity (was 0.01)
+            hasAudio = true;
+            break;
+          }
+        }
+        
+        // Update recent activity tracker
+        if (hasAudio) {
+          recentAudioFramesWithActivity = RECENT_AUDIO_THRESHOLD;
+        } else {
+          recentAudioFramesWithActivity = Math.max(0, recentAudioFramesWithActivity - 1);
+        }
+        
+        // Process if we have audio or recent audio activity
+        if (hasAudio || recentAudioFramesWithActivity > 0) {
+          // If sample rate is not 16kHz, we need to downsample
+          let outputData: Int16Array;
+          
+          if (actualSampleRate === 16000) {
+            // Direct conversion without resampling
+            outputData = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              // Apply slight gain to boost the signal
+              const boostedSample = inputData[i] * 1.5; // Boost input by 50%
+              const s = Math.max(-1, Math.min(1, boostedSample));
+              outputData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+          } else {
+            // Improved downsampling with basic interpolation
+            const ratio = actualSampleRate / 16000;
+            const outputLength = Math.floor(inputData.length / ratio);
+            outputData = new Int16Array(outputLength);
+            
+            for (let i = 0; i < outputLength; i++) {
+              const inputIndexFloat = i * ratio;
+              const inputIndex = Math.floor(inputIndexFloat);
+              const fraction = inputIndexFloat - inputIndex;
+              
+              // Simple linear interpolation between samples
+              let sample = inputData[inputIndex];
+              if (inputIndex + 1 < inputData.length) {
+                sample = sample * (1 - fraction) + inputData[inputIndex + 1] * fraction;
+              }
+              
+              // Apply gain to boost signal
+              const boostedSample = sample * 1.5; // Boost by 50%
+              const s = Math.max(-1, Math.min(1, boostedSample));
+              outputData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+          }
+          
+          // Send to WebSocket
+          this.websocket.send(outputData.buffer);
+        }
+      };
 
-    // Connect nodes
-    this.source.connect(this.processor);
-    this.processor.connect(this.audioContext.destination);
-    
-    console.log(`PCM recording started - resampling from ${this.audioContext.sampleRate}Hz to ${this.targetSampleRate}Hz`);
+      // Connect nodes
+      this.source.connect(this.processor);
+      this.processor.connect(this.audioContext.destination);
+      
+      console.log('Enhanced PCM recording started with improved audio processing');
+      
+    } catch (error) {
+      console.error('Error starting enhanced PCM recorder:', error);
+      this.stop();
+      throw error;
+    }
   }
 
   stop(): void {
+    console.log('Stopping enhanced PCM recording...');
+    this.isStoppingRef = true;
+    
     if (this.processor) {
       this.processor.disconnect();
       this.processor = null;
@@ -80,37 +177,17 @@ export class PCMRecorder {
       this.source = null;
     }
     
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
+    }
+    
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());
       this.stream = null;
     }
     
-    console.log('PCM recording stopped');
-  }
-
-  private resample(inputData: Float32Array, inputSampleRate: number, outputSampleRate: number): Float32Array {
-    if (inputSampleRate === outputSampleRate) {
-      return inputData;
-    }
-    
-    const ratio = inputSampleRate / outputSampleRate;
-    const outputLength = Math.floor(inputData.length / ratio);
-    const output = new Float32Array(outputLength);
-    
-    for (let i = 0; i < outputLength; i++) {
-      const inputIndex = i * ratio;
-      const index = Math.floor(inputIndex);
-      const fraction = inputIndex - index;
-      
-      if (index + 1 < inputData.length) {
-        // Linear interpolation
-        output[i] = inputData[index] * (1 - fraction) + inputData[index + 1] * fraction;
-      } else {
-        output[i] = inputData[index];
-      }
-    }
-    
-    return output;
+    console.log('Enhanced PCM recording stopped');
   }
 }
 

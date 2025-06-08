@@ -12,6 +12,7 @@ import traceback
 from app.db.database import init_db
 from app.api.auth import router as auth_router
 from app.api.voice_streaming import router as voice_streaming_router
+from app.api.streaming_stt import router as streaming_stt_router
 from app.api.websockets import router as websockets_router
 from app.api.conversations import router as conversations_router
 from app.api.admin import router as admin_router
@@ -61,6 +62,14 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Voice handlers shut down successfully")
     except Exception as e:
         logger.error(f"⚠️  Error shutting down voice handlers: {e}")
+    
+    # Clean up STT handlers if any are active
+    try:
+        from app.api.streaming_stt import shutdown_stt_handlers
+        await shutdown_stt_handlers()
+        logger.info("✅ STT handlers shut down successfully")
+    except Exception as e:
+        logger.error(f"⚠️  Error shutting down STT handlers: {e}")
     
     logger.info("✅ Application shutdown complete")
 
@@ -301,6 +310,12 @@ try:
     logger.info("✅ Voice streaming router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register voice streaming router: {e}")
+
+try:
+    app.include_router(streaming_stt_router, prefix="/api", tags=["Streaming STT"])
+    logger.info("✅ Streaming STT router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register streaming STT router: {e}")
 
 try:
     app.include_router(websockets_router, prefix="/api", tags=["WebSockets"])
