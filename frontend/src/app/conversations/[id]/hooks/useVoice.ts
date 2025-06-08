@@ -15,6 +15,7 @@ interface VoiceState {
 interface UseVoiceProps {
   conversationId: string;
   onTranscript?: (transcript: string, isFinal: boolean, speechFinal?: boolean) => void;
+  languageCode?: string;
 }
 
 interface UseVoiceReturn extends VoiceState {
@@ -24,7 +25,7 @@ interface UseVoiceReturn extends VoiceState {
   stopSpeaking: () => void;
 }
 
-export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVoiceReturn => {
+export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoiceProps): UseVoiceReturn => {
   const { token } = useAuth();
   const { toast } = useToast();
   
@@ -38,11 +39,12 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
   // Refs for managing resources
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const isTogglingSTTRef = useRef<boolean>(false);
 
   // Initialize streaming STT service
   const sttService = useStreamingSpeechToText({
     token: token || '', // Pass the authentication token
-    languageCode: 'en-US',
+    languageCode: languageCode || 'auto', // Use auto-detection by default
     model: 'nova-2',
     onTranscription: (text, isFinal) => {
       if (onTranscript) {
@@ -53,8 +55,8 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       console.log('STT connection change:', isConnected);
       setVoiceState(prev => ({ 
         ...prev, 
-        isSTTActive: isConnected,
-        isSTTConnecting: !isConnected && prev.isSTTEnabled
+        isSTTActive: isConnected && prev.isSTTEnabled,
+        isSTTConnecting: !isConnected && prev.isSTTEnabled && sttService.isListening
       }));
     },
     onError: (error) => {
@@ -105,17 +107,10 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
       
       await sttService.startListening();
       
-      if (sttService.isConnected) {
-        setVoiceState(prev => ({ 
-          ...prev, 
-          isSTTConnecting: false,
-          isSTTActive: true
-        }));
-        return true;
-      } else {
-        setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
-        return false;
-      }
+      // Don't check isConnected immediately - connection happens asynchronously
+      // The onConnectionChange callback will update the state when connection is ready
+      setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
+      return true;
       
     } catch (error) {
       console.error('Error initializing STT:', error);
@@ -145,23 +140,52 @@ export const useVoice = ({ conversationId, onTranscript }: UseVoiceProps): UseVo
 
   // Toggle STT
   const toggleSTT = useCallback(async () => {
-    if (voiceState.isSTTEnabled) {
-      stopSTT();
-      setVoiceState(prev => ({ ...prev, isSTTEnabled: false }));
-    } else {
-      const success = await initializeSTT();
-      if (success) {
-        setVoiceState(prev => ({ ...prev, isSTTEnabled: true }));
-      }
+    // Prevent multiple simultaneous toggles
+    if (isTogglingSTTRef.current) {
+      console.log('STT toggle already in progress, ignoring...');
+      return;
     }
-  }, [voiceState.isSTTEnabled, initializeSTT, stopSTT]);
+
+    isTogglingSTTRef.current = true;
+
+    try {
+      setVoiceState(prev => {
+        if (prev.isSTTEnabled) {
+          // Disable STT
+          console.log('Disabling STT...');
+          stopSTT();
+          // Reset toggle ref immediately for disable
+          isTogglingSTTRef.current = false;
+          return { ...prev, isSTTEnabled: false };
+        } else {
+          // Enable STT - set optimistic state first
+          console.log('Enabling STT...');
+          
+          // Initialize in background without blocking state update
+          initializeSTT().then(success => {
+            if (!success) {
+              console.log('STT initialization failed, reverting...');
+              setVoiceState(current => ({ ...current, isSTTEnabled: false }));
+            }
+          }).finally(() => {
+            isTogglingSTTRef.current = false;
+          });
+          
+          return { ...prev, isSTTEnabled: true };
+        }
+      });
+    } catch (error) {
+      console.error('Error in toggleSTT:', error);
+      isTogglingSTTRef.current = false;
+    }
+  }, [initializeSTT, stopSTT]);
 
   // Update state based on service state
   useEffect(() => {
     setVoiceState(prev => ({
       ...prev,
-      isSTTActive: sttService.isConnected,
-      isSTTConnecting: sttService.isListening && !sttService.isConnected
+      isSTTActive: sttService.isConnected && prev.isSTTEnabled,
+      isSTTConnecting: sttService.isListening && !sttService.isConnected && prev.isSTTEnabled
     }));
   }, [sttService.isConnected, sttService.isListening]);
 

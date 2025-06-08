@@ -48,6 +48,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   >
                     Dashboard
                   </Link>
+                  {pathname !== '/conversations' && (
+                    <Link 
+                      href="/conversations" 
+                      className="text-gray-200 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+                    >
+                      My Conversations
+                    </Link>
+                  )}
                   {(user.role === 'admin' || user.role === 'super_admin') && (
                     <Link 
                       href="/admin" 
@@ -117,9 +125,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               &copy; 2025 Thanotopolis. All rights reserved.
             </p>
             <div className="flex space-x-6 mt-2 sm:mt-0">
-              <a href="#" className="text-sm text-gray-500 hover:text-gray-700">Privacy Policy</a>
-              <a href="#" className="text-sm text-gray-500 hover:text-gray-700">Terms of Service</a>
-              <a href="#" className="text-sm text-gray-500 hover:text-gray-700">Contact</a>
+              <Link href="/privacy" className="text-sm text-blue-600 hover:text-blue-800 underline">Privacy Policy</Link>
+              <Link href="/terms" className="text-sm text-blue-600 hover:text-blue-800 underline">Terms of Service</Link>
+              <a href={`mailto:pete@cyberiad.ai${user ? `?from=${encodeURIComponent(user.email)}` : ''}`} className="text-sm text-blue-600 hover:text-blue-800 underline">Contact</a>
             </div>
           </div>
         </div>

@@ -30,7 +30,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
   // Default options
   const defaultOptions: Required<StreamingSttOptions> = {
     token: '',
-    languageCode: 'en-US',
+    languageCode: 'auto', // Default to auto-detection
     model: 'nova-2', // Default to standard model instead of enhanced
     onTranscription: () => {},
     onSpeechStart: () => {},
@@ -110,10 +110,15 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
         throw new Error('No authentication token provided');
       }
 
-      // Determine WebSocket URL
+      // Determine WebSocket URL with language and model parameters
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const backendHost = process.env.NEXT_PUBLIC_API_URL ? new URL(process.env.NEXT_PUBLIC_API_URL).host : 'localhost:8000';
-      const wsUrl = `${protocol}//${backendHost}/api/ws/stt/stream?token=${encodeURIComponent(authToken)}`;
+      const params = new URLSearchParams({
+        token: authToken,
+        language: opts.languageCode,
+        model: opts.model
+      });
+      const wsUrl = `${protocol}//${backendHost}/api/ws/stt/stream?${params.toString()}`;
       
       console.log('Connecting to streaming STT WebSocket:', wsUrl);
       
@@ -123,9 +128,11 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
       ws.onopen = async () => {
         console.log('STT WebSocket opened successfully');
         
-        // Send start transcription control message
+        // Send start transcription control message with language configuration
         const startMessage = {
-          type: 'start_transcription'
+          type: 'start_transcription',
+          language: opts.languageCode,
+          model: opts.model
         };
         
         console.log('Sending start transcription message:', startMessage);
@@ -217,7 +224,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
       console.error('Failed to connect WebSocket:', error);
       return false;
     }
-  }, [opts.languageCode, opts.model, isListening, handleWebSocketMessage, updateConnectionState]);
+  }, [opts.languageCode, opts.model, opts.token, isListening, handleWebSocketMessage, updateConnectionState]);
 
   // Process audio using Web Audio API
   const processAudioStream = useCallback((stream: MediaStream) => {

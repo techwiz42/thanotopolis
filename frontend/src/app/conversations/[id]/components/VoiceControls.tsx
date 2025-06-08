@@ -35,8 +35,8 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({
         disabled={isSTTConnecting}
         className={cn(
           "relative",
-          isSTTEnabled && "bg-red-500 hover:bg-red-600",
-          isSTTActive && "animate-pulse"
+          isSTTEnabled && "bg-orange-500 hover:bg-orange-600",
+          (isSTTActive || isSTTEnabled) && "animate-pulse"
         )}
         title={isSTTEnabled ? "Disable Voice Input" : "Enable Voice Input"}
       >
@@ -47,8 +47,8 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({
         ) : (
           <MicOff className="h-4 w-4" />
         )}
-        {isSTTActive && (
-          <span className="absolute -top-1 -right-1 h-2 w-2 bg-red-400 rounded-full animate-ping" />
+        {(isSTTActive || (isSTTEnabled && !isSTTConnecting)) && (
+          <span className="absolute -top-1 -right-1 h-2 w-2 bg-orange-400 rounded-full animate-ping" />
         )}
       </Button>
 
@@ -76,7 +76,7 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({
 
       {/* Status indicator */}
       <div className="text-xs text-gray-500">
-        {isSTTEnabled && <span className="text-red-500">●</span>}
+        {isSTTEnabled && <span className="text-orange-500">●</span>}
         {isTTSEnabled && <span className="text-blue-500">●</span>}
         {!isSTTEnabled && !isTTSEnabled && <span className="text-gray-400">●</span>}
       </div>
