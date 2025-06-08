@@ -129,9 +129,29 @@ async def get_admin_dashboard(
         for row in tenant_stats_result.all()
     ]
     
-    # Mock connection counts (would be implemented with actual monitoring)
-    active_ws_connections = 0
-    db_connection_pool_size = 10
+    # Get real WebSocket connection counts
+    try:
+        from app.api.websockets import connection_manager, connection_stats, active_connections, connection_lock
+        
+        # Get stats from our connection manager
+        cm_stats = connection_manager.get_stats()
+        
+        # Get stats from the global active_connections dict
+        async with connection_lock:
+            total_active = sum(len(sockets) for sockets in active_connections.values())
+        
+        active_ws_connections = max(cm_stats.get("total_connections", 0), total_active)
+        
+    except Exception as e:
+        # Fallback to 0 if there's an error
+        active_ws_connections = 0
+    
+    # Get real database connection pool info
+    try:
+        from app.db.database import engine
+        db_connection_pool_size = engine.pool.size() + engine.pool.overflow()
+    except:
+        db_connection_pool_size = 10
     
     return AdminDashboardResponse(
         total_users=total_users or 0,
@@ -446,3 +466,58 @@ async def list_tenants(
         }
         for tenant in tenants
     ]
+
+
+@router.get("/websocket/stats")
+async def get_admin_websocket_stats(
+    current_user: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detailed WebSocket connection statistics (admin only)"""
+    
+    try:
+        from app.api.websockets import connection_manager, connection_stats, active_connections, connection_lock
+        
+        # Get stats from connection manager
+        cm_stats = connection_manager.get_stats()
+        
+        # Get stats from global active_connections
+        async with connection_lock:
+            total_active = sum(len(sockets) for sockets in active_connections.values())
+            conversations_with_connections = len(active_connections)
+            
+            # Update connection_stats
+            connection_stats["total"] = total_active
+            connection_stats["by_conversation"] = {
+                str(conv_id): len(sockets) 
+                for conv_id, sockets in active_connections.items()
+            }
+        
+        # Get cleanup task status
+        from app.api.websockets import cleanup_task
+        cleanup_running = cleanup_task is not None and not cleanup_task.done()
+        
+        return {
+            "connection_manager": cm_stats,
+            "global_connections": {
+                "total": total_active,
+                "conversations": conversations_with_connections,
+                "by_conversation": connection_stats["by_conversation"],
+                "last_cleanup": connection_stats.get("last_cleanup")
+            },
+            "limits": {
+                "max_total": 500,  # MAX_TOTAL_CONNECTIONS
+                "max_per_conversation": 50  # MAX_CONNECTIONS_PER_CONVERSATION
+            },
+            "cleanup_task": {
+                "running": cleanup_running,
+                "last_run": connection_stats.get("last_cleanup")
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error getting WebSocket stats: {str(e)}"
+        )

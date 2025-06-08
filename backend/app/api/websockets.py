@@ -26,9 +26,21 @@ from app.services.monitoring_service import monitoring_service
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Connection tracking
+# Connection tracking with limits
 active_connections: Dict[UUID, Set[WebSocket]] = {}
 connection_lock = asyncio.Lock()
+
+# Connection limits for scalability
+MAX_CONNECTIONS_PER_CONVERSATION = 50
+MAX_TOTAL_CONNECTIONS = 500
+
+# Connection statistics
+connection_stats = {
+    "total": 0,
+    "by_conversation": {},
+    "by_user": {},
+    "last_cleanup": None
+}
 
 async def process_conversation(
     conversation_id: UUID,
@@ -101,6 +113,77 @@ async def process_conversation(
         if 'owner_id' in locals() and owner_id is None:
             logger.error("owner_id is None - this might be causing the error")
         return None
+
+async def can_accept_connection(conversation_id: UUID) -> bool:
+    """Check if we can accept a new connection based on limits."""
+    async with connection_lock:
+        # Count total connections
+        total = sum(len(sockets) for sockets in active_connections.values())
+        if total >= MAX_TOTAL_CONNECTIONS:
+            logger.warning(f"Total connection limit reached: {total}/{MAX_TOTAL_CONNECTIONS}")
+            return False
+        
+        # Check per-conversation limit
+        conversation_sockets = active_connections.get(conversation_id, set())
+        if len(conversation_sockets) >= MAX_CONNECTIONS_PER_CONVERSATION:
+            logger.warning(f"Conversation {conversation_id} connection limit reached: {len(conversation_sockets)}/{MAX_CONNECTIONS_PER_CONVERSATION}")
+            return False
+        
+        return True
+
+async def cleanup_stale_connections():
+    """Remove disconnected WebSockets and update stats."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Every 5 minutes
+            
+            async with connection_lock:
+                cleaned = 0
+                total_before = sum(len(sockets) for sockets in active_connections.values())
+                
+                # Check each conversation's connections
+                for conv_id, sockets in list(active_connections.items()):
+                    active = set()
+                    for ws in sockets:
+                        try:
+                            # Check if WebSocket is still connected
+                            if hasattr(ws, 'client_state') and ws.client_state == WebSocketState.CONNECTED:
+                                active.add(ws)
+                            else:
+                                cleaned += 1
+                        except:
+                            cleaned += 1
+                    
+                    if active:
+                        active_connections[conv_id] = active
+                    else:
+                        # Remove empty conversation
+                        del active_connections[conv_id]
+                
+                # Update stats
+                total_after = sum(len(sockets) for sockets in active_connections.values())
+                connection_stats["total"] = total_after
+                connection_stats["by_conversation"] = {
+                    str(conv_id): len(sockets) 
+                    for conv_id, sockets in active_connections.items()
+                }
+                connection_stats["last_cleanup"] = datetime.utcnow().isoformat()
+                
+                if cleaned > 0:
+                    logger.info(f"Cleaned up {cleaned} stale connections. Total: {total_before} -> {total_after}")
+                    
+        except Exception as e:
+            logger.error(f"Error in cleanup task: {e}")
+
+# Start cleanup task on module load
+cleanup_task = None
+
+def start_cleanup_task():
+    """Start the cleanup task if not already running."""
+    global cleanup_task
+    if cleanup_task is None or cleanup_task.done():
+        cleanup_task = asyncio.create_task(cleanup_stale_connections())
+        logger.info("Started WebSocket cleanup task")
 
 class ConnectionManager:
     """Manages WebSocket connections for conversations"""
@@ -233,6 +316,10 @@ class ConnectionManager:
             "total_users": total_users,
             "max_connections_per_user": self.max_connections_per_user
         }
+    
+    def get_stats(self) -> dict:
+        """Alias for get_connection_stats for compatibility"""
+        return self.get_connection_stats()
 
 # Create singleton instance
 connection_manager = ConnectionManager()
@@ -534,9 +621,17 @@ async def websocket_endpoint(
     user = None
     
     try:
+        # Check connection limits before accepting
+        if not await can_accept_connection(conversation_id):
+            await websocket.close(code=1008, reason="Connection limit reached")
+            return
+        
         # Accept connection first
         await websocket.accept()
         logger.info(f"WebSocket connection accepted for conversation {conversation_id}")
+        
+        # Start cleanup task if needed
+        start_cleanup_task()
         
         # Authenticate using a discrete database session
         from app.db.database import get_db_context
@@ -945,3 +1040,27 @@ async def websocket_notifications(
             await websocket.close()
         except:
             pass
+
+@router.get("/ws/stats")
+async def get_websocket_stats():
+    """Get WebSocket connection statistics."""
+    async with connection_lock:
+        # Update current stats
+        connection_stats["total"] = sum(len(sockets) for sockets in active_connections.values())
+        connection_stats["by_conversation"] = {
+            str(conv_id): len(sockets) 
+            for conv_id, sockets in active_connections.items()
+        }
+        
+        # Get ConnectionManager stats too
+        cm_stats = connection_manager.get_stats()
+        
+        return {
+            "active_connections": connection_stats,
+            "connection_manager": cm_stats,
+            "limits": {
+                "max_total": MAX_TOTAL_CONNECTIONS,
+                "max_per_conversation": MAX_CONNECTIONS_PER_CONVERSATION
+            },
+            "cleanup_task_running": cleanup_task is not None and not cleanup_task.done()
+        }

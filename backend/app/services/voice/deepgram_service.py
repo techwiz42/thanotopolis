@@ -47,7 +47,8 @@ class DeepgramService:
         model: str = None,
         punctuate: bool = True,
         diarize: bool = False,
-        smart_format: bool = True
+        smart_format: bool = True,
+        detect_language: bool = False
     ) -> Dict[str, Any]:
         """
         Transcribe audio file using Deepgram.
@@ -77,13 +78,26 @@ class DeepgramService:
             # Configure options
             options = PrerecordedOptions(
                 model=model or settings.DEEPGRAM_MODEL,
-                language=language or settings.DEEPGRAM_LANGUAGE,
                 punctuate=punctuate,
                 diarize=diarize,
                 smart_format=smart_format,
                 utterances=True,
                 paragraphs=True
             )
+            
+            # Try to set detect_language if supported
+            if detect_language:
+                try:
+                    options.detect_language = detect_language
+                except AttributeError:
+                    # If detect_language is not supported, just don't set a language
+                    pass
+            
+            # Only set language if not detecting and language is provided
+            if not detect_language and language:
+                options.language = language
+            elif not detect_language:
+                options.language = settings.DEEPGRAM_LANGUAGE
             
             # Send to Deepgram
             response = await self.client.listen.asyncrest.v("1").transcribe_file(
@@ -173,7 +187,8 @@ class DeepgramService:
         smart_format: bool = True,
         encoding: str = "linear16",
         sample_rate: int = 16000,
-        channels: int = 1
+        channels: int = 1,
+        detect_language: bool = False
     ) -> 'LiveTranscriptionSession':
         """
         Start a live transcription session.
@@ -181,7 +196,7 @@ class DeepgramService:
         Args:
             on_message: Callback function for transcript messages
             on_error: Optional callback function for errors
-            language: Language code
+            language: Language code (None for auto-detection)
             model: Model to use
             punctuate: Whether to add punctuation
             interim_results: Whether to return interim results
@@ -189,6 +204,7 @@ class DeepgramService:
             encoding: Audio encoding
             sample_rate: Sample rate in Hz
             channels: Number of audio channels
+            detect_language: Whether to enable automatic language detection
             
         Returns:
             LiveTranscriptionSession object
@@ -198,7 +214,6 @@ class DeepgramService:
         
         options = LiveOptions(
             model=model or settings.DEEPGRAM_MODEL,
-            language=language or settings.DEEPGRAM_LANGUAGE,
             punctuate=punctuate,
             interim_results=interim_results,
             smart_format=smart_format,
@@ -209,6 +224,18 @@ class DeepgramService:
             vad_events=True,        # Enable voice activity detection events
             endpointing=True        # Enable endpointing to detect utterance boundaries
         )
+        
+        # For live transcription, language auto-detection is enabled by not setting a language
+        # Only set language if explicitly provided and not auto-detecting
+        if not detect_language and language:
+            options.language = language
+            logger.info(f"Using specified language: {language}")
+        elif not detect_language:
+            options.language = settings.DEEPGRAM_LANGUAGE
+            logger.info(f"Using default language: {settings.DEEPGRAM_LANGUAGE}")
+        else:
+            # If detect_language=True, we don't set any language (enables auto-detection)
+            logger.info("Language auto-detection enabled - no language specified")
         
         return LiveTranscriptionSession(
             self.client,
@@ -323,6 +350,24 @@ class LiveTranscriptionSession:
                             # Pass through raw Deepgram results - let frontend handle accumulation
                             speech_final = getattr(result, 'speech_final', False)
                             
+                            # Check for detected language information
+                            detected_language = None
+                            if hasattr(result, 'language') and result.language:
+                                detected_language = result.language
+                                logger.debug(f"Language detected from result: {detected_language}")
+                            elif hasattr(result.channel, 'detected_language'):
+                                detected_language = result.channel.detected_language
+                                logger.debug(f"Language detected from channel: {detected_language}")
+                            elif hasattr(alternatives[0], 'language'):
+                                detected_language = alternatives[0].language
+                                logger.debug(f"Language detected from alternative: {detected_language}")
+                            
+                            # Log when language detection is enabled but no language detected
+                            if detected_language:
+                                logger.info(f"Language detected: {detected_language} for transcript: {transcript_text[:50]}...")
+                            elif transcript_text and len(transcript_text) > 10:
+                                logger.debug(f"No language detected for transcript: {transcript_text[:50]}...")
+                            
                             # Convert words to serializable format
                             words_data = []
                             if hasattr(alternatives[0], 'words') and alternatives[0].words:
@@ -345,7 +390,8 @@ class LiveTranscriptionSession:
                                 "speech_final": speech_final,
                                 "duration": getattr(result, 'duration', 0.0),
                                 "start": getattr(result, 'start', 0.0),
-                                "words": words_data
+                                "words": words_data,
+                                "detected_language": detected_language
                             }
                             
                             self.on_message(formatted_data)

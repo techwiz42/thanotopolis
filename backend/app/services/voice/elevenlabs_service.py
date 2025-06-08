@@ -144,10 +144,10 @@ class ElevenLabsService:
         model_id = model_id or self.default_model
         output_format = output_format or self.default_output_format
         
-        # Default voice settings - less nasal, faster pace
+        # Default voice settings - James with lower stability
         if voice_settings is None:
             voice_settings = {
-                "stability": 0.5,  # Reduced for less nasal tone
+                "stability": 0.25,  # Lower stability for more variation
                 "similarity_boost": 0.4,  # Lower to reduce nasal quality
                 "style": 0.1,  # Minimal emotional expression for cleaner sound
                 "use_speaker_boost": True,
@@ -247,10 +247,10 @@ class ElevenLabsService:
         model_id = model_id or self.default_model
         output_format = output_format or self.default_output_format
         
-        # Default voice settings - less nasal, faster pace
+        # Default voice settings - James with lower stability
         if voice_settings is None:
             voice_settings = {
-                "stability": 0.5,
+                "stability": 0.25,  # Lower stability for more variation
                 "similarity_boost": 0.4,  # Lower to reduce nasal quality
                 "style": 0.1,  # Minimal emotional expression for cleaner sound
                 "use_speaker_boost": True,

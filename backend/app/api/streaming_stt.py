@@ -187,14 +187,15 @@ async def websocket_streaming_stt(
                                     "timestamp": datetime.utcnow().isoformat()
                                 }))
                             
-                            # Create transcription session
+                            # Create transcription session with auto language detection
                             transcription_session = await deepgram_service.start_live_transcription(
                                 on_message=on_transcript_message,
                                 on_error=on_transcript_error,
                                 interim_results=True,
                                 punctuate=True,
                                 smart_format=True,
-                                language="en-US",
+                                language=None,  # None enables auto-detection
+                                detect_language=True,  # Enable language detection
                                 encoding="linear16",
                                 sample_rate=16000,
                                 channels=1
@@ -290,15 +291,16 @@ async def transcribe_audio_file(
         # Get content type
         content_type = audio_file.content_type or "audio/wav"
         
-        # Transcribe
+        # Transcribe with auto language detection if no language specified
         result = await deepgram_service.transcribe_file(
             audio_data=audio_data,
             content_type=content_type,
-            language=language,
+            language=language,  # If None, will auto-detect
             model=model,
             punctuate=punctuate,
             diarize=diarize,
-            smart_format=smart_format
+            smart_format=smart_format,
+            detect_language=language is None  # Enable detection if no language specified
         )
         
         # Log transcription
