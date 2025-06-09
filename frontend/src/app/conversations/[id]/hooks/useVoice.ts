@@ -161,7 +161,13 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
           isTogglingSTTRef.current = false;
           return { ...prev, isSTTEnabled: false };
         } else {
-          // Enable STT - set optimistic state first
+          // Enable STT - check if already listening to prevent duplicates
+          if (sttService.isListening) {
+            console.log('STT already listening, skipping initialization...');
+            isTogglingSTTRef.current = false;
+            return { ...prev, isSTTEnabled: true };
+          }
+          
           console.log('Enabling STT...');
           
           // Initialize in background without blocking state update
@@ -181,7 +187,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
       console.error('Error in toggleSTT:', error);
       isTogglingSTTRef.current = false;
     }
-  }, [initializeSTT, stopSTT]);
+  }, [initializeSTT, stopSTT, sttService.isListening]);
 
   // Update state based on service state
   useEffect(() => {
@@ -283,20 +289,45 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
   }, []);
 
   // Handle language changes while STT is enabled
+  const lastLanguageRef = useRef<string | undefined>(languageCode);
   useEffect(() => {
-    // If STT is enabled and language changed, restart the connection
-    if (voiceState.isSTTEnabled && languageCode) {
-      console.log('Language changed to:', languageCode, '- restarting STT connection');
+    // Only restart if language actually changed and STT is enabled
+    if (voiceState.isSTTEnabled && 
+        languageCode && 
+        languageCode !== lastLanguageRef.current && 
+        lastLanguageRef.current !== undefined) {
       
-      // Stop current connection
+      console.log('Language changed from', lastLanguageRef.current, 'to', languageCode, '- restarting STT connection');
+      
+      // Stop current connection and ensure cleanup
       sttService.stopListening();
       
-      // Wait a bit for cleanup, then restart with new language
-      setTimeout(async () => {
+      // Wait for cleanup and state updates, then restart with new language
+      const restartSTT = async () => {
+        // Wait for service to fully stop
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        while (sttService.isListening && attempts < maxAttempts) {
+          console.log(`Waiting for STT to stop... attempt ${attempts + 1}`);
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+        
+        if (attempts >= maxAttempts) {
+          console.warn('STT did not stop within expected time, forcing restart...');
+        }
+        
+        console.log('Attempting to restart STT with new language after cleanup...');
         await initializeSTT();
-      }, 500);
+      };
+      
+      setTimeout(restartSTT, 200); // Shorter initial delay, but with polling
     }
-  }, [languageCode]); // Only react to language changes
+    
+    // Update last language reference
+    lastLanguageRef.current = languageCode;
+  }, [languageCode, voiceState.isSTTEnabled]); // Remove sttService and initializeSTT to prevent loops
   
   // Cleanup on unmount
   useEffect(() => {

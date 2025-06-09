@@ -2,11 +2,12 @@
 import { api } from './api';
 
 export interface ConversationCreateData {
-  title: string;
+  title?: string;
   description?: string;
   user_ids?: string[];
   agent_types?: string[];
   participant_ids?: string[];
+  participant_emails?: string[];
 }
 
 export interface ConversationUpdateData {

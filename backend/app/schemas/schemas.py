@@ -126,6 +126,7 @@ class ConversationCreate(BaseModel):
     user_ids: Optional[List[UUID]] = []
     agent_types: Optional[List[str]] = []
     participant_ids: Optional[List[UUID]] = []
+    participant_emails: Optional[List[str]] = []  # New field for email addresses
 
 class ConversationUpdate(BaseModel):
     title: Optional[str] = None

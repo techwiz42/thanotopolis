@@ -1,7 +1,7 @@
 // src/app/conversations/new/page.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -18,49 +18,17 @@ export default function NewConversationPage() {
   const { user, token } = useAuth();
   const { toast } = useToast();
   
-  // Generate title with participant emails
-  const generateTitleWithParticipants = (emails: string[] = []) => {
-    const allEmails = [user?.email, ...emails].filter(Boolean) as string[];
-    
-    if (allEmails.length === 0) {
-      return "New Conversation";
-    } else if (allEmails.length === 1) {
-      return `Conversation with ${allEmails[0]}`;
-    } else if (allEmails.length === 2) {
-      return `Conversation with ${allEmails[0]} and ${allEmails[1]}`;
-    } else if (allEmails.length <= 4) {
-      // For 3-4 participants, list all emails
-      return `Conversation with ${allEmails.slice(0, -1).join(', ')}, and ${allEmails[allEmails.length - 1]}`;
-    } else {
-      // For 5+ participants, show first few and indicate more
-      return `Conversation with ${allEmails.slice(0, 3).join(', ')}, and ${allEmails.length - 3} others`;
-    }
-  };
 
-  // Generate default title with username and timestamp (fallback)
-  const generateDefaultTitle = () => {
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
-    });
-    const timeStr = now.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-    return `${user?.username || user?.email || 'User'} - ${dateStr} ${timeStr}`;
-  };
-
-  const [title, setTitle] = useState(generateTitleWithParticipants([]));
+  const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [participantEmails, setParticipantEmails] = useState<string[]>([]);
   const [currentEmail, setCurrentEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [userModifiedTitle, setUserModifiedTitle] = useState(false);
+  
 
   const handleAddEmail = () => {
     const trimmedEmail = currentEmail.trim();
+    
     if (trimmedEmail && !participantEmails.includes(trimmedEmail)) {
       // Basic email validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -69,10 +37,7 @@ export default function NewConversationPage() {
         setParticipantEmails(newEmails);
         setCurrentEmail('');
         
-        // Auto-update title unless user has manually modified it
-        if (!userModifiedTitle) {
-          setTitle(generateTitleWithParticipants(newEmails));
-        }
+        // Don't auto-update title - let backend generate it
       } else {
         toast({
           title: "Invalid Email",
@@ -87,15 +52,11 @@ export default function NewConversationPage() {
     const newEmails = participantEmails.filter(email => email !== emailToRemove);
     setParticipantEmails(newEmails);
     
-    // Auto-update title unless user has manually modified it
-    if (!userModifiedTitle) {
-      setTitle(generateTitleWithParticipants(newEmails));
-    }
+    // Don't auto-update title - let backend generate it
   };
 
   const handleTitleChange = (newTitle: string) => {
     setTitle(newTitle);
-    setUserModifiedTitle(true);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -118,38 +79,33 @@ export default function NewConversationPage() {
     setIsLoading(true);
 
     try {
-      // Create the conversation
-      const conversationData = {
-        // Only send title if user manually modified it, otherwise let backend generate it
-        title: userModifiedTitle ? title.trim() : '',
-        description: description.trim()
-      };
+      // Parse emails from the current input field
+      const emailsToAdd = currentEmail.trim()
+        .split(/[,;\s]+/) // Split by comma, semicolon, or whitespace
+        .map(email => email.trim())
+        .filter(email => {
+          // Basic email validation
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          return email && emailRegex.test(email);
+        });
 
-      console.log('Creating conversation with data:', conversationData);
+      // Combine with any previously added emails
+      const allEmails = Array.from(new Set([...participantEmails, ...emailsToAdd])); // Remove duplicates
+
+      // Create the conversation
+      const conversationData: any = {
+        description: description.trim(),
+        participant_emails: allEmails  // Include all participant emails
+      };
+      
+      // Only include title if user provided one
+      if (title.trim()) {
+        conversationData.title = title.trim();
+      }
+
       
       const conversation = await conversationService.createConversation(conversationData, token);
-      
-      console.log('Conversation creation response:', conversation);
-      
       const conversationId = conversation.id;
-      console.log('Extracted conversation ID:', conversationId);
-
-      // Add participants if any
-      if (participantEmails.length > 0) {
-        // Add participants one by one (you might want to create a batch endpoint)
-        for (const email of participantEmails) {
-          try {
-            await conversationService.addParticipant(conversationId, { email }, token);
-          } catch (error) {
-            console.error(`Failed to add participant ${email}:`, error);
-            toast({
-              title: "Warning",
-              description: `Failed to add participant: ${email}`,
-              variant: "destructive"
-            });
-          }
-        }
-      }
 
       toast({
         title: "Success",
@@ -185,11 +141,9 @@ export default function NewConversationPage() {
               onChange={(e) => handleTitleChange(e.target.value)}
               placeholder="Enter conversation title"
             />
-            {!userModifiedTitle && participantEmails.length > 0 && (
-              <p className="text-sm text-gray-600">
-                Title will be auto-generated based on participants
-              </p>
-            )}
+            <p className="text-sm text-gray-600">
+              Leave empty to auto-generate title with participant emails
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -205,18 +159,24 @@ export default function NewConversationPage() {
 
           <div className="space-y-2">
             <Label>Participants</Label>
+            <p className="text-sm text-gray-600 mb-2">
+              Enter email addresses separated by commas or spaces
+            </p>
             <div className="flex gap-2">
               <Input
                 value={currentEmail}
                 onChange={(e) => setCurrentEmail(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Enter participant email"
+                placeholder="Enter participant emails (comma or space separated)"
                 type="email"
               />
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleAddEmail}
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleAddEmail();
+                }}
                 disabled={!currentEmail.trim()}
               >
                 <Plus className="h-4 w-4" />

@@ -54,6 +54,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef<boolean>(false);
+  const isStartingRef = useRef<boolean>(false);
 
   // Update connection state
   const updateConnectionState = useCallback((connected: boolean) => {
@@ -364,13 +365,26 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
 
   // Start listening
   const startListening = useCallback(async () => {
-    console.log('startListening called, current state:', { isListening, isConnected });
+    console.log('startListening called, current state:', { isListening, isConnected, isStarting: isStartingRef.current });
     
-    if (isListening) {
-      console.log('Already listening, skipping');
+    // Force reset listening state if there's inconsistency
+    if (isListening && !wsRef.current) {
+      console.log('Inconsistent state detected: isListening=true but no WebSocket. Resetting...');
+      setIsListening(false);
+      updateConnectionState(false);
+    }
+    
+    if (isListening && wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log('Already listening with active connection, skipping');
       return;
     }
     
+    if (isStartingRef.current) {
+      console.log('Already starting listening, skipping');
+      return;
+    }
+    
+    isStartingRef.current = true;
     isStoppingRef.current = false;
     setError(null);
     
@@ -426,6 +440,8 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
       
       // Clean up
       stopListening();
+    } finally {
+      isStartingRef.current = false;
     }
   }, [isListening, connectWebSocket, processAudioStream, opts]);
 
@@ -478,6 +494,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     
     setIsListening(false);
     updateConnectionState(false);
+    isStartingRef.current = false;
   }, [updateConnectionState]);
 
   // Toggle listening
