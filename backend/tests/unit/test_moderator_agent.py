@@ -324,7 +324,7 @@ class TestModeratorAgent:
         
         assert agent.name == "MODERATOR"
         assert len(agent.functions) == 2  # select_agent and check_collaboration_need
-        assert agent.model_settings.tool_choice == "required"
+        assert agent.model_settings.tool_choice == "auto"
         assert agent.model_settings.parallel_tool_calls is True
         assert len(agent.input_guardrails) == 1
         assert agent.handoffs == []
@@ -494,7 +494,7 @@ class TestModeratorAgentSingleton:
         """Test properties of the moderator_agent singleton."""
         assert moderator_agent.description == "Routes queries to specialist agent experts"
         assert len(moderator_agent.functions) == 2
-        assert moderator_agent.model_settings.tool_choice == "required"
+        assert moderator_agent.model_settings.tool_choice == "auto"
 
 
 class TestModeratorAgentIntegration:

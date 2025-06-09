@@ -314,8 +314,8 @@ class TestAgentManager:
             thread_id="test-thread"
         )
         
-        # Should fallback to MODERATOR on timeout
-        assert result == "MODERATOR"
+        # Should fallback to first non-MODERATOR agent on timeout
+        assert result == "COMPLIANCE"
 
     @pytest.mark.asyncio
     @patch('app.agents.agent_manager.input_sanitizer')

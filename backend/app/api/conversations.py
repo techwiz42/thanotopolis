@@ -27,6 +27,87 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
+async def generate_conversation_title_with_emails(
+    conversation_id: UUID, 
+    db: AsyncSession,
+    creator_email: Optional[str] = None
+) -> str:
+    """
+    Generate a conversation title that includes all participant email addresses.
+    
+    Args:
+        conversation_id: The UUID of the conversation
+        db: Database session
+        creator_email: Email of the conversation creator (optional)
+    
+    Returns:
+        A formatted title containing all participant emails
+    """
+    try:
+        # Get all user participants
+        user_emails_query = (
+            select(User.email)
+            .join(ConversationUser, User.id == ConversationUser.user_id)
+            .where(
+                ConversationUser.conversation_id == conversation_id,
+                ConversationUser.is_active == True
+            )
+        )
+        user_emails_result = await db.execute(user_emails_query)
+        user_emails = [email for email in user_emails_result.scalars().all()]
+        
+        # Get all email participants
+        participant_emails_query = (
+            select(Participant.identifier)
+            .join(ConversationParticipant, Participant.id == ConversationParticipant.participant_id)
+            .where(
+                ConversationParticipant.conversation_id == conversation_id,
+                ConversationParticipant.is_active == True,
+                Participant.participant_type == "email"
+            )
+        )
+        participant_emails_result = await db.execute(participant_emails_query)
+        participant_emails = [email for email in participant_emails_result.scalars().all()]
+        
+        # Combine all emails and remove duplicates while preserving order
+        all_emails = []
+        seen_emails = set()
+        
+        # Add creator email first if provided and not already in the list
+        if creator_email and creator_email not in seen_emails:
+            all_emails.append(creator_email)
+            seen_emails.add(creator_email)
+        
+        # Add user emails
+        for email in user_emails:
+            if email and email not in seen_emails:
+                all_emails.append(email)
+                seen_emails.add(email)
+        
+        # Add participant emails
+        for email in participant_emails:
+            if email and email not in seen_emails:
+                all_emails.append(email)
+                seen_emails.add(email)
+        
+        # Generate title based on number of participants
+        if not all_emails:
+            return "New Conversation"
+        elif len(all_emails) == 1:
+            return f"Conversation with {all_emails[0]}"
+        elif len(all_emails) == 2:
+            return f"Conversation with {all_emails[0]} and {all_emails[1]}"
+        elif len(all_emails) <= 4:
+            # For 3-4 participants, list all emails
+            return f"Conversation with {', '.join(all_emails[:-1])}, and {all_emails[-1]}"
+        else:
+            # For 5+ participants, show first few and indicate more
+            return f"Conversation with {', '.join(all_emails[:3])}, and {len(all_emails) - 3} others"
+    
+    except Exception as e:
+        logger.error(f"Error generating conversation title with emails: {str(e)}")
+        return "New Conversation"
+
 @router.post("/", response_model=ConversationResponse)
 async def create_conversation(
     conversation_data: ConversationCreate,
@@ -109,6 +190,16 @@ async def create_conversation(
                 )
                 db.add(conv_participant)
                 logger.info(f"Added participant {participant_id} to conversation {conversation.id}")
+        
+        # Generate title with participant emails if no title was provided
+        if not conversation.title:
+            generated_title = await generate_conversation_title_with_emails(
+                conversation.id, 
+                db, 
+                creator_email=current_user.email
+            )
+            conversation.title = generated_title
+            logger.info(f"Generated title for conversation {conversation.id}: {generated_title}")
         
         # Commit all changes
         await db.commit()

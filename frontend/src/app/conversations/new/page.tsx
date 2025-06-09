@@ -18,7 +18,26 @@ export default function NewConversationPage() {
   const { user, token } = useAuth();
   const { toast } = useToast();
   
-  // Generate default title with username and timestamp
+  // Generate title with participant emails
+  const generateTitleWithParticipants = (emails: string[] = []) => {
+    const allEmails = [user?.email, ...emails].filter(Boolean) as string[];
+    
+    if (allEmails.length === 0) {
+      return "New Conversation";
+    } else if (allEmails.length === 1) {
+      return `Conversation with ${allEmails[0]}`;
+    } else if (allEmails.length === 2) {
+      return `Conversation with ${allEmails[0]} and ${allEmails[1]}`;
+    } else if (allEmails.length <= 4) {
+      // For 3-4 participants, list all emails
+      return `Conversation with ${allEmails.slice(0, -1).join(', ')}, and ${allEmails[allEmails.length - 1]}`;
+    } else {
+      // For 5+ participants, show first few and indicate more
+      return `Conversation with ${allEmails.slice(0, 3).join(', ')}, and ${allEmails.length - 3} others`;
+    }
+  };
+
+  // Generate default title with username and timestamp (fallback)
   const generateDefaultTitle = () => {
     const now = new Date();
     const dateStr = now.toLocaleDateString('en-US', { 
@@ -33,11 +52,12 @@ export default function NewConversationPage() {
     return `${user?.username || user?.email || 'User'} - ${dateStr} ${timeStr}`;
   };
 
-  const [title, setTitle] = useState(generateDefaultTitle());
+  const [title, setTitle] = useState(generateTitleWithParticipants([]));
   const [description, setDescription] = useState('');
   const [participantEmails, setParticipantEmails] = useState<string[]>([]);
   const [currentEmail, setCurrentEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [userModifiedTitle, setUserModifiedTitle] = useState(false);
 
   const handleAddEmail = () => {
     const trimmedEmail = currentEmail.trim();
@@ -45,8 +65,14 @@ export default function NewConversationPage() {
       // Basic email validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (emailRegex.test(trimmedEmail)) {
-        setParticipantEmails([...participantEmails, trimmedEmail]);
+        const newEmails = [...participantEmails, trimmedEmail];
+        setParticipantEmails(newEmails);
         setCurrentEmail('');
+        
+        // Auto-update title unless user has manually modified it
+        if (!userModifiedTitle) {
+          setTitle(generateTitleWithParticipants(newEmails));
+        }
       } else {
         toast({
           title: "Invalid Email",
@@ -58,7 +84,18 @@ export default function NewConversationPage() {
   };
 
   const handleRemoveEmail = (emailToRemove: string) => {
-    setParticipantEmails(participantEmails.filter(email => email !== emailToRemove));
+    const newEmails = participantEmails.filter(email => email !== emailToRemove);
+    setParticipantEmails(newEmails);
+    
+    // Auto-update title unless user has manually modified it
+    if (!userModifiedTitle) {
+      setTitle(generateTitleWithParticipants(newEmails));
+    }
+  };
+
+  const handleTitleChange = (newTitle: string) => {
+    setTitle(newTitle);
+    setUserModifiedTitle(true);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -83,7 +120,8 @@ export default function NewConversationPage() {
     try {
       // Create the conversation
       const conversationData = {
-        title: title.trim() || generateDefaultTitle(),
+        // Only send title if user manually modified it, otherwise let backend generate it
+        title: userModifiedTitle ? title.trim() : '',
         description: description.trim()
       };
 
@@ -144,9 +182,14 @@ export default function NewConversationPage() {
             <Input
               id="title"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => handleTitleChange(e.target.value)}
               placeholder="Enter conversation title"
             />
+            {!userModifiedTitle && participantEmails.length > 0 && (
+              <p className="text-sm text-gray-600">
+                Title will be auto-generated based on participants
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">

@@ -24,7 +24,8 @@ def event_loop():
 @pytest.fixture
 async def client():
     """Create an HTTP client for testing."""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    from httpx import ASGITransport
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
