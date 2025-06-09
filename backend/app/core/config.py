@@ -78,9 +78,9 @@ class Settings:
 
     # Stripe
     STRIPE_CUSTOMER_ID = os.getenv("STRIPE_CUSTOMER_ID")
-    STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "GET_A_JOB_YOU_BUM")
-    STRIPE_PUBLIC_KEY = os.getenv("STRIPE_PUBLIC_KEY", "NOTHING_TO_SEE_HERE")
-    STRIPE_WEBHOOK_SECRET = "WHAT_ME_WORRY?"
+    STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "sk_test_")  # Sandbox key placeholder
+    STRIPE_PUBLIC_KEY = os.getenv("STRIPE_PUBLIC_KEY", "pk_test_")  # Sandbox key placeholder
+    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_")  # Webhook secret
 
     STRIPE_PROD_10K_TOKENS=os.getenv("STRIPE_PROD_10K_TOKENS")
     STRIPE_PROD_50K_TOKENS=os.getenv("STRIPE_PROD_50K_TOKENS")

@@ -283,3 +283,71 @@ class AdminUserUpdate(BaseModel):
     role: Optional[str] = None  # 'user', 'admin', 'super_admin'
     is_active: Optional[bool] = None
     is_verified: Optional[bool] = None
+
+# Stripe billing schemas
+class StripeCustomerCreate(BaseModel):
+    email: str
+    name: Optional[str] = None
+    phone: Optional[str] = None
+
+class StripeCustomerResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    stripe_customer_id: str
+    email: str
+    name: Optional[str]
+    phone: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class StripeSubscriptionCreate(BaseModel):
+    stripe_price_id: str
+    
+class StripeSubscriptionResponse(BaseModel):
+    id: UUID
+    customer_id: UUID
+    stripe_subscription_id: str
+    stripe_price_id: str
+    status: str
+    current_period_start: datetime
+    current_period_end: datetime
+    cancel_at_period_end: bool
+    amount_cents: int
+    currency: str
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class StripeInvoiceResponse(BaseModel):
+    id: UUID
+    customer_id: UUID
+    stripe_invoice_id: str
+    status: str
+    amount_due_cents: int
+    amount_paid_cents: int
+    currency: str
+    period_start: datetime
+    period_end: datetime
+    voice_words_count: int
+    voice_usage_cents: int
+    created_at: datetime
+    due_date: Optional[datetime]
+    paid_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class BillingDashboardResponse(BaseModel):
+    current_subscription: Optional[StripeSubscriptionResponse]
+    recent_invoices: List[StripeInvoiceResponse]
+    current_period_usage: UsageStats
+    upcoming_charges: Dict[str, int]  # estimated costs for current period
+
+class UsageBillingCreate(BaseModel):
+    """Schema for creating usage-based billing charges"""
+    period_start: datetime
+    period_end: datetime
+    voice_words_count: int
+    voice_usage_cents: int

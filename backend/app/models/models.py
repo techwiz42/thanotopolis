@@ -286,6 +286,82 @@ class SystemMetrics(Base):
         Index('idx_metrics_tenant_date', 'tenant_id', 'created_at'),
     )
 
+class StripeCustomer(Base):
+    """Stripe customer information for tenants"""
+    __tablename__ = "stripe_customers"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, unique=True)
+    stripe_customer_id = Column(String, nullable=False, unique=True)
+    email = Column(String, nullable=False)
+    
+    # Customer details
+    name = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    tenant = relationship("Tenant")
+    subscriptions = relationship("StripeSubscription", back_populates="customer", cascade="all, delete-orphan")
+    invoices = relationship("StripeInvoice", back_populates="customer", cascade="all, delete-orphan")
+
+class StripeSubscription(Base):
+    """Stripe subscription for monthly billing"""
+    __tablename__ = "stripe_subscriptions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("stripe_customers.id"), nullable=False)
+    stripe_subscription_id = Column(String, nullable=False, unique=True)
+    stripe_price_id = Column(String, nullable=False)
+    
+    # Subscription details
+    status = Column(String, nullable=False)  # active, canceled, past_due, etc.
+    current_period_start = Column(DateTime(timezone=True), nullable=False)
+    current_period_end = Column(DateTime(timezone=True), nullable=False)
+    cancel_at_period_end = Column(Boolean, default=False)
+    
+    # Pricing
+    amount_cents = Column(Integer, nullable=False)  # Monthly subscription cost in cents
+    currency = Column(String, default="usd")
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    customer = relationship("StripeCustomer", back_populates="subscriptions")
+
+class StripeInvoice(Base):
+    """Stripe invoices for both subscription and usage billing"""
+    __tablename__ = "stripe_invoices"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("stripe_customers.id"), nullable=False)
+    stripe_invoice_id = Column(String, nullable=False, unique=True)
+    
+    # Invoice details
+    status = Column(String, nullable=False)  # draft, open, paid, uncollectible, void
+    amount_due_cents = Column(Integer, nullable=False)
+    amount_paid_cents = Column(Integer, default=0)
+    currency = Column(String, default="usd")
+    
+    # Billing period
+    period_start = Column(DateTime(timezone=True), nullable=False)
+    period_end = Column(DateTime(timezone=True), nullable=False)
+    
+    # Usage billing details
+    voice_words_count = Column(Integer, default=0)  # Combined STT + TTS words
+    voice_usage_cents = Column(Integer, default=0)  # $1.00 per 1000 words
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    due_date = Column(DateTime(timezone=True), nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    customer = relationship("StripeCustomer", back_populates="invoices")
+
 class DocumentEmbedding(Base):
     __tablename__ = "document_embeddings"
     

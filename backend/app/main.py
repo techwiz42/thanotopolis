@@ -16,6 +16,7 @@ from app.api.streaming_stt import router as streaming_stt_router
 from app.api.websockets import router as websockets_router
 from app.api.conversations import router as conversations_router
 from app.api.admin import router as admin_router
+from app.api.billing import router as billing_router
 from app.core.config import settings
 
 # Set up logging
@@ -334,6 +335,12 @@ try:
     logger.info("✅ Admin router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register admin router: {e}")
+
+try:
+    app.include_router(billing_router, tags=["Billing"])
+    logger.info("✅ Billing router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register billing router: {e}")
 
 logger.info("✅ All routers registered successfully")
 
