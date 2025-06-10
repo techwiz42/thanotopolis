@@ -16,6 +16,7 @@ export interface MessageInputProps {
   voiceTranscript?: string;
   isVoiceActive?: boolean;
   onVoiceTranscriptFinal?: (finalTranscript: string) => void;
+  isSTTEnabled?: boolean;
 }
 
 const MessageInput: React.FC<MessageInputProps> = ({ 
@@ -25,7 +26,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
   conversationId,
   voiceTranscript = '',
   isVoiceActive = false,
-  onVoiceTranscriptFinal
+  onVoiceTranscriptFinal,
+  isSTTEnabled = false
 }: MessageInputProps) => {
   const [message, setMessage] = useState('');
   const [messageMetadata, setMessageMetadata] = useState<MessageMetadata | null>(null);
@@ -38,6 +40,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastVoiceTranscriptRef = useRef('');
+  const autoSendTimeoutRef = useRef<NodeJS.Timeout>();
   
   const { token, user } = useAuth();
   const { toast } = useToast();
@@ -258,8 +261,30 @@ const MessageInput: React.FC<MessageInputProps> = ({
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
+      if (autoSendTimeoutRef.current) {
+        clearTimeout(autoSendTimeoutRef.current);
+      }
     };
   }, []);
+
+  // Auto-send when STT is enabled and no input for 5 seconds
+  useEffect(() => {
+    if (autoSendTimeoutRef.current) {
+      clearTimeout(autoSendTimeoutRef.current);
+    }
+
+    if (isSTTEnabled && message.trim() && !isVoiceActive) {
+      autoSendTimeoutRef.current = setTimeout(() => {
+        handleSend();
+      }, 5000);
+    }
+
+    return () => {
+      if (autoSendTimeoutRef.current) {
+        clearTimeout(autoSendTimeoutRef.current);
+      }
+    };
+  }, [isSTTEnabled, message, isVoiceActive, handleSend]);
 
   // Use message directly since voice transcript is already included
   const displayMessage = message;

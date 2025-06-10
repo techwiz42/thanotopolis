@@ -569,6 +569,7 @@ export default function ConversationPage() {
                   voiceTranscript={voiceTranscript + (pendingVoiceText ? ` ${pendingVoiceText}` : '')}
                   isVoiceActive={isSTTActive}
                   onVoiceTranscriptFinal={handleVoiceTranscriptFinal}
+                  isSTTEnabled={isSTTEnabled}
                 />
                 
                 {/* Debug info for development */}

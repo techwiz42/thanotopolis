@@ -140,7 +140,7 @@ async def get_invoices(
     return invoices
 
 
-@router.get("/dashboard", response_model=BillingDashboardResponse)
+@router.get("/dashboard")
 async def get_billing_dashboard(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
