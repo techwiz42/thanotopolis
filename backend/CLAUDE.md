@@ -8,11 +8,32 @@
 - The admin page showed 0 WebSocket connections because of hardcoded mock values
 - This type of issue wastes debugging time and creates false confidence
 
-## IMPORTANT: Git Commit Policy
-**NEVER COMMIT CODE TO GIT ON BEHALF OF THE USER**
-- User explicitly forbids automated git commits
-- Always let the user handle their own git operations
-- Only suggest what changes could be committed, never execute git commit commands
+## 🚨 CRITICAL: ABSOLUTE GIT COMMIT PROHIBITION 🚨
+**CLAUDE CODE MUST NEVER, EVER, UNDER ANY CIRCUMSTANCES COMMIT CODE TO GIT**
+
+### STRICT RULES - NO EXCEPTIONS:
+1. **NEVER run `git commit` commands** - User explicitly forbids ALL automated git commits
+2. **NEVER run `git add` followed by commits** - No staging and committing workflows
+3. **NEVER suggest git commit commands** - Don't even recommend commit messages
+4. **NEVER create commits** - Even with user approval, let them handle it
+5. **NEVER push to remote** - Absolutely forbidden under all circumstances
+
+### ALLOWED GIT OPERATIONS:
+- `git status` - To check repository state
+- `git diff` - To view changes
+- `git log` - To view commit history
+- `git branch` - To check/list branches
+- READ-ONLY operations only
+
+### VIOLATION CONSEQUENCES:
+- Any Claude Code session that commits to git violates user trust
+- This has caused problems before and must be prevented
+- User must maintain complete control over their git workflow
+
+### IF ASKED ABOUT COMMITS:
+- Respond: "I cannot commit code to git. Please handle git operations yourself."
+- Suggest what files have been changed, but never commit them
+- Let user decide when and how to commit their changes
 
 ## Current Project: Language Selection for STT (January 8, 2025)
 

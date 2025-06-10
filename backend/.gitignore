@@ -29,3 +29,6 @@ htmlcov/
 
 # Alembic
 alembic/versions/*.py
+
+# Test files in root directory only (not in tests/ subdirectories)
+/test_*.py
