@@ -267,15 +267,54 @@ const MessageInput: React.FC<MessageInputProps> = ({
     };
   }, []);
 
+  // Track last message change time for auto-send
+  const lastMessageChangeRef = useRef<number>(Date.now());
+  
   // Auto-send when STT is enabled and no input for 5 seconds
   useEffect(() => {
+    const hasMessage = !!message.trim();
+    
+    console.log('[MessageInput] Auto-send effect triggered:', {
+      isSTTEnabled,
+      hasMessage,
+      messageLength: message.length,
+      isVoiceActive
+    });
+
+    // Update last change time when message changes
+    if (hasMessage) {
+      lastMessageChangeRef.current = Date.now();
+    }
+
     if (autoSendTimeoutRef.current) {
       clearTimeout(autoSendTimeoutRef.current);
     }
 
-    if (isSTTEnabled && message.trim() && !isVoiceActive) {
+    if (isSTTEnabled && hasMessage) {
+      console.log('[MessageInput] Setting auto-send timer for 5 seconds');
       autoSendTimeoutRef.current = setTimeout(() => {
-        handleSend();
+        const timeSinceLastChange = Date.now() - lastMessageChangeRef.current;
+        console.log('[MessageInput] Auto-send timer fired, time since last change:', timeSinceLastChange);
+        
+        // Only send if message hasn't changed for at least 4.5 seconds (allowing for small timing variations)
+        if (timeSinceLastChange >= 4500) {
+          console.log('[MessageInput] Sending message:', message);
+          const trimmedMessage = message.trim();
+          if (trimmedMessage) {
+            onSendMessage(trimmedMessage, messageMetadata || undefined);
+            setMessage('');
+            setMessageMetadata(null);
+            setPendingVoiceTranscript('');
+            lastVoiceTranscriptRef.current = '';
+            
+            if (onTypingStatus && isTyping) {
+              setIsTyping(false);
+              onTypingStatus(false);
+            }
+          }
+        } else {
+          console.log('[MessageInput] Message changed recently, not sending');
+        }
       }, 5000);
     }
 
@@ -284,7 +323,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
         clearTimeout(autoSendTimeoutRef.current);
       }
     };
-  }, [isSTTEnabled, message, isVoiceActive, handleSend]);
+  }, [isSTTEnabled, message, onSendMessage, messageMetadata, onTypingStatus, isTyping]);
 
   // Use message directly since voice transcript is already included
   const displayMessage = message;
