@@ -20,7 +20,7 @@ from app.models.models import (
     User, Tenant, Message, Conversation, ConversationAgent, 
     ConversationUser, MessageType
     )
-from app.agents.agent_manager import agent_manager
+from app.agents.tenant_aware_agent_manager import tenant_aware_agent_manager as agent_manager
 from app.services.monitoring_service import monitoring_service
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,8 @@ async def process_conversation(
     message_id: UUID,
     default_agent_type: str,
     db: AsyncSession,
-    owner_id: Optional[UUID] = None
+    owner_id: Optional[UUID] = None,
+    user: Optional[User] = None
 ) -> Optional[Tuple[str, str]]:
     """
     Process a conversation message through the MODERATOR agent.
@@ -91,18 +92,28 @@ async def process_conversation(
             owner_id = message.user_id
         
         # Process the conversation using the agent manager
-        # The agent_manager now discovers all agents dynamically
-        # and routes everything through the MODERATOR
-        agent_type, response = await agent_manager.process_conversation(
-            message=message_content,
-            conversation_agents=[],  # Ignored - agents discovered dynamically
-            agents_config={},       # Ignored - agents use default config
-            mention=None,           # Ignored - no mention routing
-            db=db,
-            thread_id=str(conversation_id),  # thread_id is used as alias for conversation_id
-            owner_id=owner_id,      # owner_id is required for proper context handling
-            response_callback=None  # No streaming for regular websocket messages
-        )
+        # Use tenant-aware processing if user is provided
+        if user and hasattr(agent_manager, 'process_conversation_with_tenant_context'):
+            agent_type, response = await agent_manager.process_conversation_with_tenant_context(
+                message=message_content,
+                user=user,
+                db=db,
+                thread_id=str(conversation_id),
+                owner_id=owner_id,
+                response_callback=None
+            )
+        else:
+            # Fallback to regular processing
+            agent_type, response = await agent_manager.process_conversation(
+                message=message_content,
+                conversation_agents=[],  # Ignored - agents discovered dynamically
+                agents_config={},       # Ignored - agents use default config
+                mention=None,           # Ignored - no mention routing
+                db=db,
+                thread_id=str(conversation_id),  # thread_id is used as alias for conversation_id
+                owner_id=owner_id,      # owner_id is required for proper context handling
+                response_callback=None  # No streaming for regular websocket messages
+            )
         
         return agent_type, response
         
@@ -520,8 +531,31 @@ async def _handle_user_message(
         
         # If no MODERATOR is explicitly configured, add one
         if not moderator_config:
+            # Get the MODERATOR agent record from database
+            from app.models.models import Agent
+            moderator_agent_result = await db.execute(
+                select(Agent).where(Agent.agent_type == "MODERATOR")
+            )
+            moderator_agent_record = moderator_agent_result.scalar_one_or_none()
+            
+            if not moderator_agent_record:
+                # Create the MODERATOR agent record if it doesn't exist
+                moderator_agent_record = Agent(
+                    agent_type="MODERATOR",
+                    name="Moderator Agent",
+                    description="Conversation moderator and agent coordinator",
+                    is_free_agent=True,
+                    owner_tenant_id=None,
+                    configuration_template={},
+                    capabilities=["agent_selection", "conversation_routing"],
+                    is_active=True
+                )
+                db.add(moderator_agent_record)
+                await db.flush()  # Get the ID without committing
+            
             new_moderator = ConversationAgent(
                 conversation_id=conversation_id,
+                agent_id=moderator_agent_record.id,  # Link to actual agent record
                 agent_type="MODERATOR",
                 is_active=True,
                 configuration=None
@@ -535,7 +569,7 @@ async def _handle_user_message(
             # Use the message's user_id as owner_id since conversation doesn't have owner_id
             owner_id = user.id  # Use the current user ID as the owner ID
             logger.info(f"Processing conversation with owner_id: {owner_id}")
-            agent_response = await process_conversation(conversation_id, UUID(message_id), agent_type, db, owner_id=owner_id)
+            agent_response = await process_conversation(conversation_id, UUID(message_id), agent_type, db, owner_id=owner_id, user=user)
             
             if agent_response:
                 response_agent_type, response_content = agent_response

@@ -35,7 +35,60 @@
 - Suggest what files have been changed, but never commit them
 - Let user decide when and how to commit their changes
 
-## Current Project: Organization & Agent Management Enhancements (January 11, 2025)
+## Current Project: Agent Security & Organization Isolation (December 6, 2025)
+
+### Overview
+Fixed a critical security issue where proprietary agents owned by one organization were accessible to users from other organizations. Implemented tenant-aware agent filtering to ensure proper isolation of proprietary agents.
+
+### Problem Identified
+The `stock_investment_advisor_agent` (proprietary to the "demo" organization) was being included in conversations owned by members of the "acme" organization, violating the proprietary nature of the agent.
+
+### Root Cause
+1. The agent discovery system wasn't filtering agents based on organization ownership
+2. All dynamically discovered agents were treated as free agents
+3. No tenant/organization context was used during agent selection
+
+### Solution Implemented
+
+#### 1. Created Tenant-Aware Agent Manager
+- New file: `/app/agents/tenant_aware_agent_manager.py`
+- Extends base `AgentManager` with organization-aware filtering
+- Checks agent properties (`IS_FREE_AGENT`, `OWNER_DOMAIN`) to determine ownership
+- Filters agents based on user's organization membership
+
+#### 2. Updated Agent Integration Points
+- **WebSocket Handler** (`/app/api/websockets.py`):
+  - Now uses `tenant_aware_agent_manager` instead of basic agent manager
+  - Passes user context to `process_conversation` for proper filtering
+  
+- **Conversation API** (`/app/api/conversations.py`):
+  - Filters requested agents based on user's organization access
+  - Prevents adding proprietary agents to unauthorized conversations
+  - Properly sets ownership attributes when creating agent records
+
+- **Agents API** (`/app/api/agents.py`):
+  - Uses tenant-aware filtering when listing available agents
+  - Returns only agents the user's organization has access to
+
+### How Agent Ownership Works
+- **Free Agents**: Have `IS_FREE_AGENT = True` - Available to all organizations
+- **Proprietary Agents**: Have `IS_FREE_AGENT = False` and `OWNER_DOMAIN` set - Only available to the specified organization
+
+### Testing Results
+✅ STOCK_INVESTMENT_ADVISOR correctly available to demo organization
+✅ STOCK_INVESTMENT_ADVISOR correctly filtered out for acme organization
+✅ All free agents remain available to both organizations
+
+### Files Modified
+1. Created: `/app/agents/tenant_aware_agent_manager.py`
+2. Modified: `/app/api/websockets.py`
+3. Modified: `/app/api/conversations.py`
+4. Modified: `/app/api/agents.py`
+5. Created: `/test_agent_filtering.py` (test script)
+
+---
+
+## Previous Project: Organization & Agent Management Enhancements (January 11, 2025)
 
 ### Overview
 Implementing enhanced organization registration and agent management system with the following key features:

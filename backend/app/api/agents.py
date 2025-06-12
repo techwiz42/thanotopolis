@@ -32,19 +32,62 @@ async def list_available_agents(
     db: AsyncSession = Depends(get_db)
 ):
     """List all agents available to the current user's organization"""
-    # Get all free agents and agents owned by user's organization
-    result = await db.execute(
-        select(Agent).where(
-            and_(
-                Agent.is_active == True,
-                or_(
-                    Agent.is_free_agent == True,
-                    Agent.owner_tenant_id == current_user.tenant_id
-                )
+    from app.agents.tenant_aware_agent_manager import tenant_aware_agent_manager
+    
+    # Get available agent types for this user
+    available_agent_types = await tenant_aware_agent_manager.get_available_agents_for_user(current_user, db)
+    
+    # Build list of agent responses
+    agents = []
+    for agent_type in available_agent_types:
+        # Get agent instance to check properties
+        agent_instance = tenant_aware_agent_manager.get_agent(agent_type)
+        if agent_instance:
+            from app.agents.base_agent import BaseAgent
+            
+            # Check agent properties
+            is_free_agent = True
+            owner_tenant_id = None
+            description = getattr(agent_instance, 'description', f"{agent_type} agent")
+            capabilities = getattr(agent_instance, 'capabilities', [])
+            
+            if isinstance(agent_instance, BaseAgent):
+                is_free_agent = getattr(agent_instance.__class__, 'IS_FREE_AGENT', True)
+                owner_domain = getattr(agent_instance.__class__, 'OWNER_DOMAIN', None)
+                
+                # Get tenant ID from domain if proprietary
+                if not is_free_agent and owner_domain:
+                    tenant_result = await db.execute(
+                        select(Agent.owner_tenant_id).join(Tenant).where(Tenant.subdomain == owner_domain)
+                    )
+                    result = tenant_result.scalar_one_or_none()
+                    if result:
+                        owner_tenant_id = result
+            
+            # Check if agent exists in database
+            agent_result = await db.execute(
+                select(Agent).where(Agent.agent_type == agent_type)
             )
-        )
-    )
-    agents = result.scalars().all()
+            agent_record = agent_result.scalar_one_or_none()
+            
+            if agent_record:
+                agents.append(agent_record)
+            else:
+                # Create a temporary agent response object
+                from app.schemas.schemas import AgentResponse
+                agents.append(AgentResponse(
+                    id=UUID('00000000-0000-0000-0000-000000000000'),  # Placeholder ID
+                    agent_type=agent_type,
+                    name=agent_type.replace('_', ' ').title() + " Agent",
+                    description=description,
+                    is_free_agent=is_free_agent,
+                    owner_tenant_id=owner_tenant_id,
+                    capabilities=capabilities,
+                    is_active=True
+                ))
+    
+    # Import Tenant model locally to avoid circular imports
+    from app.models.models import Tenant
     
     return AvailableAgentsResponse(agents=agents)
 

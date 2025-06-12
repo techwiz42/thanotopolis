@@ -176,9 +176,65 @@ async def create_conversation(
         
         # Add requested agents (with safe defaults)
         agent_types = getattr(conversation_data, 'agent_types', None) or []
+        
+        # Import tenant-aware agent manager for filtering
+        from app.agents.tenant_aware_agent_manager import tenant_aware_agent_manager
+        
+        # Get available agents for this user
+        available_agents = await tenant_aware_agent_manager.get_available_agents_for_user(current_user, db)
+        
         for agent_type in agent_types:
+            # Check if agent is available to this user
+            if agent_type not in available_agents:
+                logger.warning(f"Agent {agent_type} not available to user {current_user.email} from org {current_user.tenant.subdomain if current_user.tenant else 'unknown'}")
+                continue
+                
+            # Get or create the agent record in database
+            from app.models.models import Agent
+            agent_result = await db.execute(
+                select(Agent).where(Agent.agent_type == agent_type)
+            )
+            agent_record = agent_result.scalar_one_or_none()
+            
+            if not agent_record:
+                # Get agent instance to check properties
+                agent_instance = tenant_aware_agent_manager.get_agent(agent_type)
+                is_free_agent = True
+                owner_tenant_id = None
+                
+                if agent_instance:
+                    from app.agents.base_agent import BaseAgent
+                    if isinstance(agent_instance, BaseAgent):
+                        is_free_agent = getattr(agent_instance.__class__, 'IS_FREE_AGENT', True)
+                        owner_domain = getattr(agent_instance.__class__, 'OWNER_DOMAIN', None)
+                        
+                        # Get tenant ID from domain if proprietary
+                        if not is_free_agent and owner_domain:
+                            from app.models.models import Tenant
+                            tenant_result = await db.execute(
+                                select(Tenant).where(Tenant.subdomain == owner_domain)
+                            )
+                            owner_tenant = tenant_result.scalar_one_or_none()
+                            if owner_tenant:
+                                owner_tenant_id = owner_tenant.id
+                
+                # Create the agent record if it doesn't exist
+                agent_record = Agent(
+                    agent_type=agent_type,
+                    name=agent_type.replace('_', ' ').title() + " Agent",
+                    description=f"Dynamically discovered {agent_type} agent",
+                    is_free_agent=is_free_agent,
+                    owner_tenant_id=owner_tenant_id,
+                    configuration_template={},
+                    capabilities=[],
+                    is_active=True
+                )
+                db.add(agent_record)
+                await db.flush()  # Get the ID without committing
+            
             conv_agent = ConversationAgent(
                 conversation_id=conversation.id,
+                agent_id=agent_record.id,  # Link to actual agent record
                 agent_type=agent_type,
                 is_active=True
             )
@@ -951,10 +1007,33 @@ async def add_agent(
             existing_agent.configuration = json.dumps(agent_data.configuration)
         agent_id = existing_agent.id
     else:
-        # Create new agent
+        # Get or create the agent record in database
+        from app.models.models import Agent
+        agent_record_result = await db.execute(
+            select(Agent).where(Agent.agent_type == agent_data.agent_type)
+        )
+        agent_record = agent_record_result.scalar_one_or_none()
+        
+        if not agent_record:
+            # Create the agent record if it doesn't exist (for dynamic agents)
+            agent_record = Agent(
+                agent_type=agent_data.agent_type,
+                name=agent_data.agent_type.replace('_', ' ').title() + " Agent",
+                description=f"Dynamically discovered {agent_data.agent_type} agent",
+                is_free_agent=True,
+                owner_tenant_id=None,
+                configuration_template={},
+                capabilities=[],
+                is_active=True
+            )
+            db.add(agent_record)
+            await db.flush()  # Get the ID without committing
+        
+        # Create new ConversationAgent
         agent = ConversationAgent(
             id=uuid.uuid4(),
             conversation_id=conversation_id,
+            agent_id=agent_record.id,  # Link to actual agent record
             agent_type=agent_data.agent_type,
             configuration=json.dumps(agent_data.configuration) if agent_data.configuration else None
         )

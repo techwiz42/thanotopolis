@@ -228,8 +228,8 @@ class ConversationAgent(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
-    agent_type = Column(String, nullable=True)  # Kept for backward compatibility
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=True)  # Made nullable for dynamic agents
+    agent_type = Column(String, nullable=False)  # Required for dynamic discovery
     added_at = Column(DateTime(timezone=True), server_default=func.now())
     is_active = Column(Boolean, default=True)
     configuration = Column(Text, nullable=True)  # JSON string for agent-specific config
@@ -238,9 +238,9 @@ class ConversationAgent(Base):
     conversation = relationship("Conversation", back_populates="agents")
     agent = relationship("Agent", back_populates="conversation_agents")
     
-    # Unique constraint
+    # Updated constraint: either agent_id+conversation_id OR agent_type+conversation_id must be unique
     __table_args__ = (
-        UniqueConstraint('conversation_id', 'agent_id', name='_conversation_agent_uc'),
+        UniqueConstraint('conversation_id', 'agent_type', name='_conversation_agent_type_uc'),
     )
 
 class ConversationParticipant(Base):
