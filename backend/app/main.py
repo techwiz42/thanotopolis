@@ -17,6 +17,8 @@ from app.api.websockets import router as websockets_router
 from app.api.conversations import router as conversations_router
 from app.api.admin import router as admin_router
 from app.api.billing import router as billing_router
+from app.api.organizations import router as organizations_router
+from app.api.agents import router as agents_router
 from app.core.config import settings
 
 # Set up logging
@@ -341,6 +343,18 @@ try:
     logger.info("✅ Billing router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register billing router: {e}")
+
+try:
+    app.include_router(organizations_router, tags=["Organizations"])
+    logger.info("✅ Organizations router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register organizations router: {e}")
+
+try:
+    app.include_router(agents_router, tags=["Agents"])
+    logger.info("✅ Agents router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register agents router: {e}")
 
 logger.info("✅ All routers registered successfully")
 

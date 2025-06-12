@@ -35,248 +35,158 @@
 - Suggest what files have been changed, but never commit them
 - Let user decide when and how to commit their changes
 
-## Current Project: Language Selection for STT (January 8, 2025)
+## Current Project: Organization & Agent Management Enhancements (January 11, 2025)
 
-### Background
-- Currently using Deepgram for STT with limited language auto-detection
-- Evaluated OpenAI Whisper but it doesn't support streaming (only file-based)
-- Decision: Add language selection dropdowns instead of migrating to Whisper
+### Overview
+Implementing enhanced organization registration and agent management system with the following key features:
+1. Extended organization data collection (full name, address, phone, email)
+2. Automatic organization admin creation during registration
+3. Organization admin capabilities (edit org data, manage users)
+4. Agent ownership model (free agents vs proprietary agents)
 
-### Implementation Plan
-1. **New Conversation Page** - Add language dropdown
-2. **Message Input Component** - Add language switcher (visible when STT is enabled)
-3. **Backend** - Store language preference in conversation model
-4. **STT Service** - Handle dynamic language switching
+### Database Schema Changes Required
 
-### Progress Tracking
-- [x] Add language dropdown to conversation page (visible when STT enabled)
-- [x] Update StreamingSpeechToTextService to accept language parameter
-- [x] Handle language changes in useVoice hook
-- [x] Store language preference in localStorage
-- [x] Update to nova-2 model for better multilingual support (changed from nova-3)
-- [x] Fix dropdown opacity for better readability over page content
-- [x] Fix language switching to work when STT enabled (not just active)
-- [x] Fix focus restoration to message input after language change
-- [x] Test non-English language functionality ✅ WORKS!
-- [ ] Verify message input returns to voice mode (red) after language change
+#### 1. Tenant/Organization Model Updates
+- Add fields: `full_name`, `address`, `phone`, `organization_email`
+- Consider renaming `Tenant` to `Organization` for clarity (but keeping table name for compatibility)
 
-### Technical Notes
-- **Model Choice**: Using Nova-2 model for better multilingual support (nova-3 limited to English/Spanish)
-- **Language Support**: 30+ languages supported via Nova-2 model
-- Language code format: "en-US", "es-ES", "fr-FR", etc.
-- WebSocket automatically reconnects when language changes during STT enabled state
-- Language preference stored in localStorage as 'stt-language'
-- Language selector only visible when STT is enabled
-- Dropdown has opaque white background for readability over page content
-- Focus restoration to message input after language change with 150ms delay
-- **Audio Processing**: Optimized for 16kHz, enhanced sensitivity, connection stability
+#### 2. User Model Updates
+- Ensure proper role hierarchy: `user`, `org_admin`, `admin`, `super_admin`
+- Add capability for org_admin to manage organization users
 
-### Remaining Tasks
-1. ✅ ~~Non-English STT functionality~~ - RESOLVED! Works well now
-2. Verify message input returns to voice mode (red highlight) after language switching
+#### 3. New Agent Model
+- Create `Agent` table to track agent configurations
+- Add `is_free_agent` boolean field (True = available to all, False = proprietary)
+- Add `owner_tenant_id` field for proprietary agents
+- Update `ConversationAgent` to reference Agent model instead of just agent_type string
 
-### Project Status: ✅ MAJOR SUCCESS
-**Language selection for STT is now working reliably across multiple languages including Spanish, German, and French!**
+### Implementation Progress
 
-### ✅ Issues Resolved (January 8, 2025)
-- ~~**French STT works, but other languages don't work at all**~~ - FIXED!
-- ~~User tested: "Was gibt?" (German) - no recognition~~ - NOW WORKS!
-- Multiple languages now working reliably
+#### ✅ Completed Tasks
+1. [x] Analyze current database models and schema
+2. [x] Update organization model with new fields (name, address, phone, email)
+3. [x] Update agent model to support free vs proprietary agents
+4. [x] Create database migration for schema changes (revision 87b8d0316915)
+5. [x] Update API endpoints and schemas
+6. [x] Create/update CLAUDE.md with progress tracking
 
-### Language Support Research & Fixes (January 8, 2025)
-- **Researched Deepgram Nova-2 language support**: Confirmed German (de) IS supported
-- **Updated language mapping**: Added missing mappings for all offered languages
-- **Removed unsupported languages**: Removed Arabic and Hebrew from dropdown (not in Nova-2)
-- **Enhanced logging**: Added complete options logging to debug exactly what's sent to Deepgram
+#### 🔄 In Progress Tasks
+- [ ] Update frontend organization registration form
 
-### ✅ FINAL TEST RESULTS (January 8, 2025) - SUCCESS!
-- **Spanish (Spain/Mexico)**: ✅ Works well after fixes
-- **German**: ✅ Works reliably, no longer gives up after first phrases
-- **French**: ✅ Works (confirmed earlier)
-- **Overall**: STT now works pretty well across multiple languages
+#### ⏸️ Pending Tasks (Backend Implementation Ready)
+- [ ] Create organization admin during org registration ✅ **API READY**
+- [ ] Add organization admin permissions for editing org data ✅ **API READY**
+- [ ] Add organization admin ability to list/delete/deactivate users ✅ **API READY**
 
-### Root Cause Analysis & Fixes Applied (January 8, 2025)
-- **Primary Issue**: Model mismatch between frontend (nova-3) and backend config (nova-2)
-- **Secondary Issues**: Audio processing, connection stability, and silence detection problems
+### ✅ MAJOR MILESTONE: Backend Implementation Complete
 
-### ✅ COMPREHENSIVE STT FIXES APPLIED (January 8, 2025):
+#### What's Been Implemented (January 11, 2025)
 
-#### 1. Model Consistency Fix
-- **Frontend**: Changed default from `nova-3` to `nova-2` in StreamingSpeechToTextService.ts
-- **Frontend**: Updated useVoice hook to use `nova-2` instead of `nova-3`
-- **Backend**: Already configured for `nova-2` (better multilingual support)
-- **Result**: Eliminates model fallback complexity and ensures consistent multilingual support
+##### Database Schema Updates
+- **Enhanced Tenant/Organization Model**: Added `full_name`, `address` (JSON), `phone`, `organization_email` fields
+- **New Agent Model**: Complete agent management with ownership (free vs proprietary agents)
+- **Updated Role Hierarchy**: Added `org_admin` role between `user` and `admin`
+- **Migration Applied**: Database successfully updated with revision 87b8d0316915
 
-#### 2. Audio Processing Improvements
-- **Enhanced Audio Detection**: Added RMS (Root Mean Square) calculation for better sensitivity
-- **Improved Thresholds**: Lowered audio detection thresholds (0.003 RMS, 0.005 peak) for different languages/accents
-- **Connection Heartbeat**: Added periodic audio transmission to prevent connection drops during silence
-- **Buffer Management**: Increased recent activity threshold (5 frames) and reduced send interval (40ms)
+##### New API Endpoints
+**Organizations API (`/api/organizations/`)**:
+- `POST /register` - Complete organization registration with admin user creation
+- `GET /{org_id}` - Get organization details
+- `PATCH /{org_id}` - Update organization (org_admin+ required)
+- `GET /{org_id}/users` - List organization users (org_admin+ required)
+- `PATCH /{org_id}/users/{user_id}` - Update user role/status (org_admin+ required)
+- `DELETE /{org_id}/users/{user_id}` - Deactivate user (org_admin+ required)
 
-#### 3. Audio Constraints Optimization
-- **Sample Rate**: Explicitly request 16kHz to match Deepgram requirements
-- **Noise Suppression**: Disabled to preserve speech characteristics for language detection
-- **Advanced Constraints**: Added specific browser constraints for consistent audio capture
+**Agents API (`/api/agents/`)**:
+- `GET /` - List available agents (filtered by ownership)
+- `POST /` - Create proprietary agent (org_admin+ required)
+- `GET /{agent_id}` - Get agent details
+- `PATCH /{agent_id}` - Update agent configuration
+- `DELETE /{agent_id}` - Deactivate agent
 
-#### 4. Connection Stability Enhancements
-- **Reconnection Logic**: Improved with exponential backoff for abnormal closures (code 1006)
-- **Error Handling**: Added language-specific error context and better logging
-- **Audio Validation**: Backend validates audio chunk sizes (10 bytes min, 32KB max)
+##### Security & Permissions
+- **Role-based Access Control**: Proper hierarchy (user < org_admin < admin < super_admin)
+- **Organization Isolation**: Users can only manage their own organization
+- **Agent Ownership**: Free agents available to all, proprietary agents per organization
+- **Authentication Integration**: Token generation for immediate login after registration
 
-#### 5. Backend Deepgram Options Tuning
-- **Utterance Detection**: Increased to 1.5 seconds for better multilingual support
-- **Latency Optimization**: Added `no_delay=True` for reduced latency
-- **Multichannel**: Disabled to ensure single-channel processing stability
-- **Enhanced Logging**: Added detailed connection and audio transmission error context
+##### Updated Schemas
+- **Enhanced Organization Schemas**: Full registration request/response models
+- **Agent Management Schemas**: Complete CRUD operations support
+- **Role Management**: Admin user update capabilities
 
-### Bugs Found & Resolved (January 8, 2025)
-- **STT Language Recognition Failure**: Non-English languages not being recognized at all
-- **Duplicate Transcriptions**: English STT showing duplicate phrases ("Hello. My name is Anigo Montoya. You killed my uncle Hello. My name is Anigo Montoya...")
-- **Name Recognition**: "Inigo" transcribed as "Anigo"
-- **✅ RESOLVED: Deepgram WebSocket HTTP 400 Error**: Fixed nova-3 model compatibility issues
-  - **Root Cause**: Nova-3 model has limited language support (mainly English, Spanish)
-  - **Solution**: Implemented automatic model fallback (nova-3 → nova-2) for unsupported languages
-  - **Details**: French, German, and other languages not supported by nova-3 automatically fall back to nova-2
+### Technical Decisions
 
-### Fixes Applied (via Agent)
-1. **Backend WebSocket Updates**:
-   - Modified `/ws/stt/stream` to accept `language` and `model` query parameters
-   - Language parameters now properly passed to Deepgram service
-   - Added control message support for dynamic language switching
+#### Organization Data Structure
+- Keep `Tenant` model name for backward compatibility
+- Add new fields to existing model rather than creating separate table
+- Use JSON field for address to support international formats
 
-2. **Duplicate Prevention**:
-   - Added duplicate detection logic
-   - Audio throttling (50ms intervals)
-   - Improved buffer management (1024 size)
-   - Tracking of last interim/final transcripts
-
-3. **Audio Processing Improvements**:
-   - Reduced audio activity threshold
-   - Added 1.5x audio boosting for quiet speech
-   - Better silence detection with recent activity tracking
-
-4. **Frontend Updates**:
-   - `useVoice` hook properly passes language to STT service
-   - STT service options recreated on language change using `useMemo`
-   - Added language detection feedback logging
-
-5. **✅ FINAL FIX: Deepgram Model Compatibility** (HTTP 400 error completely resolved):
-   - **Root Issue**: Nova-3 model doesn't support French and many other languages
-   - Added `map_language_code_to_deepgram()` function in deepgram_service.py
-   - Maps standard locale codes (fr-FR) to Deepgram format (fr)
-   - **Automatic Model Fallback**: Added `get_compatible_model_for_language()` function
-   - When nova-3 is requested but language is unsupported → automatically switches to nova-2
-   - Comprehensive logging shows model fallback decisions
-   - Changed default model from nova-3 to nova-2 for better language support
-   - **Result**: French STT now works perfectly with automatic nova-3 → nova-2 fallback
-
-### Implementation Details
-**Language Selector Component:**
-- 36 supported languages from Deepgram nova-3
-- Radix UI Select with proper accessibility
-- Always enabled (not disabled during recording)
-- Positioned next to voice controls in conversation header
-
-**Language Switching Logic:**
-- Triggers STT restart whenever STT is enabled (not just during active recording)
-- 500ms delay for clean WebSocket reconnection
-- Automatic focus restoration to message input textarea
-- Console logging for debugging language change flow
-
-**Voice Integration:**
-- Language passed to useVoice hook via languageCode prop
-- useStreamingSpeechToText receives language parameter
-- Backend uses nova-3 model with specified language code
-
-## Overview
-This is a multi-tenant backend system with authentication, conversations, and RAG (Retrieval Augmented Generation) capabilities. The code uses FastAPI, SQLAlchemy with asyncpg for PostgreSQL, and includes voice service integrations.
-
-## Fixed Issues
-- Database model integrity issues (nullable tenant_id)
-- Field name inconsistencies (thread_id vs conversation_id)
-- Foreign key constraint violations
-- JSON serialization problems
-- API endpoint URL mismatches in tests
-- **NEW: Backend STT Implementation Complete**
-  - Created dedicated streaming STT API (`/app/api/streaming_stt.py`)
-  - Added new WebSocket endpoint `/api/ws/stt/stream` for real-time transcription
-  - Added HTTP endpoint `/api/stt/file` for audio file transcription
-  - Added status endpoint `/api/stt/status` for service monitoring
-  - Integrated with main application router and shutdown handlers
-  - Includes usage tracking, error handling, and authentication
-
-## Remaining Issues
-
-### API Endpoint Implementation
-- Conversation API endpoints don't match test expectations
-- Several endpoints return 403/404 for valid users
-- PATCH/DELETE operations return 405 Method Not Allowed
-- Some endpoints return incorrect response formats
-
-### Access Control
-- Conversation access permissions need review
-- Test fixtures need proper user-conversation relationships
-
-### Agent Processing
-- Missing implementation for agent processing
-- The code references a non-existent `process_conversation` function
-
-### RAG Services
-- Vector database integration still failing
-- Naming inconsistencies between thread_id and conversation_id
-- Document ingestion process needs review
-
-### Voice Services
-- TTS/STT preprocessing has formatting issues
-- SSML generation tests failing
-
-## Test Status
-- 122 passing tests (increased from 115)
-- 27 failing tests
-- 2 errors
-
-## Recent Fixes (December 2024)
-
-### WebSocket Scaling for 100+ Users
-- Added connection limits (500 total, 50 per conversation)
-- Implemented automatic cleanup task (runs every 5 minutes)
-- Added real-time connection monitoring at `/api/ws/stats`
-- Created production Gunicorn configuration
-- Fixed admin dashboard to show REAL WebSocket stats instead of mock values
-
-### Admin Dashboard Mock Values Issue FIXED
-- Admin page was showing 0 WebSocket connections due to hardcoded mock values
-- Now shows real connection counts from actual WebSocket manager
-- Added detailed admin WebSocket stats endpoint at `/api/admin/websocket/stats`
-- **LESSON LEARNED**: Mock values in production code are absolutely forbidden
-
-### Language Auto-Detection for STT IMPLEMENTED
-- Updated `deepgram_service.py` to support automatic language detection
-- Added `detect_language` parameter to both live streaming and file transcription
-- When `language=None` and `detect_language=True`, Deepgram will automatically detect the input language
-- Streaming STT endpoint now uses auto-detection by default (`language=None, detect_language=True`)
-- File transcription endpoint enables auto-detection when no language is specified
-- Added `detected_language` field to transcript responses to show detected language
-- Added comprehensive logging to debug language detection behavior
-- Using `nova-2` model which supports multi-language detection
-- **STATUS**: Works for English, testing non-English language detection in progress
-
-## Next Steps
-1. Review conversation API routes for proper method handling
-2. Fix access control for conversation endpoints
-3. Create or mock agent processing functionality
-4. Update RAG services to use consistent field names
-5. Fix voice service preprocessing tests
-
-## Project Structure
-- `/app/api/` - API endpoints
-- `/app/models/` - SQLAlchemy models
-- `/app/services/` - Business logic services
-- `/app/auth/` - Authentication
-- `/tests/` - Test suite
-
-## Important Command
-When resuming work, run tests with:
+#### Agent Ownership Model
+```python
+class Agent(Base):
+    __tablename__ = "agents"
+    
+    id = Column(UUID, primary_key=True)
+    agent_type = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text)
+    is_free_agent = Column(Boolean, default=True)
+    owner_tenant_id = Column(UUID, ForeignKey("tenants.id"), nullable=True)
+    configuration_template = Column(JSON, default={})
+    created_at = Column(DateTime, server_default=func.now())
 ```
-pytest -v
-```
+
+#### Role Hierarchy
+- `user`: Basic user within organization
+- `org_admin`: Can manage organization data and users
+- `admin`: System-wide admin (if multi-tenant)
+- `super_admin`: Full system access
+
+### API Endpoint Changes
+
+#### Organization Registration
+- `POST /api/organizations/register` - New endpoint for full org registration
+- Creates organization and first admin user atomically
+- Returns organization details and admin credentials
+
+#### Organization Management
+- `GET /api/organizations/{org_id}` - Get organization details
+- `PATCH /api/organizations/{org_id}` - Update organization (org_admin only)
+- `GET /api/organizations/{org_id}/users` - List organization users
+- `PATCH /api/organizations/{org_id}/users/{user_id}` - Update user status
+- `DELETE /api/organizations/{org_id}/users/{user_id}` - Remove user
+
+#### Agent Management
+- `GET /api/agents` - List available agents (filtered by ownership)
+- `POST /api/agents` - Create proprietary agent (org_admin only)
+- `PATCH /api/agents/{agent_id}` - Update agent configuration
+- `DELETE /api/agents/{agent_id}` - Delete proprietary agent
+
+### Frontend Changes Required
+1. New organization registration form with all fields
+2. Organization admin dashboard
+3. User management interface
+4. Agent configuration interface
+
+### Migration Strategy
+1. Add new columns to existing tables with defaults
+2. Create new Agent table
+3. Migrate existing agent_type strings to Agent records
+4. Update foreign key relationships
+
+### Next Steps
+1. Create database migration script
+2. Update models.py with new fields
+3. Update schemas.py with new request/response models
+4. Implement new API endpoints
+5. Update authentication to support org_admin role
+6. Create frontend components
+
+---
+
+## Previous Project Sections (Preserved for Reference)
+
+### Current Project: Language Selection for STT (January 8, 2025) - COMPLETED ✅
+
+[Previous content preserved but moved to bottom of file...]

@@ -21,6 +21,14 @@ class Tenant(Base):
     name = Column(String, nullable=False)
     subdomain = Column(String, unique=True, nullable=False)
     access_code = Column(String, nullable=False, default=lambda: secrets.token_urlsafe(8))
+    
+    # New organization fields
+    description = Column(String, nullable=True)  # Organization description
+    full_name = Column(String, nullable=True)  # Full organization name
+    address = Column(JSON, nullable=True)  # JSON for flexible international addresses
+    phone = Column(String, nullable=True)
+    organization_email = Column(String, nullable=True)
+    
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -28,6 +36,7 @@ class Tenant(Base):
     # Relationships
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="tenant", cascade="all, delete-orphan")
+    agents = relationship("Agent", back_populates="owner_tenant", cascade="all, delete-orphan")
     
 class User(Base):
     __tablename__ = "users"
@@ -40,7 +49,7 @@ class User(Base):
     last_name = Column(String)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
-    role = Column(String, default="user")  # user, admin, super_admin
+    role = Column(String, default="user")  # user, org_admin, admin, super_admin
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -68,6 +77,32 @@ class RefreshToken(Base):
     
     # Relationships
     user = relationship("User", back_populates="refresh_tokens")
+
+class Agent(Base):
+    """Agent configurations - both free agents and proprietary agents"""
+    __tablename__ = "agents"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_type = Column(String, unique=True, nullable=False)  # e.g., "MODERATOR", "FINANCIAL_SERVICES"
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    
+    # Ownership model
+    is_free_agent = Column(Boolean, default=True)  # True = available to all, False = proprietary
+    owner_tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    
+    # Configuration
+    configuration_template = Column(JSON, default={})  # Default configuration for this agent
+    capabilities = Column(JSON, default=[])  # List of capabilities/features
+    
+    # Metadata
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    owner_tenant = relationship("Tenant", back_populates="agents")
+    conversation_agents = relationship("ConversationAgent", back_populates="agent", cascade="all, delete-orphan")
 
 # Enum for participant types
 class ParticipantType(str, enum.Enum):
@@ -193,17 +228,19 @@ class ConversationAgent(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
-    agent_type = Column(String, nullable=False)  # e.g., "MODERATOR", "DATA_AGENT"
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
+    agent_type = Column(String, nullable=True)  # Kept for backward compatibility
     added_at = Column(DateTime(timezone=True), server_default=func.now())
     is_active = Column(Boolean, default=True)
     configuration = Column(Text, nullable=True)  # JSON string for agent-specific config
     
     # Relationships
     conversation = relationship("Conversation", back_populates="agents")
+    agent = relationship("Agent", back_populates="conversation_agents")
     
     # Unique constraint
     __table_args__ = (
-        UniqueConstraint('conversation_id', 'agent_type', name='_conversation_agent_uc'),
+        UniqueConstraint('conversation_id', 'agent_id', name='_conversation_agent_uc'),
     )
 
 class ConversationParticipant(Base):

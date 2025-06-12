@@ -188,3 +188,31 @@ async def require_super_admin_user(current_user: User = Depends(get_current_acti
             detail="Super admin access required"
         )
     return current_user
+
+
+# Helper functions for external use
+def get_password_hash(password: str) -> str:
+    """Get password hash - wrapper for external use"""
+    return AuthService.get_password_hash(password)
+
+
+async def create_tokens(user: User, db: AsyncSession = None) -> tuple[str, str]:
+    """Create access and refresh tokens for a user"""
+    # Create access token
+    access_token = AuthService.create_access_token(
+        data={
+            "sub": str(user.id),
+            "tenant_id": str(user.tenant_id),
+            "email": user.email,
+            "role": user.role
+        }
+    )
+    
+    # Create refresh token if db session provided
+    if db:
+        refresh_token = await AuthService.create_refresh_token(str(user.id), db)
+    else:
+        # Generate a simple refresh token without DB storage
+        refresh_token = secrets.token_urlsafe(32)
+    
+    return access_token, refresh_token

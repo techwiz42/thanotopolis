@@ -8,7 +8,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 from app.services.stripe_service import StripeService
-from app.services.usage_service import UsageService
+from app.services.usage_service import UsageTrackingService
 from app.models.models import User, Tenant
 
 
@@ -122,12 +122,12 @@ class TestStripeServiceIntegration:
             )
 
 
-class TestUsageServiceIntegration:
+class TestUsageTrackingServiceIntegration:
     """Integration tests for Usage service."""
 
     async def test_record_usage_success(self, db_session: AsyncSession, sample_user: User):
         """Test successful usage recording."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_usage(
             user_id=sample_user.id,
@@ -142,7 +142,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_token_usage_success(self, db_session: AsyncSession, sample_user: User):
         """Test successful token usage recording."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_token_usage(
             user_id=sample_user.id,
@@ -157,7 +157,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_token_usage_gpt35(self, db_session: AsyncSession, sample_user: User):
         """Test token usage recording for GPT-3.5."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_token_usage(
             user_id=sample_user.id,
@@ -172,7 +172,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_token_usage_custom_cost(self, db_session: AsyncSession, sample_user: User):
         """Test token usage recording with custom cost."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_token_usage(
             user_id=sample_user.id,
@@ -188,7 +188,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_tts_usage_success(self, db_session: AsyncSession, sample_user: User):
         """Test successful TTS usage recording."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_tts_usage(
             user_id=sample_user.id,
@@ -201,7 +201,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_stt_usage_with_duration(self, db_session: AsyncSession, sample_user: User):
         """Test STT usage recording with duration."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_stt_usage(
             user_id=sample_user.id,
@@ -214,7 +214,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_stt_usage_without_duration(self, db_session: AsyncSession, sample_user: User):
         """Test STT usage recording without duration."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_stt_usage(
             user_id=sample_user.id,
@@ -226,7 +226,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_usage_stats_default_period(self, db_session: AsyncSession, sample_user: User):
         """Test getting usage stats for default period."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         # First record some usage
         await usage_service.record_usage(
@@ -249,7 +249,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_usage_stats_custom_date_range(self, db_session: AsyncSession, sample_user: User):
         """Test getting usage stats for custom date range."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         start_date = datetime.utcnow() - timedelta(days=7)
         end_date = datetime.utcnow()
@@ -265,7 +265,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_usage_stats_by_user(self, db_session: AsyncSession, sample_user: User):
         """Test getting usage stats filtered by user."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         stats = await usage_service.get_usage_stats(
             tenant_id=sample_user.tenant_id,
@@ -277,7 +277,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_usage_stats_no_data(self, db_session: AsyncSession):
         """Test getting usage stats with no data."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         from uuid import uuid4
         fake_tenant_id = uuid4()
@@ -292,7 +292,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_system_metric_success(self, db_session: AsyncSession):
         """Test successful system metric recording."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_system_metric(
             metric_name="cpu_usage",
@@ -304,7 +304,7 @@ class TestUsageServiceIntegration:
 
     async def test_record_system_metric_global(self, db_session: AsyncSession):
         """Test recording global system metric."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         result = await usage_service.record_system_metric(
             metric_name="memory_usage",
@@ -317,7 +317,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_recent_usage_success(self, db_session: AsyncSession, sample_user: User):
         """Test getting recent usage."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         # Record some usage first
         await usage_service.record_usage(
@@ -339,7 +339,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_recent_usage_all_tenants(self, db_session: AsyncSession):
         """Test getting recent usage across all tenants."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         recent_usage = await usage_service.get_recent_usage(
             tenant_id=None,  # All tenants
@@ -351,7 +351,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_system_metrics_success(self, db_session: AsyncSession):
         """Test getting system metrics."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         # Record a metric first
         await usage_service.record_system_metric(
@@ -368,7 +368,7 @@ class TestUsageServiceIntegration:
 
     async def test_get_system_metrics_time_filter(self, db_session: AsyncSession):
         """Test getting system metrics with time filter."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         since = datetime.utcnow() - timedelta(hours=1)
         
@@ -381,7 +381,7 @@ class TestUsageServiceIntegration:
 
     async def test_usage_stats_period_calculations(self, db_session: AsyncSession, sample_user: User):
         """Test usage statistics period calculations."""
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         # Test different period calculations
         for period in ["day", "week", "month"]:
@@ -397,7 +397,7 @@ class TestUsageServiceIntegration:
         """Test concurrent usage recording."""
         import asyncio
         
-        usage_service = UsageService()
+        usage_service = UsageTrackingService()
         
         # Record multiple usage entries concurrently
         tasks = []

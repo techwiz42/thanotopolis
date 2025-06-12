@@ -9,7 +9,7 @@ __pycache__/
 .env
 .env.local
 .env.test
-test_*
+/test_*
 # Distribution / packaging
 .Python
 build/

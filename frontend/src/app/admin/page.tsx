@@ -63,6 +63,9 @@ const AdminMonitoringPage = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null)
+  const [isGeneratingToken, setIsGeneratingToken] = useState(false)
+  const [tokenMessage, setTokenMessage] = useState('')
+  const [generatedToken, setGeneratedToken] = useState('')
 
   const fetchDashboardData = useCallback(async () => {
     if (!tokens?.access_token || !organization) return
@@ -93,6 +96,45 @@ const AdminMonitoringPage = () => {
       setLoading(false)
     }
   }, [tokens, organization])
+
+  const generateNewToken = async () => {
+    if (!tokens?.access_token || !organization) return
+
+    setIsGeneratingToken(true)
+    setTokenMessage('')
+    setGeneratedToken('')
+
+    try {
+      const response = await fetch('/api/organizations/current/regenerate-access-code', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${tokens.access_token}`,
+          'X-Tenant-ID': organization,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Failed to generate new token')
+      }
+
+      const updatedOrg = await response.json()
+      setGeneratedToken(updatedOrg.access_code)
+      setTokenMessage('New access token generated successfully! Share this with new members.')
+
+      // Clear the token display after 30 seconds for security
+      setTimeout(() => {
+        setGeneratedToken('')
+        setTokenMessage('')
+      }, 30000)
+
+    } catch (err) {
+      setTokenMessage(err instanceof Error ? err.message : 'Failed to generate new token')
+    } finally {
+      setIsGeneratingToken(false)
+    }
+  }
 
   // Check admin access
   useEffect(() => {
@@ -184,8 +226,59 @@ const AdminMonitoringPage = () => {
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Admin Monitoring Dashboard</h1>
-        <Button onClick={fetchDashboardData}>Refresh</Button>
+        <div className="flex gap-2">
+          <Button 
+            onClick={() => router.push('/organizations/edit')}
+            variant="outline"
+          >
+            Edit Organization
+          </Button>
+          <Button 
+            onClick={generateNewToken}
+            disabled={isGeneratingToken}
+            variant="outline"
+          >
+            {isGeneratingToken ? 'Generating...' : 'Generate Token'}
+          </Button>
+          <Button onClick={fetchDashboardData}>Refresh</Button>
+        </div>
       </div>
+
+      {/* Token Generation Results */}
+      {(tokenMessage || generatedToken) && (
+        <Card className="p-4">
+          <div className="space-y-3">
+            {tokenMessage && (
+              <p className={`text-sm ${generatedToken ? 'text-green-600' : 'text-red-600'}`}>
+                {tokenMessage}
+              </p>
+            )}
+            {generatedToken && (
+              <div className="bg-gray-100 p-3 rounded-md">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-1">New Access Token:</h3>
+                    <code className="text-lg font-mono text-blue-600 select-all">{generatedToken}</code>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(generatedToken)
+                      setTokenMessage('Token copied to clipboard!')
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  ⚠️ This token will be hidden after 30 seconds for security. Copy it now!
+                </p>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
 
       {/* System Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -238,10 +331,12 @@ const AdminMonitoringPage = () => {
         </Card>
       )}
 
-      {/* Organization Usage Statistics */}
+      {/* Organization Usage Statistics - Only show for super_admin or current org */}
       {dashboard?.usage_by_organization && dashboard.usage_by_organization.length > 0 && (
         <Card className="p-6">
-          <h2 className="text-xl font-bold mb-4">Usage by Organization (Last Month)</h2>
+          <h2 className="text-xl font-bold mb-4">
+            {user?.role === 'super_admin' ? 'Usage by Organization (Last Month)' : 'Organization Usage (Last Month)'}
+          </h2>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -255,26 +350,30 @@ const AdminMonitoringPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {dashboard.usage_by_organization.map((org) => (
-                  <tr key={org.tenant_id} className="border-b">
-                    <td className="py-2">{org.tenant_name}</td>
-                    <td className="py-2 text-gray-600">{org.subdomain}</td>
-                    <td className="py-2 text-right">{org.total_tokens.toLocaleString()}</td>
-                    <td className="py-2 text-right">{formatWords(org.total_tts_words)}</td>
-                    <td className="py-2 text-right">{formatWords(org.total_stt_words)}</td>
-                    <td className="py-2 text-right">{formatCost(org.total_cost_cents)}</td>
-                  </tr>
-                ))}
+                {dashboard.usage_by_organization
+                  .filter(org => user?.role === 'super_admin' || org.tenant_id === user?.tenant_id)
+                  .map((org) => (
+                    <tr key={org.tenant_id} className="border-b">
+                      <td className="py-2">{org.tenant_name}</td>
+                      <td className="py-2 text-gray-600">{org.subdomain}</td>
+                      <td className="py-2 text-right">{org.total_tokens.toLocaleString()}</td>
+                      <td className="py-2 text-right">{formatWords(org.total_tts_words)}</td>
+                      <td className="py-2 text-right">{formatWords(org.total_stt_words)}</td>
+                      <td className="py-2 text-right">{formatCost(org.total_cost_cents)}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
         </Card>
       )}
 
-      {/* Tenant Statistics */}
+      {/* Tenant Statistics - Only show for super_admin or current org */}
       {dashboard?.tenant_stats && dashboard.tenant_stats.length > 0 && (
         <Card className="p-6">
-          <h2 className="text-xl font-bold mb-4">Tenant Statistics</h2>
+          <h2 className="text-xl font-bold mb-4">
+            {user?.role === 'super_admin' ? 'Tenant Statistics' : 'Organization Statistics'}
+          </h2>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -286,14 +385,16 @@ const AdminMonitoringPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {dashboard.tenant_stats.map((tenant) => (
-                  <tr key={tenant.tenant_id} className="border-b">
-                    <td className="py-2">{tenant.name}</td>
-                    <td className="py-2 text-gray-600">{tenant.subdomain}</td>
-                    <td className="py-2 text-right">{tenant.user_count}</td>
-                    <td className="py-2 text-right">{tenant.conversation_count}</td>
-                  </tr>
-                ))}
+                {dashboard.tenant_stats
+                  .filter(tenant => user?.role === 'super_admin' || tenant.tenant_id === user?.tenant_id)
+                  .map((tenant) => (
+                    <tr key={tenant.tenant_id} className="border-b">
+                      <td className="py-2">{tenant.name}</td>
+                      <td className="py-2 text-gray-600">{tenant.subdomain}</td>
+                      <td className="py-2 text-right">{tenant.user_count}</td>
+                      <td className="py-2 text-right">{tenant.conversation_count}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>

@@ -26,16 +26,58 @@ class ConversationStatus(str, Enum):
 class OrganizationCreate(BaseModel):
     name: str
     subdomain: str
+    description: Optional[str] = None
+    full_name: Optional[str] = None
+    address: Optional[Dict[str, Any]] = None  # JSON for flexible international addresses
+    phone: Optional[str] = None
+    organization_email: Optional[EmailStr] = None
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    full_name: Optional[str] = None
+    address: Optional[Dict[str, Any]] = None
+    phone: Optional[str] = None
+    organization_email: Optional[EmailStr] = None
+    is_active: Optional[bool] = None
 
 class OrganizationResponse(BaseModel):
     id: UUID
     name: str
     subdomain: str
     access_code: str
+    description: Optional[str]
+    full_name: Optional[str]
+    address: Optional[Dict[str, Any]]
+    phone: Optional[str]
+    organization_email: Optional[str]
     is_active: bool
     created_at: datetime
+    updated_at: Optional[datetime]
     
     model_config = ConfigDict(from_attributes=True)
+
+class OrganizationRegisterRequest(BaseModel):
+    # Organization details
+    name: str
+    subdomain: str
+    full_name: str
+    address: Dict[str, Any]  # Required for registration
+    phone: str
+    organization_email: EmailStr
+    
+    # Admin user details
+    admin_email: EmailStr
+    admin_username: str
+    admin_password: str = Field(..., min_length=8)
+    admin_first_name: str
+    admin_last_name: str
+
+class OrganizationRegisterResponse(BaseModel):
+    organization: OrganizationResponse
+    admin_user: 'UserResponse'
+    access_token: str
+    refresh_token: str
 
 # User Schemas
 class UserCreate(BaseModel):
@@ -213,14 +255,46 @@ class PaginatedResponse(BaseModel):
     total_pages: int
 
 # Agent-related schemas
+class AgentCreate(BaseModel):
+    agent_type: str
+    name: str
+    description: Optional[str] = None
+    is_free_agent: bool = False  # Default to proprietary
+    configuration_template: Optional[Dict[str, Any]] = {}
+    capabilities: Optional[List[str]] = []
+
+class AgentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    configuration_template: Optional[Dict[str, Any]] = None
+    capabilities: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+class AgentResponse(BaseModel):
+    id: UUID
+    agent_type: str
+    name: str
+    description: Optional[str]
+    is_free_agent: bool
+    owner_tenant_id: Optional[UUID]
+    configuration_template: Optional[Dict[str, Any]]
+    capabilities: Optional[List[str]]
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
 class AgentInfo(BaseModel):
     agent_type: str
+    name: str
     description: str
     capabilities: List[str]
     configuration_schema: Optional[Dict[str, Any]] = None
+    is_available: bool  # True if free agent or owned by user's org
 
 class AvailableAgentsResponse(BaseModel):
-    agents: List[AgentInfo]
+    agents: List[AgentResponse]
 
 # Usage tracking schemas
 class UsageRecordCreate(BaseModel):
