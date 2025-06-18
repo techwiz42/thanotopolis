@@ -9,8 +9,8 @@ from sqlalchemy import select
 import logging
 
 from app.db.database import async_session_maker
-from app.models.models import Tenant, StripeCustomer, StripeSubscription
-from app.services.stripe_service import stripe_service
+from app.models.models import Tenant
+# Stripe service removed
 from app.schemas.schemas import UsageBillingCreate
 
 logger = logging.getLogger(__name__)
@@ -50,63 +50,9 @@ class BillingAutomationService:
         }
         
         async with async_session_maker() as db:
-            # Get all active organizations with Stripe customers and subscriptions
-            query = select(StripeCustomer).join(
-                StripeSubscription,
-                StripeSubscription.customer_id == StripeCustomer.id
-            ).where(
-                StripeSubscription.status.in_(["active", "trialing"])
-            )
-            
-            result = await db.execute(query)
-            customers = result.scalars().all()
-            
-            logger.info(f"Found {len(customers)} active customers to process")
-            
-            for customer in customers:
-                try:
-                    results["processed_organizations"] += 1
-                    
-                    # Calculate usage for the billing period
-                    usage = await stripe_service.calculate_monthly_usage(
-                        db=db,
-                        tenant_id=customer.tenant_id,
-                        period_start=period_start,
-                        period_end=period_end
-                    )
-                    
-                    # Skip if no usage charges
-                    if usage["voice_usage_cents"] == 0:
-                        logger.info(f"No usage charges for customer {customer.stripe_customer_id}")
-                        continue
-                    
-                    # Create usage invoice
-                    usage_data = UsageBillingCreate(
-                        period_start=period_start,
-                        period_end=period_end,
-                        voice_words_count=usage["voice_words_count"],
-                        voice_usage_cents=usage["voice_usage_cents"]
-                    )
-                    
-                    invoice = await stripe_service.create_usage_invoice(
-                        db=db,
-                        customer_id=customer.id,
-                        usage_data=usage_data
-                    )
-                    
-                    results["successful_invoices"] += 1
-                    results["total_usage_charges"] += usage["voice_usage_cents"]
-                    
-                    logger.info(
-                        f"Created usage invoice for {customer.stripe_customer_id}: "
-                        f"{usage['voice_words_count']} words, ${usage['voice_usage_cents']/100:.2f}"
-                    )
-                    
-                except Exception as e:
-                    results["failed_invoices"] += 1
-                    error_msg = f"Failed to process customer {customer.stripe_customer_id}: {str(e)}"
-                    results["errors"].append(error_msg)
-                    logger.error(error_msg)
+            # TODO: Implement billing logic without Stripe
+            logger.info("Billing automation disabled - Stripe service removed")
+            results["errors"].append("Billing automation disabled - Stripe service removed")
         
         logger.info(f"Monthly billing complete: {results}")
         return results

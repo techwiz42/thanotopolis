@@ -1,80 +1,115 @@
 #!/usr/bin/env python3
 """
-Setup test database for pytest
-Run this before running tests: python setup_test_db.py
+Setup script for test database.
+Creates the test_thanotopolis database and applies migrations.
 """
 import asyncio
 import asyncpg
 import sys
-import uuid
-from sqlalchemy import text
+import os
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
+
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.models.models import Base
+
+# Test database configuration
+TEST_DB_NAME = "test_thanotopolis"
+DB_USER = "postgres"
+DB_PASSWORD = "postgres"
+DB_HOST = "localhost"
+DB_PORT = "5432"
+
+# Connection URLs
+ADMIN_DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/postgres"
+TEST_DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{TEST_DB_NAME}"
 
 
 async def create_test_database():
     """Create the test database if it doesn't exist."""
-    # Connection parameters
-    db_user = "postgres"
-    db_password = "postgres"
-    db_host = "localhost"
-    db_port = 5432
-    test_db_name = "test_thanotopolis"
-    
-    # Connect to PostgreSQL server (not a specific database)
-    dsn = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/postgres"
-    
-    print(f"Connecting to PostgreSQL server...")
-    
     try:
-        # Use asyncpg to create database
-        conn = await asyncpg.connect(dsn)
-        
-        # Check if database exists
-        exists = await conn.fetchval(
-            "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)",
-            test_db_name
+        # Connect to postgres database to create test database
+        conn = await asyncpg.connect(
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT,
+            database="postgres"
         )
         
-        if exists:
-            print(f"Database '{test_db_name}' already exists.")
+        # Check if test database exists
+        result = await conn.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1", TEST_DB_NAME
+        )
+        
+        if not result:
+            # Create test database
+            await conn.execute(f"CREATE DATABASE {TEST_DB_NAME}")
+            print(f"✅ Created test database: {TEST_DB_NAME}")
         else:
-            # Create database
-            await conn.execute(f'CREATE DATABASE "{test_db_name}"')
-            print(f"Database '{test_db_name}' created successfully.")
+            print(f"✅ Test database already exists: {TEST_DB_NAME}")
         
         await conn.close()
         
-        # Now connect to the test database and create extensions if needed
-        test_dsn = f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{test_db_name}"
-        engine = create_async_engine(test_dsn)
+    except Exception as e:
+        print(f"❌ Error creating test database: {e}")
+        raise
+
+
+async def create_test_tables():
+    """Create all tables in the test database."""
+    try:
+        # Connect to test database and create tables
+        engine = create_async_engine(TEST_DATABASE_URL, echo=False)
         
         async with engine.begin() as conn:
-            # Create needed extensions
-            await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+            # Drop all tables first with CASCADE
             try:
-                await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
-                print("pgvector extension created/verified.")
+                # Drop with cascade to handle foreign key dependencies
+                await conn.execute(text("DROP SCHEMA public CASCADE"))
+                await conn.execute(text("CREATE SCHEMA public"))
+                print("✅ Dropped existing schema and recreated")
             except Exception as e:
-                print(f"Warning: Could not create pgvector extension. Some tests may fail: {e}")
-            print("Extensions setup complete.")
+                print(f"⚠️  Schema drop failed: {e}")
+                # Try regular drop_all as fallback
+                await conn.run_sync(Base.metadata.drop_all)
+                print("✅ Dropped existing tables (fallback)")
+            
+            # Install required extensions
+            try:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                print("✅ Installed pgvector extension")
+            except Exception as e:
+                print(f"⚠️  pgvector extension install failed: {e}")
+            
+            # Create all tables
+            await conn.run_sync(Base.metadata.create_all)
+            print("✅ Created all tables")
         
         await engine.dispose()
         
-        print(f"\nTest database setup complete!")
-        print(f"DATABASE_URL: {test_dsn}")
-        
-    except asyncpg.exceptions.InvalidCatalogNameError:
-        print(f"Error: Could not connect to PostgreSQL server.")
-        print(f"Make sure PostgreSQL is running and accessible at {db_host}:{db_port}")
-        sys.exit(1)
-    except asyncpg.exceptions.InvalidPasswordError:
-        print(f"Error: Invalid password for user '{db_user}'")
-        print(f"Update the connection parameters in this script.")
-        sys.exit(1)
     except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+        print(f"❌ Error creating tables: {e}")
+        raise
+
+
+async def main():
+    """Main setup function."""
+    print("🔧 Setting up test database...")
+    
+    try:
+        await create_test_database()
+        await create_test_tables()
+        
+        print("✅ Test database setup completed successfully!")
+        print(f"📊 Database URL: {TEST_DATABASE_URL}")
+        
+    except Exception as e:
+        print(f"❌ Test database setup failed: {e}")
+        exit(1)
 
 
 if __name__ == "__main__":
-    asyncio.run(create_test_database())
+    asyncio.run(main())

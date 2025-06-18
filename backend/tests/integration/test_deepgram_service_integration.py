@@ -88,25 +88,27 @@ class TestModelCompatibility:
         assert get_compatible_model_for_language('', 'nova-3') == 'nova-3'
 
 
+# Global fixtures for use across all test classes
+@pytest.fixture
+def mock_deepgram_client():
+    """Create a mock Deepgram client."""
+    mock_client = Mock()
+    mock_client.listen = Mock()
+    mock_client.listen.asyncrest = Mock()
+    mock_client.listen.asyncrest.v = Mock()
+    mock_client.listen.asyncwebsocket = Mock()
+    return mock_client
+
+@pytest.fixture
+def deepgram_service_with_mock(mock_deepgram_client):
+    """Create DeepgramService with mocked client."""
+    service = DeepgramService()
+    service.client = mock_deepgram_client
+    return service
+
+
 class TestDeepgramService:
     """Test DeepgramService functionality."""
-    
-    @pytest.fixture
-    def mock_deepgram_client(self):
-        """Create a mock Deepgram client."""
-        mock_client = Mock()
-        mock_client.listen = Mock()
-        mock_client.listen.asyncrest = Mock()
-        mock_client.listen.asyncrest.v = Mock()
-        mock_client.listen.asyncwebsocket = Mock()
-        return mock_client
-    
-    @pytest.fixture
-    def deepgram_service_with_mock(self, mock_deepgram_client):
-        """Create DeepgramService with mocked client."""
-        service = DeepgramService()
-        service.client = mock_deepgram_client
-        return service
     
     @patch('app.services.voice.deepgram_service.settings')
     def test_init_with_api_key(self, mock_settings):
@@ -463,7 +465,6 @@ class TestSingletonInstance:
         assert instance1 is instance2
 
 
-@pytest.mark.skip(reason="Integration test requiring complex fixtures")
 class TestIntegrationScenarios:
     """Test integration scenarios combining multiple components."""
     

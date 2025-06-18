@@ -5,8 +5,10 @@ from unittest.mock import Mock, AsyncMock
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from uuid import uuid4
+from datetime import datetime, timedelta
 from app.main import app
-from app.models.models import User
+from app.models.models import User, Tenant
 
 
 # Test database configuration
@@ -338,3 +340,255 @@ async def cleanup_connections():
     # This would clean up any global state if needed
     # For example, clearing connection managers, stopping background tasks, etc.
     pass
+
+
+# Missing fixtures for billing and API tests
+@pytest.fixture
+async def async_client():
+    """Create an async HTTP client for testing."""
+    from httpx import ASGITransport
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+
+@pytest.fixture
+def sample_tenant():
+    """Create a sample tenant for testing."""
+    tenant = Mock(spec=Tenant)
+    tenant.id = uuid4()
+    tenant.name = "Sample Organization"
+    tenant.subdomain = "sampleorg"
+    tenant.is_active = True
+    tenant.created_at = datetime.utcnow()
+    return tenant
+
+
+@pytest.fixture
+def sample_user(sample_tenant):
+    """Create a sample user for testing."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "test@example.com"
+    user.username = "testuser"
+    user.first_name = "Test"
+    user.last_name = "User"
+    user.role = "user"
+    user.is_active = True
+    user.is_verified = True
+    user.tenant_id = sample_tenant.id
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def sample_admin_user(sample_tenant):
+    """Create a sample admin user for testing."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "admin@example.com"
+    user.username = "adminuser"
+    user.first_name = "Admin"
+    user.last_name = "User"
+    user.role = "admin"
+    user.is_active = True
+    user.is_verified = True
+    user.tenant_id = sample_tenant.id
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def sample_org_admin_user(sample_tenant):
+    """Create a sample org admin user for testing."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "orgadmin@example.com"
+    user.username = "orgadminuser"
+    user.first_name = "OrgAdmin"
+    user.last_name = "User"
+    user.role = "org_admin"
+    user.is_active = True
+    user.is_verified = True
+    user.tenant_id = sample_tenant.id
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def sample_super_admin_user():
+    """Create a sample super admin user for testing."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "superadmin@example.com"
+    user.username = "superadmin"
+    user.first_name = "Super"
+    user.last_name = "Admin"
+    user.role = "super_admin"
+    user.is_active = True
+    user.is_verified = True
+    user.tenant_id = None  # Super admin not tied to specific tenant
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def authenticated_user(sample_user):
+    """Create authenticated user context with headers."""
+    return {
+        "user": sample_user,
+        "headers": {"Authorization": f"Bearer test_token_{sample_user.id}"}
+    }
+
+
+@pytest.fixture
+def authenticated_admin(sample_admin_user):
+    """Create authenticated admin context with headers."""
+    return {
+        "user": sample_admin_user,
+        "headers": {"Authorization": f"Bearer test_token_{sample_admin_user.id}"}
+    }
+
+
+@pytest.fixture
+def authenticated_org_admin(sample_org_admin_user):
+    """Create authenticated org admin context with headers."""
+    return {
+        "user": sample_org_admin_user,
+        "headers": {"Authorization": f"Bearer test_token_{sample_org_admin_user.id}"}
+    }
+
+
+@pytest.fixture
+def authenticated_super_admin(sample_super_admin_user):
+    """Create authenticated super admin context with headers."""
+    return {
+        "user": sample_super_admin_user,
+        "headers": {"Authorization": f"Bearer test_token_{sample_super_admin_user.id}"}
+    }
+
+
+@pytest.fixture
+def db_session():
+    """Create a mock database session for testing."""
+    session = AsyncMock(spec=AsyncSession)
+    
+    # Mock the execute method to return a proper result
+    def create_mock_result(return_value=None, scalar_value=None, scalars_all_value=None):
+        mock_result = AsyncMock()
+        if scalar_value is not None:
+            mock_result.scalar_one_or_none.return_value = scalar_value
+            mock_result.scalar_one.return_value = scalar_value
+            mock_result.scalar.return_value = scalar_value
+        if scalars_all_value is not None:
+            mock_scalars = Mock()
+            mock_scalars.all.return_value = scalars_all_value
+            mock_result.scalars.return_value = mock_scalars
+        elif return_value is not None:
+            mock_scalars = Mock()
+            mock_scalars.all.return_value = return_value
+            mock_result.scalars.return_value = mock_scalars
+        else:
+            mock_scalars = Mock()
+            mock_scalars.all.return_value = []
+            mock_result.scalars.return_value = mock_scalars
+        return mock_result
+    
+    # Default mock result
+    session.execute.return_value = create_mock_result()
+    session.add = Mock()  # Use regular Mock, not AsyncMock for non-async methods
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.refresh = AsyncMock()
+    session.rollback = AsyncMock()
+    session.delete = AsyncMock()
+    
+    # Store the create_mock_result function for tests to use
+    session._create_mock_result = create_mock_result
+    
+    return session
+
+
+@pytest.fixture
+def other_user(sample_tenant):
+    """Create another sample user for testing access control."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "other@example.com"
+    user.username = "otheruser"
+    user.first_name = "Other"
+    user.last_name = "User"
+    user.role = "user"
+    user.is_active = True
+    user.is_verified = True
+    user.tenant_id = sample_tenant.id
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def inactive_user(sample_tenant):
+    """Create an inactive sample user for testing."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "inactive@example.com"
+    user.username = "inactiveuser"
+    user.first_name = "Inactive"
+    user.last_name = "User"
+    user.role = "user"
+    user.is_active = False  # This user is inactive
+    user.is_verified = True
+    user.tenant_id = sample_tenant.id
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def admin_user(sample_tenant):
+    """Create an admin user for testing."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "admin@example.com"
+    user.username = "adminuser"
+    user.first_name = "Admin"
+    user.last_name = "User"
+    user.role = "admin"
+    user.is_active = True
+    user.is_verified = True
+    user.tenant_id = sample_tenant.id
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def other_tenant():
+    """Create another tenant for testing isolation."""
+    tenant = Mock(spec=Tenant)
+    tenant.id = uuid4()
+    tenant.name = "Other Organization"
+    tenant.subdomain = "otherorg"
+    tenant.is_active = True
+    tenant.created_at = datetime.utcnow()
+    return tenant
+
+
+@pytest.fixture
+def other_tenant_user(other_tenant):
+    """Create a user from another tenant for testing isolation."""
+    user = Mock(spec=User)
+    user.id = uuid4()
+    user.email = "othertenant@example.com"
+    user.username = "othertenantuser"
+    user.first_name = "OtherTenant"
+    user.last_name = "User"
+    user.role = "user"
+    user.is_active = True
+    user.is_verified = True
+    user.tenant_id = other_tenant.id
+    user.created_at = datetime.utcnow()
+    return user
+
+
+@pytest.fixture
+def auth_headers(sample_user):
+    """Create authentication headers for testing."""
+    return {"Authorization": f"Bearer test_token_{sample_user.id}"}

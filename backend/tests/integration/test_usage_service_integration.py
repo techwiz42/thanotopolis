@@ -1,37 +1,35 @@
 """
-Tests for usage tracking service.
-Tests usage recording, statistics calculation, and metric tracking.
-
-NOTE: These tests require database fixtures and external service mocking.
-Many appear to be integration tests. Skipping for now.
+Integration tests for usage tracking service.
+Tests usage recording, statistics calculation, and metric tracking with real database operations.
 """
 
-# Skip entire module - these tests need proper mocking setup
 import pytest
-pytestmark = pytest.mark.skip(reason="Tests need proper database fixtures and service mocking")
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from app.services.usage_service import usage_service
 from app.models.models import User, Tenant, UsageRecord, SystemMetrics
 from app.schemas.schemas import UsageStats
 
+# Import integration test fixtures
+from tests.conftest_integration_simple import *
+
 
 @pytest.mark.asyncio
 async def test_record_usage_success(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test successful usage recording."""
     
     usage_record = await usage_service.record_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         usage_type="tokens",
         amount=1000,
-        user_id=test_user.id,
+        user_id=sample_user.id,
         service_provider="openai",
         model_name="gpt-4",
         cost_cents=30,
@@ -39,8 +37,8 @@ async def test_record_usage_success(
     )
     
     assert usage_record.id is not None
-    assert usage_record.tenant_id == test_tenant.id
-    assert usage_record.user_id == test_user.id
+    assert usage_record.tenant_id == sample_tenant.id
+    assert usage_record.user_id == sample_user.id
     assert usage_record.usage_type == "tokens"
     assert usage_record.amount == 1000
     assert usage_record.service_provider == "openai"
@@ -53,15 +51,15 @@ async def test_record_usage_success(
 @pytest.mark.asyncio
 async def test_record_token_usage_success(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test token usage recording with cost estimation."""
     
     usage_record = await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         token_count=2000,
         service_provider="openai",
         model_name="gpt-4"
@@ -78,15 +76,15 @@ async def test_record_token_usage_success(
 @pytest.mark.asyncio
 async def test_record_token_usage_gpt35(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test token usage recording with GPT-3.5 cost estimation."""
     
     usage_record = await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         token_count=5000,
         model_name="gpt-3.5-turbo"
     )
@@ -99,15 +97,15 @@ async def test_record_token_usage_gpt35(
 @pytest.mark.asyncio
 async def test_record_token_usage_custom_cost(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test token usage recording with custom cost."""
     
     usage_record = await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         token_count=1000,
         cost_cents=50
     )
@@ -118,15 +116,15 @@ async def test_record_token_usage_custom_cost(
 @pytest.mark.asyncio
 async def test_record_tts_usage_success(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test TTS usage recording."""
     
     usage_record = await usage_service.record_tts_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         word_count=500,
         service_provider="elevenlabs",
         model_name="eleven_turbo_v2",
@@ -145,15 +143,15 @@ async def test_record_tts_usage_success(
 @pytest.mark.asyncio
 async def test_record_stt_usage_with_duration(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test STT usage recording with duration."""
     
     usage_record = await usage_service.record_stt_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         word_count=300,
         service_provider="deepgram",
         model_name="nova-2",
@@ -172,15 +170,15 @@ async def test_record_stt_usage_with_duration(
 @pytest.mark.asyncio
 async def test_record_stt_usage_without_duration(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test STT usage recording without duration (estimated from word count)."""
     
     usage_record = await usage_service.record_stt_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         word_count=450  # ~3 minutes at 150 words/minute
     )
     
@@ -193,20 +191,20 @@ async def test_record_stt_usage_without_duration(
 @pytest.mark.asyncio
 async def test_get_usage_stats_default_period(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test getting usage stats with default period."""
     
     # Create test usage records
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     recent_date = now - timedelta(days=5)
     
     # Token usage
     await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         token_count=1000,
         cost_cents=30
     )
@@ -214,8 +212,8 @@ async def test_get_usage_stats_default_period(
     # TTS usage
     await usage_service.record_tts_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         word_count=200,
         duration_seconds=15
     )
@@ -223,15 +221,15 @@ async def test_get_usage_stats_default_period(
     # STT usage
     await usage_service.record_stt_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         word_count=150,
         duration_seconds=60
     )
     
     stats = await usage_service.get_usage_stats(
         db=db_session,
-        tenant_id=test_tenant.id
+        tenant_id=sample_tenant.id
     )
     
     assert stats.period == "month"
@@ -244,25 +242,25 @@ async def test_get_usage_stats_default_period(
 @pytest.mark.asyncio
 async def test_get_usage_stats_custom_date_range(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test getting usage stats with custom date range."""
     
-    start_date = datetime.utcnow() - timedelta(days=7)
-    end_date = datetime.utcnow() - timedelta(days=1)
+    start_date = datetime.now(timezone.utc) - timedelta(days=7)
+    end_date = datetime.now(timezone.utc) + timedelta(hours=1)  # Include current time
     
     # Create usage record within range
     await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         token_count=500
     )
     
     stats = await usage_service.get_usage_stats(
         db=db_session,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         start_date=start_date,
         end_date=end_date,
         period="week"
@@ -277,24 +275,24 @@ async def test_get_usage_stats_custom_date_range(
 @pytest.mark.asyncio
 async def test_get_usage_stats_by_user(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User,
+    sample_tenant: Tenant,
+    sample_user: User,
     other_user: User
 ):
     """Test getting usage stats filtered by user."""
     
-    # Create usage for test_user
+    # Create usage for sample_user
     await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         token_count=1000
     )
     
     # Create usage for other_user (same tenant)
     await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         user_id=other_user.id,
         token_count=2000
     )
@@ -302,23 +300,23 @@ async def test_get_usage_stats_by_user(
     # Get stats for specific user
     stats = await usage_service.get_usage_stats(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id
     )
     
-    assert stats.total_tokens == 1000  # Only test_user's usage
+    assert stats.total_tokens == 1000  # Only sample_user's usage
 
 
 @pytest.mark.asyncio
 async def test_get_usage_stats_no_data(
     db_session: AsyncSession,
-    test_tenant: Tenant
+    sample_tenant: Tenant
 ):
     """Test getting usage stats when no data exists."""
     
     stats = await usage_service.get_usage_stats(
         db=db_session,
-        tenant_id=test_tenant.id
+        tenant_id=sample_tenant.id
     )
     
     assert stats.total_tokens == 0
@@ -330,7 +328,7 @@ async def test_get_usage_stats_no_data(
 @pytest.mark.asyncio
 async def test_record_system_metric_success(
     db_session: AsyncSession,
-    test_tenant: Tenant
+    sample_tenant: Tenant
 ):
     """Test recording system metrics."""
     
@@ -338,14 +336,14 @@ async def test_record_system_metric_success(
         db=db_session,
         metric_type="active_connections",
         value=25,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         additional_data={"server": "ws-1"}
     )
     
     assert metric.id is not None
     assert metric.metric_type == "active_connections"
     assert metric.value == 25
-    assert metric.tenant_id == test_tenant.id
+    assert metric.tenant_id == sample_tenant.id
     assert metric.additional_data["server"] == "ws-1"
     assert metric.created_at is not None
 
@@ -372,8 +370,8 @@ async def test_record_system_metric_global(
 @pytest.mark.asyncio
 async def test_get_recent_usage_success(
     db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test getting recent usage records."""
     
@@ -381,14 +379,14 @@ async def test_get_recent_usage_success(
     for i in range(5):
         await usage_service.record_token_usage(
             db=db_session,
-            tenant_id=test_tenant.id,
-            user_id=test_user.id,
+            tenant_id=sample_tenant.id,
+            user_id=sample_user.id,
             token_count=100 * (i + 1)
         )
     
     recent_usage = await usage_service.get_recent_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         limit=3
     )
     
@@ -402,24 +400,24 @@ async def test_get_recent_usage_success(
 @pytest.mark.asyncio
 async def test_get_recent_usage_all_tenants(
     db_session: AsyncSession,
-    test_tenant: Tenant,
+    sample_tenant: Tenant,
     other_tenant: Tenant,
-    test_user: User
+    sample_user: User
 ):
     """Test getting recent usage records across all tenants."""
     
     # Create usage for different tenants
     await usage_service.record_token_usage(
         db=db_session,
-        tenant_id=test_tenant.id,
-        user_id=test_user.id,
+        tenant_id=sample_tenant.id,
+        user_id=sample_user.id,
         token_count=1000
     )
     
     await usage_service.record_token_usage(
         db=db_session,
         tenant_id=other_tenant.id,
-        user_id=test_user.id,
+        user_id=sample_user.id,
         token_count=2000
     )
     
@@ -439,7 +437,7 @@ async def test_get_recent_usage_all_tenants(
 @pytest.mark.asyncio
 async def test_get_system_metrics_success(
     db_session: AsyncSession,
-    test_tenant: Tenant
+    sample_tenant: Tenant
 ):
     """Test getting system metrics."""
     
@@ -491,7 +489,7 @@ async def test_get_system_metrics_time_filter(
     old_metric = SystemMetrics(
         metric_type="old_metric",
         value=100,
-        created_at=datetime.utcnow() - timedelta(days=2)
+        created_at=datetime.now(timezone.utc) - timedelta(days=2)
     )
     db_session.add(old_metric)
     
@@ -518,14 +516,14 @@ async def test_get_system_metrics_time_filter(
 @pytest.mark.asyncio
 async def test_usage_stats_period_calculations(
     db_session: AsyncSession,
-    test_tenant: Tenant
+    sample_tenant: Tenant
 ):
     """Test usage stats period calculations."""
     
     # Test day period
     stats_day = await usage_service.get_usage_stats(
         db=db_session,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         period="day"
     )
     assert stats_day.period == "day"
@@ -535,7 +533,7 @@ async def test_usage_stats_period_calculations(
     # Test week period
     stats_week = await usage_service.get_usage_stats(
         db=db_session,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         period="week"
     )
     assert stats_week.period == "week"
@@ -545,7 +543,7 @@ async def test_usage_stats_period_calculations(
     # Test month period (default)
     stats_month = await usage_service.get_usage_stats(
         db=db_session,
-        tenant_id=test_tenant.id,
+        tenant_id=sample_tenant.id,
         period="month"
     )
     assert stats_month.period == "month"
@@ -555,20 +553,29 @@ async def test_usage_stats_period_calculations(
 
 @pytest.mark.asyncio
 async def test_concurrent_usage_recording(
-    db_session: AsyncSession,
-    test_tenant: Tenant,
-    test_user: User
+    test_db_engine,
+    sample_tenant: Tenant,
+    sample_user: User
 ):
     """Test concurrent usage recording."""
     import asyncio
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    
+    # Create session factory for concurrent operations
+    SessionLocal = async_sessionmaker(
+        test_db_engine, 
+        class_=AsyncSession, 
+        expire_on_commit=False
+    )
     
     async def record_usage():
-        return await usage_service.record_token_usage(
-            db=db_session,
-            tenant_id=test_tenant.id,
-            user_id=test_user.id,
-            token_count=100
-        )
+        async with SessionLocal() as session:
+            return await usage_service.record_token_usage(
+                db=session,
+                tenant_id=sample_tenant.id,
+                user_id=sample_user.id,
+                token_count=100
+            )
     
     # Record multiple usage records concurrently
     tasks = [record_usage() for _ in range(5)]
@@ -577,9 +584,10 @@ async def test_concurrent_usage_recording(
     assert len(results) == 5
     assert all(record.amount == 100 for record in results)
     
-    # Verify all records were saved
-    stats = await usage_service.get_usage_stats(
-        db=db_session,
-        tenant_id=test_tenant.id
-    )
-    assert stats.total_tokens == 500
+    # Verify all records were saved using a new session
+    async with SessionLocal() as session:
+        stats = await usage_service.get_usage_stats(
+            db=session,
+            tenant_id=sample_tenant.id
+        )
+        assert stats.total_tokens == 500

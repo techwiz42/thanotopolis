@@ -5,6 +5,7 @@ Tests actual HTTP endpoints with database integration.
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from fastapi import status
 
 from app.models import User, Tenant
@@ -23,8 +24,11 @@ class TestAuthAPIIntegration:
             "last_name": "User"
         }
         
-        response = await client.post("/auth/register", json=registration_data, 
+        response = await client.post("/api/auth/register", json=registration_data, 
                                    headers={"X-Tenant-ID": sample_tenant.subdomain})
+        
+        if response.status_code != status.HTTP_200_OK:
+            print(f"Error: {response.status_code} - {response.json()}")
         
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -39,7 +43,7 @@ class TestAuthAPIIntegration:
         assert "id" in data
         assert "hashed_password" not in data  # Should not expose password
 
-    async def test_register_with_duplicate_email_fails(self, client: AsyncClient, sample_user: User):
+    async def test_register_with_duplicate_email_fails(self, client: AsyncClient, sample_user: User, sample_tenant: Tenant):
         """Test that registration fails with duplicate email."""
         registration_data = {
             "email": sample_user.email,  # Duplicate
@@ -49,7 +53,8 @@ class TestAuthAPIIntegration:
             "last_name": "User"
         }
         
-        response = await client.post("/auth/register", json=registration_data)
+        response = await client.post("/api/auth/register", json=registration_data,
+                                   headers={"X-Tenant-ID": sample_tenant.subdomain})
         
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "already" in response.json()["detail"].lower()
@@ -64,7 +69,8 @@ class TestAuthAPIIntegration:
             "last_name": "User"
         }
         
-        response = await client.post("/auth/register", json=registration_data)
+        response = await client.post("/api/auth/register", json=registration_data,
+                                   headers={"X-Tenant-ID": sample_tenant.subdomain})
         
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -78,7 +84,8 @@ class TestAuthAPIIntegration:
             "last_name": "User"
         }
         
-        response = await client.post("/auth/register", json=registration_data)
+        response = await client.post("/api/auth/register", json=registration_data,
+                                   headers={"X-Tenant-ID": sample_tenant.subdomain})
         
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -89,7 +96,7 @@ class TestAuthAPIIntegration:
             "password": "testpassword123"  # From fixture
         }
         
-        response = await client.post("/auth/login", json=login_data)
+        response = await client.post("/api/auth/login", json=login_data)
         
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -106,7 +113,7 @@ class TestAuthAPIIntegration:
             "password": "wrongpassword"
         }
         
-        response = await client.post("/auth/login", json=login_data)
+        response = await client.post("/api/auth/login", json=login_data)
         
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "Invalid credentials" in response.json()["detail"]
@@ -118,13 +125,13 @@ class TestAuthAPIIntegration:
             "password": "testpassword123"
         }
         
-        response = await client.post("/auth/login", json=login_data)
+        response = await client.post("/api/auth/login", json=login_data)
         
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     async def test_get_current_user_with_valid_token(self, client: AsyncClient, auth_headers: dict):
         """Test getting current user info with valid token."""
-        response = await client.get("/auth/me", headers=auth_headers)
+        response = await client.get("/api/auth/me", headers=auth_headers)
         
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -145,12 +152,12 @@ class TestAuthAPIIntegration:
             "password": "testpassword123"
         }
         
-        login_response = await client.post("/auth/login", json=login_data)
+        login_response = await client.post("/api/auth/login", json=login_data)
         refresh_token = login_response.json()["refresh_token"]
         
         # Use refresh token to get new access token
         refresh_data = {"refresh_token": refresh_token}
-        response = await client.post("/auth/refresh", json=refresh_data)
+        response = await client.post("/api/auth/refresh", json=refresh_data)
         
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -161,25 +168,27 @@ class TestAuthAPIIntegration:
 
     async def test_logout_with_valid_token(self, client: AsyncClient, sample_user: User):
         """Test successful logout with valid refresh token."""
-        # First login to get refresh token
+        # First login to get refresh token and access token
         login_data = {
             "email": sample_user.email,
             "password": "testpassword123"
         }
         
-        login_response = await client.post("/auth/login", json=login_data)
+        login_response = await client.post("/api/auth/login", json=login_data)
+        access_token = login_response.json()["access_token"]
         refresh_token = login_response.json()["refresh_token"]
         
-        # Logout
+        # Logout with auth header
         logout_data = {"refresh_token": refresh_token}
-        response = await client.post("/auth/logout", json=logout_data)
+        headers = {"Authorization": f"Bearer {access_token}"}
+        response = await client.post("/api/auth/logout", json=logout_data, headers=headers)
         
         assert response.status_code == status.HTTP_200_OK
         assert "successfully logged out" in response.json()["detail"].lower()
         
         # Verify refresh token no longer works
         refresh_data = {"refresh_token": refresh_token}
-        refresh_response = await client.post("/auth/refresh", json=refresh_data)
+        refresh_response = await client.post("/api/auth/refresh", json=refresh_data)
         assert refresh_response.status_code == status.HTTP_401_UNAUTHORIZED
 
     async def test_multiple_login_sessions(self, client: AsyncClient, sample_user: User):
@@ -190,8 +199,8 @@ class TestAuthAPIIntegration:
         }
         
         # Create two login sessions
-        response1 = await client.post("/auth/login", json=login_data)
-        response2 = await client.post("/auth/login", json=login_data)
+        response1 = await client.post("/api/auth/login", json=login_data)
+        response2 = await client.post("/api/auth/login", json=login_data)
         
         assert response1.status_code == status.HTTP_200_OK
         assert response2.status_code == status.HTTP_200_OK
@@ -203,8 +212,8 @@ class TestAuthAPIIntegration:
         assert token1 != token2
         
         # Both should work for refresh
-        refresh_response1 = await client.post("/auth/refresh", json={"refresh_token": token1})
-        refresh_response2 = await client.post("/auth/refresh", json={"refresh_token": token2})
+        refresh_response1 = await client.post("/api/auth/refresh", json={"refresh_token": token1})
+        refresh_response2 = await client.post("/api/auth/refresh", json={"refresh_token": token2})
         
         assert refresh_response1.status_code == status.HTTP_200_OK
         assert refresh_response2.status_code == status.HTTP_200_OK
@@ -217,12 +226,12 @@ class TestAuthAPIIntegration:
             "password": "testpassword123"
         }
         
-        response = await client.post("/auth/login", json=login_data)
+        response = await client.post("/api/auth/login", json=login_data)
         access_token = response.json()["access_token"]
         
         # Access token should work initially
         headers = {"Authorization": f"Bearer {access_token}"}
-        me_response = await client.get("/auth/me", headers=headers)
+        me_response = await client.get("/api/auth/me", headers=headers)
         assert me_response.status_code == status.HTTP_200_OK
 
     async def test_role_based_access_patterns(self, client: AsyncClient, admin_user: User):
@@ -232,7 +241,7 @@ class TestAuthAPIIntegration:
             "password": "testpassword123"
         }
         
-        response = await client.post("/auth/login", json=login_data)
+        response = await client.post("/api/auth/login", json=login_data)
         
         assert response.status_code == status.HTTP_200_OK
         # The role would be in the JWT token payload, not directly in response
@@ -250,8 +259,8 @@ class TestAuthAPIIntegration:
             "password": "testpassword123"
         }
         
-        response1 = await client.post("/auth/login", json=login_data1)
-        response2 = await client.post("/auth/login", json=login_data2)
+        response1 = await client.post("/api/auth/login", json=login_data1)
+        response2 = await client.post("/api/auth/login", json=login_data2)
         
         assert response1.status_code == status.HTTP_200_OK
         assert response2.status_code == status.HTTP_200_OK

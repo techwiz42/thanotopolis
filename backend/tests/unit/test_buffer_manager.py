@@ -162,15 +162,15 @@ class TestConversationBuffer:
             assert "[Summary of 1 messages - details unavailable due to error]" in summary
     
     @pytest.mark.asyncio
-    async def test_load_from_database(self, buffer):
-        """Test loading conversation from database"""
+    async def test_load_from_database_mocked(self, buffer):
+        """Test loading conversation from database with mocked data"""
         # Mock database models
         mock_messages = []
         for i in range(3):
             msg = MagicMock()
             msg.conversation_id = buffer.conversation_id
             msg.content = f"Message {i}"
-            msg.agent_type = "agent" if i == 1 else None
+            msg.agent_type = "test_agent" if i == 1 else None
             msg.user_id = uuid4() if i != 1 else None
             msg.participant_id = None
             msg.created_at = datetime.utcnow()
@@ -196,7 +196,7 @@ class TestConversationBuffer:
         assert len(buffer.messages) == 3
         assert buffer.messages[0]["sender_type"] == "user"
         assert buffer.messages[1]["sender_type"] == "agent"
-        assert buffer.messages[1]["sender_id"] == "agent"
+        assert buffer.messages[1]["sender_id"] == "test_agent"
 
 
 class TestBufferManager:

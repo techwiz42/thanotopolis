@@ -19,6 +19,9 @@ from app.api.admin import router as admin_router
 from app.api.billing import router as billing_router
 from app.api.organizations import router as organizations_router
 from app.api.agents import router as agents_router
+# NEW: Telephony routers
+from app.api.telephony import router as telephony_router
+from app.api.telephony_websocket import router as telephony_ws_router
 from app.core.config import settings
 
 # Set up logging
@@ -32,13 +35,21 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("🚀 Starting up Thanotopolis API...")
+    logger.info("🚀 Starting up Thanotopolis API with Telephony Support...")
     try:
         await init_db()
         logger.info("✅ Database initialized successfully")
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         raise
+    
+    # Initialize telephony services if enabled
+    if getattr(settings, 'TELEPHONY_ENABLED', False):
+        logger.info("📞 Telephony services enabled")
+        if not getattr(settings, 'TWILIO_ACCOUNT_SID', None):
+            logger.warning("⚠️  Twilio credentials not configured - running in mock mode")
+    else:
+        logger.info("📞 Telephony services disabled")
     
     # Start background task for websocket cleanup
     import asyncio
@@ -74,6 +85,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"⚠️  Error shutting down STT handlers: {e}")
     
+    # Clean up telephony connections
+    try:
+        from app.api.telephony_websocket import telephony_stream_handler
+        telephony_stream_handler.active_connections.clear()
+        telephony_stream_handler.call_sessions.clear()
+        logger.info("✅ Telephony connections cleaned up")
+    except Exception as e:
+        logger.error(f"⚠️  Error cleaning up telephony connections: {e}")
+    
     logger.info("✅ Application shutdown complete")
 
 # Background task for websocket cleanup
@@ -95,9 +115,9 @@ async def websocket_cleanup_task():
 
 # Create FastAPI app
 app = FastAPI(
-    title="Thanotopolis Auth API",
-    version="1.0.0",
-    description="Authentication and conversation management API for Thanotopolis",
+    title="Thanotopolis AI Platform with Telephony",
+    version="1.1.0",
+    description="AI conversation platform with telephony support",
     lifespan=lifespan
 )
 
@@ -182,7 +202,8 @@ async def not_found_handler(request: Request, exc):
                 "docs": "/docs",
                 "api_docs": "/api/docs",
                 "auth": "/api/auth",
-                "conversations": "/api/conversations"
+                "conversations": "/api/conversations",
+                "telephony": "/api/telephony"
             }
         }
     )
@@ -233,8 +254,13 @@ async def health_check():
     """Primary health check endpoint"""
     return {
         "status": "healthy", 
-        "service": "thanotopolis-auth",
-        "version": "1.0.0",
+        "service": "thanotopolis-ai-platform",
+        "version": "1.1.0",
+        "features": {
+            "telephony": getattr(settings, 'TELEPHONY_ENABLED', False),
+            "voice_streaming": True,
+            "websockets": True
+        },
         "timestamp": time.time()
     }
 
@@ -257,8 +283,8 @@ async def ping():
 async def root():
     """API root with endpoint information"""
     return {
-        "message": "Thanotopolis Auth API",
-        "version": "1.0.0",
+        "message": "Thanotopolis AI Platform with Telephony",
+        "version": "1.1.0",
         "status": "running",
         "docs": "/docs",
         "health": "/health",
@@ -274,13 +300,21 @@ async def root():
                 "list": "/api/conversations",
                 "create": "/api/conversations"
             },
+            "telephony": {
+                "base": "/api/telephony",
+                "setup": "/api/telephony/setup",
+                "verify": "/api/telephony/verify/initiate",
+                "calls": "/api/telephony/calls",
+                "webhook": "/api/telephony/webhook/incoming-call"
+            },
             "voice": {
                 "streaming_stt": "ws://localhost:8000/api/ws/voice/streaming-stt",
                 "status": "/api/voice/stt/status"
             },
             "websockets": {
                 "conversations": "ws://localhost:8000/api/ws/conversations/{conversation_id}",
-                "notifications": "ws://localhost:8000/api/ws/notifications"
+                "notifications": "ws://localhost:8000/api/ws/notifications",
+                "telephony": "ws://localhost:8000/api/ws/telephony/stream/{call_id}"
             }
         },
         "cors_origins": cors_origins,
@@ -292,11 +326,17 @@ async def root():
 async def api_info():
     """API information"""
     return {
-        "name": "Thanotopolis Auth API",
-        "version": "1.0.0",
-        "description": "Authentication and conversation management API",
+        "name": "Thanotopolis AI Platform",
+        "version": "1.1.0",
+        "description": "AI conversation platform with telephony support",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "features": {
+            "telephony": getattr(settings, 'TELEPHONY_ENABLED', False),
+            "voice_streaming": True,
+            "websockets": True,
+            "multi_tenant": True
+        }
     }
 
 # Include routers with logging
@@ -355,6 +395,19 @@ try:
     logger.info("✅ Agents router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register agents router: {e}")
+
+# NEW: Add telephony routers
+try:
+    app.include_router(telephony_router, prefix="/api", tags=["Telephony"])
+    logger.info("✅ Telephony router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register telephony router: {e}")
+
+try:
+    app.include_router(telephony_ws_router, prefix="/api", tags=["Telephony WebSocket"])
+    logger.info("✅ Telephony WebSocket router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register telephony WebSocket router: {e}")
 
 logger.info("✅ All routers registered successfully")
 

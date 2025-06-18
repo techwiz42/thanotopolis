@@ -145,12 +145,36 @@ class TestConversationBuffer:
         assert "Hi there!" in context
     
     @pytest.mark.asyncio
-    async def test_load_from_database(self, conversation_buffer):
-        """Test loading messages from database"""
-        # Skip this test as the implementation has changed
-        # and it doesn't match our current buffer design
-        # This would need a complete rewrite
-        pytest.skip("Test needs to be rewritten for the new buffer implementation")
+    async def test_load_from_disk(self, conversation_buffer):
+        """Test loading conversation buffer from disk"""
+        conversation_id = uuid4()
+        
+        # Add some messages to the buffer
+        conversation_buffer.add_message(
+            conversation_id, 
+            "Hello world", 
+            "user123", 
+            "user"
+        )
+        conversation_buffer.add_message(
+            conversation_id, 
+            "Hi there!", 
+            "agent", 
+            "agent"
+        )
+        
+        # Save to disk
+        await conversation_buffer.save_to_disk()
+        
+        # Create new buffer and load from disk
+        new_buffer = ConversationBuffer(max_size=10, save_dir=conversation_buffer.save_dir)
+        await new_buffer.load_from_disk()
+        
+        # Check that messages were loaded
+        context = new_buffer.format_context(conversation_id)
+        assert len(context) > 0
+        assert "Hello world" in context
+        assert "Hi there!" in context
 
 # 3. Integration Tests
 

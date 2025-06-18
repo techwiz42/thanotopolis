@@ -11,7 +11,7 @@ import logging
 
 from app.db.database import get_db
 from app.models.models import (
-    Conversation, Message, User, Participant, 
+    Conversation, Message, User, Tenant,
     ConversationUser, ConversationAgent, ConversationParticipant,
     ConversationStatus, MessageType
 )
@@ -70,12 +70,11 @@ async def generate_conversation_title_with_emails(
         
         # Get all email participants
         participant_emails_query = (
-            select(Participant.identifier)
-            .join(ConversationParticipant, Participant.id == ConversationParticipant.participant_id)
+            select(ConversationParticipant.identifier)
             .where(
                 ConversationParticipant.conversation_id == conversation_id,
                 ConversationParticipant.is_active == True,
-                Participant.participant_type == "email"
+                ConversationParticipant.participant_type == "email"
             )
         )
         participant_emails_result = await db.execute(participant_emails_query)
@@ -186,7 +185,14 @@ async def create_conversation(
         for agent_type in agent_types:
             # Check if agent is available to this user
             if agent_type not in available_agents:
-                logger.warning(f"Agent {agent_type} not available to user {current_user.email} from org {current_user.tenant.subdomain if current_user.tenant else 'unknown'}")
+                # Get tenant subdomain without lazy loading
+                tenant_subdomain = "unknown"
+                if current_user.tenant_id:
+                    tenant_result = await db.execute(
+                        select(Tenant.subdomain).where(Tenant.id == current_user.tenant_id)
+                    )
+                    tenant_subdomain = tenant_result.scalar_one_or_none() or "unknown"
+                logger.warning(f"Agent {agent_type} not available to user {current_user.email} from org {tenant_subdomain}")
                 continue
                 
             # Get or create the agent record in database
@@ -210,7 +216,6 @@ async def create_conversation(
                         
                         # Get tenant ID from domain if proprietary
                         if not is_free_agent and owner_domain:
-                            from app.models.models import Tenant
                             tenant_result = await db.execute(
                                 select(Tenant).where(Tenant.subdomain == owner_domain)
                             )
@@ -225,7 +230,6 @@ async def create_conversation(
                     description=f"Dynamically discovered {agent_type} agent",
                     is_free_agent=is_free_agent,
                     owner_tenant_id=owner_tenant_id,
-                    configuration_template={},
                     capabilities=[],
                     is_active=True
                 )
@@ -235,7 +239,6 @@ async def create_conversation(
             conv_agent = ConversationAgent(
                 conversation_id=conversation.id,
                 agent_id=agent_record.id,  # Link to actual agent record
-                agent_type=agent_type,
                 is_active=True
             )
             db.add(conv_agent)
@@ -244,62 +247,36 @@ async def create_conversation(
         # Add requested participants (with safe defaults)
         participant_ids = getattr(conversation_data, 'participant_ids', None) or []
         for participant_id in participant_ids:
-            # Verify participant exists and is in same tenant
-            participant_result = await db.execute(
-                select(Participant).where(
-                    Participant.id == participant_id,
-                    Participant.tenant_id == current_user.tenant_id
-                )
-            )
-            participant = participant_result.scalar_one_or_none()
-            if participant:
-                conv_participant = ConversationParticipant(
-                    conversation_id=conversation.id,
-                    participant_id=participant_id,
-                    is_active=True
-                )
-                db.add(conv_participant)
-                logger.info(f"Added participant {participant_id} to conversation {conversation.id}")
+            # For now, skip participant_ids as we don't have a separate Participant table
+            # This could be implemented later if needed
+            logger.info(f"Skipping participant_id {participant_id} - direct participant support not implemented")
         
-        # Add participants by email address (create them if they don't exist)
+        # Add participants by email address (create them directly as conversation participants)
         participant_emails = getattr(conversation_data, 'participant_emails', None) or []
         for email in participant_emails:
             if email and email.strip():
                 email = email.strip()
-                # Check if participant already exists
+                # Check if participant already exists in this conversation
                 existing_participant_result = await db.execute(
-                    select(Participant).where(
-                        Participant.identifier == email,
-                        Participant.tenant_id == current_user.tenant_id,
-                        Participant.participant_type == "email"
+                    select(ConversationParticipant).where(
+                        ConversationParticipant.conversation_id == conversation.id,
+                        ConversationParticipant.identifier == email,
+                        ConversationParticipant.participant_type == "email"
                     )
                 )
                 existing_participant = existing_participant_result.scalar_one_or_none()
                 
                 if not existing_participant:
-                    # Create new participant
-                    new_participant = Participant(
-                        tenant_id=current_user.tenant_id,
+                    # Create new conversation participant directly
+                    conv_participant = ConversationParticipant(
+                        conversation_id=conversation.id,
                         participant_type="email",
                         identifier=email,
-                        name=email.split('@')[0]  # Use part before @ as name
+                        display_name=email.split('@')[0],  # Use part before @ as display name
+                        is_active=True
                     )
-                    db.add(new_participant)
-                    await db.flush()  # Get the ID
-                    participant_to_add = new_participant
-                    logger.info(f"Created new participant {email} for conversation {conversation.id}")
-                else:
-                    participant_to_add = existing_participant
-                    logger.info(f"Using existing participant {email} for conversation {conversation.id}")
-                
-                # Add participant to conversation
-                conv_participant = ConversationParticipant(
-                    conversation_id=conversation.id,
-                    participant_id=participant_to_add.id,
-                    is_active=True
-                )
-                db.add(conv_participant)
-                logger.info(f"Added email participant {email} to conversation {conversation.id}")
+                    db.add(conv_participant)
+                    logger.info(f"Added email participant {email} to conversation {conversation.id}")
         
         # Generate title with participant emails if no title was provided
         if not conversation.title:
@@ -445,6 +422,76 @@ async def list_conversations(
     items.sort(key=lambda x: (-(x.updated_at.timestamp() if x.updated_at else 0), -x.message_count))
     
     return items
+
+@router.get("/search", response_model=List[ConversationListResponse])
+async def search_conversations(
+    q: Optional[str] = Query(None, description="Search query"),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Search for conversations by query."""
+    # Require q parameter to be provided
+    if not q:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Search query 'q' parameter is required"
+        )
+    
+    # Base query - user must be part of the conversation
+    query = (
+        select(Conversation)
+        .join(ConversationUser, Conversation.id == ConversationUser.conversation_id)
+        .where(
+            ConversationUser.user_id == current_user.id,
+            ConversationUser.is_active == True,
+            Conversation.tenant_id == current_user.tenant_id,
+            or_(
+                Conversation.title.ilike(f"%{q}%"),
+                Conversation.description.ilike(f"%{q}%")
+            )
+        )
+    )
+    
+    result = await db.execute(query)
+    conversations = result.scalars().all()
+    
+    # Convert to response format - we need to manually query for counts because 
+    # we can't rely on ORM relationships in this case
+    result_list = []
+    for conv in conversations:
+        # Get message count 
+        message_count_query = select(func.count()).select_from(Message).where(
+            Message.conversation_id == conv.id
+        )
+        message_count_result = await db.execute(message_count_query)
+        message_count = message_count_result.scalar() or 0
+        
+        # Get participant count
+        participant_count_query = select(func.count()).select_from(ConversationUser).where(
+            ConversationUser.conversation_id == conv.id,
+            ConversationUser.is_active == True
+        )
+        participant_count_result = await db.execute(participant_count_query)
+        participant_count = participant_count_result.scalar() or 0
+        
+        result_list.append(
+            ConversationListResponse(
+                id=conv.id,
+                title=conv.title,
+                description=conv.description,
+                status=conv.status,
+                created_at=conv.created_at,
+                updated_at=conv.updated_at,
+                participant_count=participant_count,
+                message_count=message_count,
+                last_message=None  # We'll handle this separately
+            )
+        )
+    
+    # Sort conversations by update time (most recent first), with a secondary sort by message count
+    result_list.sort(key=lambda x: (-(x.updated_at.timestamp() if x.updated_at else 0), -x.message_count))
+    
+    return result_list
 
 @router.get("/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
@@ -606,7 +653,7 @@ async def get_messages(
     if not access_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Access denied")
     
-    # Get messages with sender info
+    # Get messages with sender info - ensure all relationships are loaded
     query = (
         select(Message)
         .options(
@@ -676,7 +723,7 @@ async def get_messages(
         elif msg.participant_id:
             sender_type = "participant"
             if msg.participant:
-                sender_name = msg.participant.name or msg.participant.identifier
+                sender_name = msg.participant.display_name or msg.participant.identifier
                 
             # Ensure participant messages have sender_type in metadata
             existing_metadata = msg.message_metadata or {}
@@ -820,7 +867,7 @@ async def get_message(
     if not access_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Access denied")
     
-    # Get the message
+    # Get the message with all relationships loaded
     query = (
         select(Message)
         .options(
@@ -883,7 +930,7 @@ async def get_message(
     elif message.participant_id:
         sender_type = "participant"
         if message.participant:
-            sender_name = message.participant.name or message.participant.identifier
+            sender_name = message.participant.display_name or message.participant.identifier
     else:
         sender_type = "system"
         sender_name = "System"
@@ -992,10 +1039,31 @@ async def add_agent(
     if not access_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Access denied")
     
+    # Get or create the agent record in database first
+    from app.models.models import Agent
+    agent_record_result = await db.execute(
+        select(Agent).where(Agent.agent_type == agent_data.agent_type)
+    )
+    agent_record = agent_record_result.scalar_one_or_none()
+    
+    if not agent_record:
+        # Create the agent record if it doesn't exist (for dynamic agents)
+        agent_record = Agent(
+            agent_type=agent_data.agent_type,
+            name=agent_data.agent_type.replace('_', ' ').title() + " Agent",
+            description=f"Dynamically discovered {agent_data.agent_type} agent",
+            is_free_agent=True,
+            owner_tenant_id=None,
+            capabilities=[],
+            is_active=True
+        )
+        db.add(agent_record)
+        await db.flush()  # Get the ID without committing
+    
     # Check if agent already exists in conversation
     agent_query = select(ConversationAgent).where(
         ConversationAgent.conversation_id == conversation_id,
-        ConversationAgent.agent_type == agent_data.agent_type
+        ConversationAgent.agent_id == agent_record.id
     )
     agent_result = await db.execute(agent_query)
     existing_agent = agent_result.scalar_one_or_none()
@@ -1007,34 +1075,12 @@ async def add_agent(
             existing_agent.configuration = json.dumps(agent_data.configuration)
         agent_id = existing_agent.id
     else:
-        # Get or create the agent record in database
-        from app.models.models import Agent
-        agent_record_result = await db.execute(
-            select(Agent).where(Agent.agent_type == agent_data.agent_type)
-        )
-        agent_record = agent_record_result.scalar_one_or_none()
-        
-        if not agent_record:
-            # Create the agent record if it doesn't exist (for dynamic agents)
-            agent_record = Agent(
-                agent_type=agent_data.agent_type,
-                name=agent_data.agent_type.replace('_', ' ').title() + " Agent",
-                description=f"Dynamically discovered {agent_data.agent_type} agent",
-                is_free_agent=True,
-                owner_tenant_id=None,
-                configuration_template={},
-                capabilities=[],
-                is_active=True
-            )
-            db.add(agent_record)
-            await db.flush()  # Get the ID without committing
         
         # Create new ConversationAgent
         agent = ConversationAgent(
             id=uuid.uuid4(),
             conversation_id=conversation_id,
             agent_id=agent_record.id,  # Link to actual agent record
-            agent_type=agent_data.agent_type,
             configuration=json.dumps(agent_data.configuration) if agent_data.configuration else None
         )
         db.add(agent)
@@ -1065,10 +1111,14 @@ async def get_agents(
     if not access_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="Access denied")
     
-    # Get all agents
-    query = select(ConversationAgent).where(
-        ConversationAgent.conversation_id == conversation_id,
-        ConversationAgent.is_active == True
+    # Get all agents with their related Agent records - ensure agent relationship is loaded
+    query = (
+        select(ConversationAgent)
+        .options(selectinload(ConversationAgent.agent))
+        .where(
+            ConversationAgent.conversation_id == conversation_id,
+            ConversationAgent.is_active == True
+        )
     )
     result = await db.execute(query)
     agents = result.scalars().all()
@@ -1076,9 +1126,9 @@ async def get_agents(
     return [
         {
             "id": agent.id,
-            "agent_type": agent.agent_type,
+            "agent_type": agent.agent.agent_type,
             "configuration": json.loads(agent.configuration) if agent.configuration else None,
-            "added_at": agent.added_at
+            "added_at": agent.activated_at
         }
         for agent in agents
     ]
@@ -1118,73 +1168,6 @@ async def remove_agent(
     
     return {"status": "success", "message": "Agent removed successfully"}
 
-@router.get("/search", response_model=List[ConversationListResponse])
-async def search_conversations(
-    q: Optional[str] = None,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Search for conversations by query."""
-    # Base query - user must be part of the conversation
-    query = (
-        select(Conversation)
-        .join(ConversationUser, Conversation.id == ConversationUser.conversation_id)
-        .where(
-            ConversationUser.user_id == current_user.id,
-            ConversationUser.is_active == True,
-            Conversation.tenant_id == current_user.tenant_id
-        )
-    )
-    
-    # Add search filter if q is provided
-    if q:
-        query = query.where(
-            or_(
-                Conversation.title.ilike(f"%{q}%"),
-                Conversation.description.ilike(f"%{q}%")
-            )
-        )
-    
-    result = await db.execute(query)
-    conversations = result.scalars().all()
-    
-    # Convert to response format - we need to manually query for counts because 
-    # we can't rely on ORM relationships in this case
-    result_list = []
-    for conv in conversations:
-        # Get message count 
-        message_count_query = select(func.count()).select_from(Message).where(
-            Message.conversation_id == conv.id
-        )
-        message_count_result = await db.execute(message_count_query)
-        message_count = message_count_result.scalar() or 0
-        
-        # Get participant count
-        participant_count_query = select(func.count()).select_from(ConversationUser).where(
-            ConversationUser.conversation_id == conv.id,
-            ConversationUser.is_active == True
-        )
-        participant_count_result = await db.execute(participant_count_query)
-        participant_count = participant_count_result.scalar() or 0
-        
-        result_list.append(
-            ConversationListResponse(
-                id=conv.id,
-                title=conv.title,
-                description=conv.description,
-                status=conv.status,
-                created_at=conv.created_at,
-                updated_at=conv.updated_at,
-                participant_count=participant_count,
-                message_count=message_count,
-                last_message=None  # We'll handle this separately
-            )
-        )
-    
-    # Sort conversations by update time (most recent first), with a secondary sort by message count
-    result_list.sort(key=lambda x: (-(x.updated_at.timestamp() if x.updated_at else 0), -x.message_count))
-    
-    return result_list
 
 @router.get("/{conversation_id}/export", response_model=dict)
 async def export_conversation(
@@ -1211,7 +1194,7 @@ async def export_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    # Get all messages
+    # Get all messages with relationships loaded
     messages_query = (
         select(Message)
         .options(
@@ -1257,7 +1240,7 @@ async def export_conversation(
         elif message.participant_id:
             sender_type = "participant"
             if message.participant:
-                sender_name = message.participant.name or message.participant.identifier
+                sender_name = message.participant.display_name or message.participant.identifier
             # Ensure metadata includes sender_type
             if "sender_type" not in metadata:
                 metadata["sender_type"] = "participant"
@@ -1357,7 +1340,7 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
         .options(
             selectinload(Conversation.users).selectinload(ConversationUser.user),
             selectinload(Conversation.agents),
-            selectinload(Conversation.participants).selectinload(ConversationParticipant.participant)
+            selectinload(Conversation.participants)
         )
         .where(Conversation.id == conversation_id)
     )
@@ -1368,7 +1351,7 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    # Get all messages in chronological order
+    # Get all messages in chronological order with relationships loaded
     messages_query = (
         select(Message)
         .options(
@@ -1432,7 +1415,7 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
         elif msg.participant_id:
             sender_type = "participant"
             if msg.participant:
-                sender_name = msg.participant.name or msg.participant.identifier
+                sender_name = msg.participant.display_name or msg.participant.identifier
                 
             # Ensure participant messages have sender_type in metadata
             existing_metadata = msg.message_metadata or {}
@@ -1471,17 +1454,17 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
     users = [cu.user for cu in conversation.users if cu.user and cu.is_active]
     agents = [
         {
-            "agent_type": ca.agent_type,
-            "added_at": ca.added_at,
+            "agent_type": ca.agent.agent_type if ca.agent else "UNKNOWN",
+            "added_at": ca.activated_at,
             "is_active": ca.is_active,
             "configuration": json.loads(ca.configuration) if ca.configuration else None
         }
         for ca in conversation.agents
     ]
     participants = [
-        cp.participant 
+        cp 
         for cp in conversation.participants 
-        if cp.participant and cp.is_active
+        if cp.is_active
     ]
     
     return ConversationResponse(

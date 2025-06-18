@@ -178,7 +178,7 @@ Provide a concise but comprehensive summary."""
         """Load conversation history from database"""
         async with self._lock:
             try:
-                from app.models.models import Message, User, Participant
+                from app.models.models import Message, User, ConversationParticipant
                 
                 # Query for all messages
                 query = (
@@ -271,9 +271,14 @@ class BufferManager:
                 await asyncio.sleep(self.cleanup_interval)
                 await self._cleanup_old_buffers()
             except asyncio.CancelledError:
+                # Don't log during cancellation to avoid closed file errors
                 break
             except Exception as e:
-                logger.error(f"Error in buffer cleanup: {e}")
+                try:
+                    logger.error(f"Error in buffer cleanup: {e}")
+                except (ValueError, OSError):
+                    # Ignore logging errors during shutdown
+                    pass
     
     async def _cleanup_old_buffers(self):
         """Remove buffers that haven't been used recently"""
@@ -566,12 +571,25 @@ class BufferManager:
                 "timestamp": datetime.utcnow().isoformat()
             }
     
+    async def shutdown(self):
+        """Gracefully shutdown the buffer manager"""
+        try:
+            if self._cleanup_task is not None and not self._cleanup_task.done():
+                self._cleanup_task.cancel()
+                try:
+                    await self._cleanup_task
+                except asyncio.CancelledError:
+                    pass
+        except Exception:
+            # Ignore exceptions during shutdown
+            pass
+    
     def __del__(self):
         """Cleanup when the manager is destroyed"""
         try:
             if self._cleanup_task is not None and not self._cleanup_task.done():
                 self._cleanup_task.cancel()
-        except Exception as e:
+        except Exception:
             # Ignore exceptions during deletion
             pass
 

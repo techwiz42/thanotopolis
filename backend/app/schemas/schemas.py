@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
 from enum import Enum
+from decimal import Decimal
 
 # Enums
 class ParticipantType(str, Enum):
@@ -21,6 +22,27 @@ class ConversationStatus(str, Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     CLOSED = "closed"
+
+# Telephony Enums
+class PhoneVerificationStatus(str, Enum):
+    PENDING = "pending"
+    VERIFIED = "verified"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+class CallStatus(str, Enum):
+    INCOMING = "incoming"
+    RINGING = "ringing"
+    ANSWERED = "answered"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NO_ANSWER = "no_answer"
+    BUSY = "busy"
+
+class CallDirection(str, Enum):
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
 
 # Organization Schemas (formerly Tenant)
 class OrganizationCreate(BaseModel):
@@ -151,13 +173,13 @@ class ParticipantUpdate(BaseModel):
 
 class ParticipantResponse(BaseModel):
     id: UUID
-    tenant_id: UUID
-    participant_type: ParticipantType
+    conversation_id: UUID
+    participant_type: str
     identifier: str
-    name: Optional[str]
-    additional_data: Optional[Dict[str, Any]]
-    created_at: datetime
-    updated_at: Optional[datetime]
+    display_name: Optional[str]
+    is_active: bool
+    joined_at: datetime
+    left_at: Optional[datetime]
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -189,6 +211,7 @@ class MessageCreate(BaseModel):
     content: str
     message_type: MessageType = MessageType.TEXT
     metadata: Optional[Dict[str, Any]] = None
+    mention: Optional[str] = None  # Agent mention for routing
 
 class MessageResponse(BaseModel):
     id: UUID
@@ -268,6 +291,7 @@ class AgentUpdate(BaseModel):
     description: Optional[str] = None
     configuration_template: Optional[Dict[str, Any]] = None
     capabilities: Optional[List[str]] = None
+    is_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
 
 class AgentResponse(BaseModel):
@@ -277,6 +301,8 @@ class AgentResponse(BaseModel):
     description: Optional[str]
     is_free_agent: bool
     owner_tenant_id: Optional[UUID]
+    owner_domain: Optional[str]
+    is_enabled: bool
     configuration_template: Optional[Dict[str, Any]]
     capabilities: Optional[List[str]]
     is_active: bool
@@ -298,25 +324,27 @@ class AvailableAgentsResponse(BaseModel):
 
 # Usage tracking schemas
 class UsageRecordCreate(BaseModel):
-    usage_type: str  # 'tokens', 'tts_minutes', 'stt_minutes'
-    amount: int
-    conversation_id: Optional[UUID] = None
-    service_provider: Optional[str] = None
-    model_name: Optional[str] = None
-    cost_cents: Optional[int] = 0
-    additional_data: Optional[Dict[str, Any]] = {}
+    usage_type: str  # 'tokens', 'api_calls', 'telephony_minutes'
+    amount: Decimal
+    cost_per_unit: Optional[Decimal] = None
+    cost_cents: Optional[int] = None
+    cost_currency: str = "USD"
+    resource_type: Optional[str] = None  # 'conversation', 'phone_call'
+    resource_id: Optional[str] = None
+    usage_metadata: Optional[Dict[str, Any]] = {}
 
 class UsageRecordResponse(BaseModel):
     id: UUID
     tenant_id: UUID
-    user_id: Optional[UUID]
     usage_type: str
-    amount: int
-    conversation_id: Optional[UUID]
-    service_provider: Optional[str]
-    model_name: Optional[str]
+    amount: Decimal
+    cost_per_unit: Optional[Decimal]
     cost_cents: Optional[int]
-    additional_data: Optional[Dict[str, Any]]
+    cost_currency: str
+    resource_type: Optional[str]
+    resource_id: Optional[str]
+    usage_metadata: Optional[Dict[str, Any]]
+    usage_date: datetime
     created_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
@@ -359,66 +387,7 @@ class AdminUserUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_verified: Optional[bool] = None
 
-# Stripe billing schemas
-class StripeCustomerCreate(BaseModel):
-    email: str
-    name: Optional[str] = None
-    phone: Optional[str] = None
-
-class StripeCustomerResponse(BaseModel):
-    id: UUID
-    tenant_id: UUID
-    stripe_customer_id: str
-    email: str
-    name: Optional[str]
-    phone: Optional[str]
-    created_at: datetime
-    updated_at: Optional[datetime]
-    
-    model_config = ConfigDict(from_attributes=True)
-
-class StripeSubscriptionCreate(BaseModel):
-    stripe_price_id: str
-    
-class StripeSubscriptionResponse(BaseModel):
-    id: UUID
-    customer_id: UUID
-    stripe_subscription_id: str
-    stripe_price_id: str
-    status: str
-    current_period_start: datetime
-    current_period_end: datetime
-    cancel_at_period_end: bool
-    amount_cents: int
-    currency: str
-    created_at: datetime
-    updated_at: Optional[datetime]
-    
-    model_config = ConfigDict(from_attributes=True)
-
-class StripeInvoiceResponse(BaseModel):
-    id: UUID
-    customer_id: UUID
-    stripe_invoice_id: str
-    status: str
-    amount_due_cents: int
-    amount_paid_cents: int
-    currency: str
-    period_start: datetime
-    period_end: datetime
-    voice_words_count: int
-    voice_usage_cents: int
-    created_at: datetime
-    due_date: Optional[datetime]
-    paid_at: Optional[datetime]
-    
-    model_config = ConfigDict(from_attributes=True)
-
-class BillingDashboardResponse(BaseModel):
-    current_subscription: Optional[StripeSubscriptionResponse]
-    recent_invoices: List[StripeInvoiceResponse]
-    current_period_usage: UsageStats
-    upcoming_charges: Dict[str, int]  # estimated costs for current period
+# Stripe billing schemas removed
 
 class UsageBillingCreate(BaseModel):
     """Schema for creating usage-based billing charges"""
@@ -426,3 +395,187 @@ class UsageBillingCreate(BaseModel):
     period_end: datetime
     voice_words_count: int
     voice_usage_cents: int
+
+# ============================================================================
+# TELEPHONY SCHEMAS
+# ============================================================================
+
+# Telephony Configuration Schemas
+class TelephonyConfigurationCreate(BaseModel):
+    organization_phone_number: str  # E.164 format
+    formatted_phone_number: Optional[str] = None
+    country_code: str
+    welcome_message: Optional[str] = None
+    business_hours: Optional[Dict[str, Any]] = None
+    timezone: str = "UTC"
+    max_concurrent_calls: int = 5
+    call_timeout_seconds: int = 300
+    voice_id: Optional[str] = None
+    voice_settings: Optional[Dict[str, Any]] = None
+    integration_method: str = "call_forwarding"
+    record_calls: bool = True
+    transcript_calls: bool = True
+
+class TelephonyConfigurationUpdate(BaseModel):
+    organization_phone_number: Optional[str] = None
+    formatted_phone_number: Optional[str] = None
+    country_code: Optional[str] = None
+    welcome_message: Optional[str] = None
+    call_forwarding_enabled: Optional[bool] = None
+    is_enabled: Optional[bool] = None
+    business_hours: Optional[Dict[str, Any]] = None
+    timezone: Optional[str] = None
+    max_concurrent_calls: Optional[int] = None
+    call_timeout_seconds: Optional[int] = None
+    voice_id: Optional[str] = None
+    voice_settings: Optional[Dict[str, Any]] = None
+    forwarding_instructions: Optional[str] = None
+    integration_method: Optional[str] = None
+    record_calls: Optional[bool] = None
+    transcript_calls: Optional[bool] = None
+
+class TelephonyConfigurationResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    organization_phone_number: str
+    formatted_phone_number: Optional[str]
+    country_code: str
+    verification_status: PhoneVerificationStatus
+    platform_phone_number: Optional[str]
+    call_forwarding_enabled: bool
+    welcome_message: Optional[str]
+    is_enabled: bool
+    business_hours: Optional[Dict[str, Any]]
+    timezone: str
+    max_concurrent_calls: int
+    call_timeout_seconds: int
+    voice_id: Optional[str]
+    voice_settings: Optional[Dict[str, Any]]
+    forwarding_instructions: Optional[str]
+    integration_method: str
+    record_calls: bool
+    transcript_calls: bool
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Phone Verification Schemas
+class PhoneVerificationAttemptCreate(BaseModel):
+    verification_method: str = "sms"  # sms, call
+    organization_phone_number: str
+
+class PhoneVerificationAttemptResponse(BaseModel):
+    id: UUID
+    telephony_config_id: UUID
+    verification_code: str
+    verification_method: str
+    organization_phone_number: str
+    status: PhoneVerificationStatus
+    attempts_count: int
+    max_attempts: int
+    created_at: datetime
+    expires_at: datetime
+    verified_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class PhoneVerificationSubmit(BaseModel):
+    verification_code: str
+
+# Phone Call Schemas
+class PhoneCallCreate(BaseModel):
+    call_sid: str
+    session_id: Optional[str] = None
+    customer_phone_number: str
+    organization_phone_number: str
+    platform_phone_number: str
+    direction: CallDirection
+    call_metadata: Optional[Dict[str, Any]] = None
+
+class PhoneCallUpdate(BaseModel):
+    status: Optional[CallStatus] = None
+    start_time: Optional[datetime] = None
+    answer_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
+    cost_cents: Optional[int] = None
+    cost_currency: Optional[str] = None
+    recording_url: Optional[str] = None
+    transcript: Optional[str] = None
+    summary: Optional[str] = None
+    call_metadata: Optional[Dict[str, Any]] = None
+
+class PhoneCallResponse(BaseModel):
+    id: UUID
+    telephony_config_id: UUID
+    conversation_id: Optional[UUID]
+    call_sid: str
+    session_id: Optional[str]
+    customer_phone_number: str
+    organization_phone_number: str
+    platform_phone_number: str
+    direction: CallDirection
+    status: CallStatus
+    start_time: Optional[datetime]
+    answer_time: Optional[datetime]
+    end_time: Optional[datetime]
+    duration_seconds: Optional[int]
+    cost_cents: int
+    cost_currency: str
+    recording_url: Optional[str]
+    transcript: Optional[str]
+    summary: Optional[str]
+    call_metadata: Optional[Dict[str, Any]]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Call Agent Schemas
+class CallAgentCreate(BaseModel):
+    call_id: UUID
+    agent_id: UUID
+
+class CallAgentUpdate(BaseModel):
+    deactivated_at: Optional[datetime] = None
+    usage_duration_seconds: Optional[int] = None
+    tokens_used: Optional[int] = None
+    response_count: Optional[int] = None
+    average_response_time_ms: Optional[int] = None
+
+class CallAgentResponse(BaseModel):
+    id: UUID
+    call_id: UUID
+    agent_id: UUID
+    activated_at: datetime
+    deactivated_at: Optional[datetime]
+    usage_duration_seconds: Optional[int]
+    tokens_used: int
+    response_count: int
+    average_response_time_ms: Optional[int]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Telephony Dashboard Schemas
+class TelephonyDashboardResponse(BaseModel):
+    configuration: TelephonyConfigurationResponse
+    recent_calls: List[PhoneCallResponse]
+    call_stats: Dict[str, Any]  # call volume, duration stats, etc.
+    verification_status: PhoneVerificationStatus
+    total_calls_today: int
+    total_call_duration_today: int
+    active_calls: int
+
+# Telephony Analytics Schemas
+class CallAnalytics(BaseModel):
+    period: str  # 'day', 'week', 'month'
+    start_date: datetime
+    end_date: datetime
+    total_calls: int
+    total_duration_seconds: int
+    total_cost_cents: int
+    average_call_duration: int
+    call_status_breakdown: Dict[str, int]
+    calls_by_hour: Dict[str, int]
+    top_agents_used: List[Dict[str, Any]]
