@@ -33,7 +33,7 @@ class ElevenLabsService:
     
     def is_available(self) -> bool:
         """Check if ElevenLabs service is available."""
-        return self.api_key and self.api_key != "NOT_SET"
+        return bool(self.api_key and self.api_key != "NOT_SET")
     
     async def get_voices(self) -> Dict[str, Any]:
         """

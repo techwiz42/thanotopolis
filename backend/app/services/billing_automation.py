@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import logging
 
-from app.db.database import async_session_maker
+from app.db.database import AsyncSessionLocal
 from app.models.models import Tenant
 # Stripe service removed
 from app.schemas.schemas import UsageBillingCreate
@@ -49,7 +49,7 @@ class BillingAutomationService:
             "errors": []
         }
         
-        async with async_session_maker() as db:
+        async with AsyncSessionLocal() as db:
             # TODO: Implement billing logic without Stripe
             logger.info("Billing automation disabled - Stripe service removed")
             results["errors"].append("Billing automation disabled - Stripe service removed")

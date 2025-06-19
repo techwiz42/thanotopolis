@@ -342,6 +342,10 @@ class TelephonyService:
         # Remove all non-digit characters
         digits = ''.join(filter(str.isdigit, phone_number))
         
+        # Check for minimum valid length
+        if len(digits) < 7:  # Minimum valid phone number length
+            return None
+        
         # Add country code if missing (assume US +1 for now)
         if len(digits) == 10:
             digits = '1' + digits

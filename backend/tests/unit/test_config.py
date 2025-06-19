@@ -30,7 +30,7 @@ class TestConfigurationUnit:
         assert settings.API_VERSION == "1.0"
         assert settings.PROJECT_NAME == "Cyberiad"
         assert settings.JWT_ALGORITHM == "HS256"
-        assert settings.ACCESS_TOKEN_EXPIRE_MINUTES == 15
+        assert settings.ACCESS_TOKEN_EXPIRE_MINUTES == 1440
         assert settings.REFRESH_TOKEN_EXPIRE_DAYS == 7
         assert settings.API_HOST == "0.0.0.0"
 

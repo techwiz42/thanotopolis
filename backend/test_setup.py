@@ -7,7 +7,7 @@ import asyncio
 from sqlalchemy import select
 from app.db.database import get_db_context, init_db, check_db_connection
 from app.models.models import (
-    Tenant, User, Conversation, Message, Participant,
+    Tenant, User, Conversation, Message, ConversationParticipant,
     ConversationUser, ConversationAgent, ParticipantType, MessageType
 )
 from app.auth.auth import AuthService
@@ -58,7 +58,7 @@ async def test_database_setup():
         
         # Create a participant
         print("\nCreating test participant...")
-        participant = Participant(
+        participant = ConversationParticipant(
             tenant_id=tenant.id,
             participant_type=ParticipantType.PHONE,
             identifier="+1234567890",
