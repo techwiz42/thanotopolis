@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
-from app.models.domain.models import Message, ThreadAgent, ThreadParticipant
+from app.models.models import Message
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class ContextManager:
         
         Args:
             db: Database session
-            thread_id: UUID of the thread
+            thread_id: UUID of the thread (conversation_id)
             exclude_message_id: Optional message ID to exclude (e.g., current message)
             
         Returns:
@@ -34,7 +34,7 @@ class ContextManager:
             # Build query for last N messages
             query = (
                 select(Message)
-                .where(Message.thread_id == thread_id)
+                .where(Message.conversation_id == thread_id)
             )
             
             # Exclude specific message if provided
@@ -59,12 +59,15 @@ class ContextManager:
             formatted_messages = []
             for msg in messages:
                 # Determine sender
-                if msg.agent_id:
+                if msg.agent_type:
                     # Agent message
-                    sender = f"[{msg.message_metadata.get('agent_type', 'AGENT')} Agent]"
+                    sender = f"[{msg.agent_type} Agent]"
                 else:
                     # Human message
-                    sender = f"[{msg.message_metadata.get('participant_name', 'User')}]"
+                    participant_name = "User"
+                    if msg.message_metadata and isinstance(msg.message_metadata, dict):
+                        participant_name = msg.message_metadata.get('participant_name', 'User')
+                    sender = f"[{participant_name}]"
                 
                 # Format message
                 formatted_msg = f"{sender} {msg.content}"

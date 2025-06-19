@@ -73,8 +73,12 @@ class ConversationContextManager:
                 sender = f"[{msg['agent_type']}]"
             elif msg.get('user_id') and msg.get('user'):
                 user = msg['user']
-                sender = f"[{user.get('first_name', '')} {user.get('last_name', '')}]".strip()
-                if sender == "[]":
+                first_name = user.get('first_name', '').strip()
+                last_name = user.get('last_name', '').strip()
+                full_name = f"{first_name} {last_name}".strip()
+                if full_name:
+                    sender = f"[{full_name}]"
+                else:
                     sender = f"[USER: {user.get('username', 'unknown')}]"
             else:
                 sender = "[USER]"

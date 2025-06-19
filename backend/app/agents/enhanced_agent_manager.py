@@ -62,7 +62,6 @@ class EnhancedAgentManager(AgentManager):
                         description=description,
                         is_free_agent=True,  # All dynamically discovered agents are free
                         owner_tenant_id=None,  # Free agents have no owner
-                        configuration_template={},
                         capabilities=[],
                         is_active=True
                     )
@@ -96,7 +95,10 @@ class EnhancedAgentManager(AgentManager):
         """
         try:
             # Ensure agents are synced to database first
-            await self.ensure_agents_synced_to_db(db)
+            sync_success = await self.ensure_agents_synced_to_db(db)
+            if not sync_success:
+                logger.error(f"❌ Failed to sync agents to database for {agent_type}")
+                return None
             
             # Try to get existing agent record
             result = await db.execute(
@@ -116,7 +118,6 @@ class EnhancedAgentManager(AgentManager):
                         description=description,
                         is_free_agent=True,
                         owner_tenant_id=None,
-                        configuration_template={},
                         capabilities=[],
                         is_active=True
                     )
