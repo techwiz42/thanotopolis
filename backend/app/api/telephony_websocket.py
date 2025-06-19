@@ -48,6 +48,8 @@ class TelephonyStreamHandler:
     ):
         """Handle new telephony WebSocket connection"""
         
+        session_id = str(call_id)  # Initialize session_id early
+        
         try:
             await websocket.accept()
             
@@ -82,7 +84,6 @@ class TelephonyStreamHandler:
             conversation = await self._create_call_conversation(db, call, config)
             
             # Initialize session
-            session_id = str(call_id)
             self.active_connections[session_id] = websocket
             
             self.call_sessions[session_id] = {

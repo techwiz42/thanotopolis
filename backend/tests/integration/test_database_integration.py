@@ -63,8 +63,28 @@ class TestDatabaseIntegration:
     @pytest.mark.asyncio
     async def test_check_db_connection_real_database(self):
         """Test database connection check with real database."""
-        result = await check_db_connection()
-        assert result is True
+        # Use test database URL to ensure we're testing the right database
+        from app.core.config import settings
+        import os
+        
+        # Temporarily set DATABASE_URL to test database
+        original_db_url = os.environ.get("DATABASE_URL")
+        os.environ["DATABASE_URL"] = settings.TEST_DATABASE_URL
+        
+        try:
+            # Reimport to get the updated database URL
+            import importlib
+            from app.db import database
+            importlib.reload(database)
+            
+            result = await database.check_db_connection()
+            assert result is True
+        finally:
+            # Restore original DATABASE_URL
+            if original_db_url:
+                os.environ["DATABASE_URL"] = original_db_url
+            elif "DATABASE_URL" in os.environ:
+                del os.environ["DATABASE_URL"]
 
     @pytest.mark.asyncio
     async def test_init_db_real_database(self):

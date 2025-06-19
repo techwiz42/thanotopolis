@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.main import app
 from app.models.models import User, Tenant
 
@@ -15,12 +15,25 @@ from app.models.models import User, Tenant
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
+    """Create a new event loop for each test function to prevent cross-test pollution."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     yield loop
-    loop.close()
+    
+    # Cancel all remaining tasks
+    try:
+        pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if pending_tasks:
+            for task in pending_tasks:
+                task.cancel()
+            # Wait for tasks to be cancelled
+            loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
+    except Exception:
+        pass
+    finally:
+        loop.close()
 
 
 @pytest.fixture
@@ -359,7 +372,7 @@ def sample_tenant():
     tenant.name = "Sample Organization"
     tenant.subdomain = "sampleorg"
     tenant.is_active = True
-    tenant.created_at = datetime.utcnow()
+    tenant.created_at = datetime.now(timezone.utc)
     return tenant
 
 
@@ -376,7 +389,7 @@ def sample_user(sample_tenant):
     user.is_active = True
     user.is_verified = True
     user.tenant_id = sample_tenant.id
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -393,7 +406,7 @@ def sample_admin_user(sample_tenant):
     user.is_active = True
     user.is_verified = True
     user.tenant_id = sample_tenant.id
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -410,7 +423,7 @@ def sample_org_admin_user(sample_tenant):
     user.is_active = True
     user.is_verified = True
     user.tenant_id = sample_tenant.id
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -427,7 +440,7 @@ def sample_super_admin_user():
     user.is_active = True
     user.is_verified = True
     user.tenant_id = None  # Super admin not tied to specific tenant
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -521,7 +534,7 @@ def other_user(sample_tenant):
     user.is_active = True
     user.is_verified = True
     user.tenant_id = sample_tenant.id
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -538,7 +551,7 @@ def inactive_user(sample_tenant):
     user.is_active = False  # This user is inactive
     user.is_verified = True
     user.tenant_id = sample_tenant.id
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -555,7 +568,7 @@ def admin_user(sample_tenant):
     user.is_active = True
     user.is_verified = True
     user.tenant_id = sample_tenant.id
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -567,7 +580,7 @@ def other_tenant():
     tenant.name = "Other Organization"
     tenant.subdomain = "otherorg"
     tenant.is_active = True
-    tenant.created_at = datetime.utcnow()
+    tenant.created_at = datetime.now(timezone.utc)
     return tenant
 
 
@@ -584,7 +597,7 @@ def other_tenant_user(other_tenant):
     user.is_active = True
     user.is_verified = True
     user.tenant_id = other_tenant.id
-    user.created_at = datetime.utcnow()
+    user.created_at = datetime.now(timezone.utc)
     return user
 
 
@@ -592,3 +605,100 @@ def other_tenant_user(other_tenant):
 def auth_headers(sample_user):
     """Create authentication headers for testing."""
     return {"Authorization": f"Bearer test_token_{sample_user.id}"}
+
+
+@pytest.fixture(autouse=True, scope="function")
+def reset_global_state():
+    """Reset global state between tests to prevent pollution."""
+    yield
+    
+    # Clean up after each test
+    try:
+        # Reset websocket globals
+        import app.api.websockets as ws_module
+        ws_module.active_connections.clear()
+        ws_module.connection_stats = {
+            "total": 0,
+            "by_conversation": {},
+            "by_user": {},
+            "last_cleanup": None
+        }
+        
+        # Cancel cleanup task if it exists
+        if hasattr(ws_module, 'cleanup_task') and ws_module.cleanup_task is not None:
+            if not ws_module.cleanup_task.done():
+                ws_module.cleanup_task.cancel()
+            ws_module.cleanup_task = None
+            
+    except ImportError:
+        # Module not imported yet, nothing to clean
+        pass
+    except Exception:
+        # Ignore cleanup errors
+        pass
+        
+    try:
+        # Reset buffer manager state
+        from app.core.buffer_manager import buffer_manager
+        if hasattr(buffer_manager, '_conversation_buffers'):
+            buffer_manager._conversation_buffers.clear()
+        if hasattr(buffer_manager, '_initialized'):
+            buffer_manager._initialized = True
+    except ImportError:
+        pass
+    except Exception:
+        pass
+        
+    try:
+        # Reset monitoring service state
+        from app.services.monitoring_service import monitoring_service
+        if hasattr(monitoring_service, 'websocket_connections'):
+            monitoring_service.websocket_connections.clear()
+        if hasattr(monitoring_service, 'active_conversations'):
+            monitoring_service.active_conversations.clear()
+    except ImportError:
+        pass
+    except Exception:
+        pass
+        
+    try:
+        # Reset database engine state and connection pools to prevent event loop conflicts
+        import app.db.database as db_module
+        # Force close any existing connections
+        if hasattr(db_module, 'engine') and db_module.engine is not None:
+            # Don't dispose the engine as it's session-scoped, but clear connection pools
+            if hasattr(db_module.engine, 'pool'):
+                try:
+                    # Force close any hanging connections
+                    db_module.engine.pool.checkedout()
+                except:
+                    pass
+    except ImportError:
+        pass
+    except Exception:
+        pass
+        
+    try:
+        # Reset asyncio event loop state
+        import asyncio
+        # Get the current event loop and ensure it's properly closed for the next test
+        try:
+            current_loop = asyncio.get_running_loop()
+            # Don't close the running loop, but clear any pending tasks
+            for task in asyncio.all_tasks(current_loop):
+                if not task.done() and not task.cancelled():
+                    task.cancel()
+        except RuntimeError:
+            # No running loop, which is fine
+            pass
+    except Exception:
+        pass
+        
+    try:
+        # Clear FastAPI dependency overrides that might hold database references
+        from app.main import app
+        app.dependency_overrides.clear()
+    except ImportError:
+        pass
+    except Exception:
+        pass

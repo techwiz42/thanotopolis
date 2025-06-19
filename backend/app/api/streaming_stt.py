@@ -384,6 +384,9 @@ async def transcribe_audio_file(
             }
         }
         
+    except HTTPException:
+        # Re-raise HTTPExceptions with their original status code
+        raise
     except Exception as e:
         logger.error(f"Error transcribing audio file: {e}")
         raise HTTPException(status_code=500, detail=str(e))

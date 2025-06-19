@@ -75,15 +75,20 @@ async def list_available_agents(
             else:
                 # Create a temporary agent response object
                 from app.schemas.schemas import AgentResponse
+                from datetime import datetime, timezone
                 agents.append(AgentResponse(
                     id=UUID('00000000-0000-0000-0000-000000000000'),  # Placeholder ID
                     agent_type=agent_type,
                     name=agent_type.replace('_', ' ').title() + " Agent",
-                    description=description,
+                    description=description if isinstance(description, str) else f"{agent_type} agent",
                     is_free_agent=is_free_agent,
                     owner_tenant_id=owner_tenant_id,
-                    capabilities=capabilities,
-                    is_active=True
+                    owner_domain=owner_domain if not is_free_agent else None,
+                    is_enabled=True,
+                    capabilities=capabilities if isinstance(capabilities, list) else [],
+                    is_active=True,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=None
                 ))
     
     # Import Tenant model locally to avoid circular imports
@@ -115,7 +120,6 @@ async def create_proprietary_agent(
         description=agent_data.description,
         is_free_agent=agent_data.is_free_agent,
         owner_tenant_id=current_user.tenant_id if not agent_data.is_free_agent else None,
-        configuration_template=agent_data.configuration_template,
         capabilities=agent_data.capabilities,
         is_active=True
     )

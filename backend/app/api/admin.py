@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, and_
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from app.db.database import get_db
@@ -50,7 +50,7 @@ async def get_admin_dashboard(
     )
     
     # Get usage breakdown by organization for last 30 days
-    end_date = datetime.utcnow()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=30)
     
     usage_by_org_query = select(
@@ -250,7 +250,7 @@ async def get_usage_statistics(
     current_user: User = Depends(require_admin_user),
     tenant_id: Optional[UUID] = Query(None),
     user_id: Optional[UUID] = Query(None),
-    period: str = Query("month", regex="^(day|week|month)$"),
+    period: str = Query("month", pattern="^(day|week|month)$"),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: AsyncSession = Depends(get_db)
@@ -364,7 +364,7 @@ async def record_system_metric(
 @router.get("/usage/by-organization")
 async def get_usage_by_organization(
     current_user: User = Depends(require_admin_user),
-    period: str = Query("month", regex="^(day|week|month)$"),
+    period: str = Query("month", pattern="^(day|week|month)$"),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: AsyncSession = Depends(get_db)
@@ -373,7 +373,7 @@ async def get_usage_by_organization(
     
     # Default to last 30 days if no dates provided
     if not end_date:
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
     if not start_date:
         if period == "day":
             start_date = end_date - timedelta(days=1)
@@ -513,7 +513,7 @@ async def get_admin_websocket_stats(
                 "running": cleanup_running,
                 "last_run": connection_stats.get("last_cleanup")
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:

@@ -289,7 +289,6 @@ class AgentCreate(BaseModel):
 class AgentUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    configuration_template: Optional[Dict[str, Any]] = None
     capabilities: Optional[List[str]] = None
     is_enabled: Optional[bool] = None
     is_active: Optional[bool] = None
@@ -303,7 +302,6 @@ class AgentResponse(BaseModel):
     owner_tenant_id: Optional[UUID]
     owner_domain: Optional[str]
     is_enabled: bool
-    configuration_template: Optional[Dict[str, Any]]
     capabilities: Optional[List[str]]
     is_active: bool
     created_at: datetime
