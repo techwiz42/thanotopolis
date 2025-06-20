@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.buffer_manager import buffer_manager
 from app.db.database import get_db, get_db_context
 from app.models.models import (
-    User, Tenant, Message, Conversation, ConversationAgent, 
+    User, Tenant, Message, Conversation, 
     ConversationUser, MessageType
     )
 from app.agents.tenant_aware_agent_manager import tenant_aware_agent_manager as agent_manager
@@ -517,50 +517,8 @@ async def _handle_user_message(
             metadata=metadata
         )
         
-        # All messages are processed by MODERATOR by default
+        # All messages are processed by MODERATOR by default - agents are discovered dynamically
         agent_type = "MODERATOR"
-        
-        # Check if conversation has a specific MODERATOR configuration
-        moderator_query = select(ConversationAgent).where(
-            ConversationAgent.conversation_id == conversation_id,
-            ConversationAgent.agent_type == "MODERATOR",
-            ConversationAgent.is_active == True
-        )
-        moderator_result = await db.execute(moderator_query)
-        moderator_config = moderator_result.scalar_one_or_none()
-        
-        # If no MODERATOR is explicitly configured, add one
-        if not moderator_config:
-            # Get the MODERATOR agent record from database
-            from app.models.models import Agent
-            moderator_agent_result = await db.execute(
-                select(Agent).where(Agent.agent_type == "MODERATOR")
-            )
-            moderator_agent_record = moderator_agent_result.scalar_one_or_none()
-            
-            if not moderator_agent_record:
-                # Create the MODERATOR agent record if it doesn't exist
-                moderator_agent_record = Agent(
-                    agent_type="MODERATOR",
-                    name="Moderator Agent",
-                    description="Conversation moderator and agent coordinator",
-                    is_free_agent=True,
-                    owner_tenant_id=None,
-                    capabilities=["agent_selection", "conversation_routing"],
-                    is_active=True
-                )
-                db.add(moderator_agent_record)
-                await db.flush()  # Get the ID without committing
-            
-            new_moderator = ConversationAgent(
-                conversation_id=conversation_id,
-                agent_id=moderator_agent_record.id,  # Link to actual agent record
-                agent_type="MODERATOR",
-                is_active=True,
-                configuration=None
-            )
-            db.add(new_moderator)
-            await db.commit()
         
         # Only process with agent if conversation exists
         if conversation:

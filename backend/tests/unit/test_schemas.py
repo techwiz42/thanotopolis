@@ -29,7 +29,7 @@ from app.schemas.schemas import (
     
     # Conversation schemas
     ConversationCreate, ConversationUpdate, ConversationUserAdd,
-    ConversationAgentAdd, ConversationParticipantAdd,
+    ConversationParticipantAdd,
     MessageCreate, MessageResponse, ConversationResponse,
     ConversationListResponse,
     

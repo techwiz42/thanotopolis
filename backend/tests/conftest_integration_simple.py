@@ -48,7 +48,6 @@ async def db_session(test_db_engine):
         yield session
         
         # Clean up all data after each test
-        await session.execute(text("TRUNCATE TABLE conversation_agents CASCADE"))
         await session.execute(text("TRUNCATE TABLE messages CASCADE"))
         await session.execute(text("TRUNCATE TABLE conversations CASCADE"))
         await session.execute(text("TRUNCATE TABLE refresh_tokens CASCADE"))

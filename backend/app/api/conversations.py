@@ -12,13 +12,13 @@ import logging
 from app.db.database import get_db
 from app.models.models import (
     Conversation, Message, User, Tenant,
-    ConversationUser, ConversationAgent, ConversationParticipant,
+    ConversationUser, ConversationParticipant,
     ConversationStatus, MessageType
 )
 from app.schemas.schemas import (
     ConversationCreate, ConversationResponse, ConversationListResponse, ConversationUpdate,
     MessageCreate, MessageResponse, PaginationParams, PaginatedResponse,
-    ConversationAgentAdd, ConversationParticipantAdd
+    ConversationParticipantAdd
 )
 from app.auth.auth import get_current_active_user, get_tenant_from_request
 
@@ -173,76 +173,6 @@ async def create_conversation(
                     db.add(conv_user)
                     logger.info(f"Added user {user_id} to conversation {conversation.id}")
         
-        # Add requested agents (with safe defaults)
-        agent_types = getattr(conversation_data, 'agent_types', None) or []
-        
-        # Import tenant-aware agent manager for filtering
-        from app.agents.tenant_aware_agent_manager import tenant_aware_agent_manager
-        
-        # Get available agents for this user
-        available_agents = await tenant_aware_agent_manager.get_available_agents_for_user(current_user, db)
-        
-        for agent_type in agent_types:
-            # Check if agent is available to this user
-            if agent_type not in available_agents:
-                # Get tenant subdomain without lazy loading
-                tenant_subdomain = "unknown"
-                if current_user.tenant_id:
-                    tenant_result = await db.execute(
-                        select(Tenant.subdomain).where(Tenant.id == current_user.tenant_id)
-                    )
-                    tenant_subdomain = tenant_result.scalar_one_or_none() or "unknown"
-                logger.warning(f"Agent {agent_type} not available to user {current_user.email} from org {tenant_subdomain}")
-                continue
-                
-            # Get or create the agent record in database
-            from app.models.models import Agent
-            agent_result = await db.execute(
-                select(Agent).where(Agent.agent_type == agent_type)
-            )
-            agent_record = agent_result.scalar_one_or_none()
-            
-            if not agent_record:
-                # Get agent instance to check properties
-                agent_instance = tenant_aware_agent_manager.get_agent(agent_type)
-                is_free_agent = True
-                owner_tenant_id = None
-                
-                if agent_instance:
-                    from app.agents.base_agent import BaseAgent
-                    if isinstance(agent_instance, BaseAgent):
-                        is_free_agent = getattr(agent_instance.__class__, 'IS_FREE_AGENT', True)
-                        owner_domain = getattr(agent_instance.__class__, 'OWNER_DOMAIN', None)
-                        
-                        # Get tenant ID from domain if proprietary
-                        if not is_free_agent and owner_domain:
-                            tenant_result = await db.execute(
-                                select(Tenant).where(Tenant.subdomain == owner_domain)
-                            )
-                            owner_tenant = tenant_result.scalar_one_or_none()
-                            if owner_tenant:
-                                owner_tenant_id = owner_tenant.id
-                
-                # Create the agent record if it doesn't exist
-                agent_record = Agent(
-                    agent_type=agent_type,
-                    name=agent_type.replace('_', ' ').title() + " Agent",
-                    description=f"Dynamically discovered {agent_type} agent",
-                    is_free_agent=is_free_agent,
-                    owner_tenant_id=owner_tenant_id,
-                    capabilities=[],
-                    is_active=True
-                )
-                db.add(agent_record)
-                await db.flush()  # Get the ID without committing
-            
-            conv_agent = ConversationAgent(
-                conversation_id=conversation.id,
-                agent_id=agent_record.id,  # Link to actual agent record
-                is_active=True
-            )
-            db.add(conv_agent)
-            logger.info(f"Added agent {agent_type} to conversation {conversation.id}")
         
         # Add requested participants (with safe defaults)
         participant_ids = getattr(conversation_data, 'participant_ids', None) or []
@@ -1021,152 +951,6 @@ async def clear_messages(
     
     return {"status": "success", "message": "All messages cleared successfully"}
 
-@router.post("/{conversation_id}/agents")
-async def add_agent(
-    conversation_id: UUID,
-    agent_data: ConversationAgentAdd,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Add an agent to a conversation."""
-    # Verify user has access to the conversation
-    access_query = select(ConversationUser).where(
-        ConversationUser.conversation_id == conversation_id,
-        ConversationUser.user_id == current_user.id,
-        ConversationUser.is_active == True
-    )
-    access_result = await db.execute(access_query)
-    if not access_result.scalar_one_or_none():
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Get or create the agent record in database first
-    from app.models.models import Agent
-    agent_record_result = await db.execute(
-        select(Agent).where(Agent.agent_type == agent_data.agent_type)
-    )
-    agent_record = agent_record_result.scalar_one_or_none()
-    
-    if not agent_record:
-        # Create the agent record if it doesn't exist (for dynamic agents)
-        agent_record = Agent(
-            agent_type=agent_data.agent_type,
-            name=agent_data.agent_type.replace('_', ' ').title() + " Agent",
-            description=f"Dynamically discovered {agent_data.agent_type} agent",
-            is_free_agent=True,
-            owner_tenant_id=None,
-            capabilities=[],
-            is_active=True
-        )
-        db.add(agent_record)
-        await db.flush()  # Get the ID without committing
-    
-    # Check if agent already exists in conversation
-    agent_query = select(ConversationAgent).where(
-        ConversationAgent.conversation_id == conversation_id,
-        ConversationAgent.agent_id == agent_record.id
-    )
-    agent_result = await db.execute(agent_query)
-    existing_agent = agent_result.scalar_one_or_none()
-    
-    if existing_agent:
-        # Update existing agent
-        existing_agent.is_active = True
-        if agent_data.configuration:
-            existing_agent.configuration = json.dumps(agent_data.configuration)
-        agent_id = existing_agent.id
-    else:
-        
-        # Create new ConversationAgent
-        agent = ConversationAgent(
-            id=uuid.uuid4(),
-            conversation_id=conversation_id,
-            agent_id=agent_record.id,  # Link to actual agent record
-            configuration=json.dumps(agent_data.configuration) if agent_data.configuration else None
-        )
-        db.add(agent)
-        agent_id = agent.id
-    
-    await db.commit()
-    
-    return {
-        "id": str(agent_id),
-        "agent_type": agent_data.agent_type,
-        "configuration": agent_data.configuration
-    }
-
-@router.get("/{conversation_id}/agents", response_model=List[dict])
-async def get_agents(
-    conversation_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get all agents in a conversation."""
-    # Verify user has access to the conversation
-    access_query = select(ConversationUser).where(
-        ConversationUser.conversation_id == conversation_id,
-        ConversationUser.user_id == current_user.id,
-        ConversationUser.is_active == True
-    )
-    access_result = await db.execute(access_query)
-    if not access_result.scalar_one_or_none():
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Get all agents with their related Agent records - ensure agent relationship is loaded
-    query = (
-        select(ConversationAgent)
-        .options(selectinload(ConversationAgent.agent))
-        .where(
-            ConversationAgent.conversation_id == conversation_id,
-            ConversationAgent.is_active == True
-        )
-    )
-    result = await db.execute(query)
-    agents = result.scalars().all()
-    
-    return [
-        {
-            "id": agent.id,
-            "agent_type": agent.agent.agent_type,
-            "configuration": json.loads(agent.configuration) if agent.configuration else None,
-            "added_at": agent.activated_at
-        }
-        for agent in agents
-    ]
-
-@router.delete("/{conversation_id}/agents/{agent_id}", response_model=dict)
-async def remove_agent(
-    conversation_id: UUID,
-    agent_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Remove an agent from a conversation."""
-    # Verify user has access to the conversation
-    access_query = select(ConversationUser).where(
-        ConversationUser.conversation_id == conversation_id,
-        ConversationUser.user_id == current_user.id,
-        ConversationUser.is_active == True
-    )
-    access_result = await db.execute(access_query)
-    if not access_result.scalar_one_or_none():
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Get the agent
-    query = select(ConversationAgent).where(
-        ConversationAgent.id == agent_id,
-        ConversationAgent.conversation_id == conversation_id
-    )
-    result = await db.execute(query)
-    agent = result.scalar_one_or_none()
-    
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    
-    # Delete the agent
-    await db.delete(agent)
-    await db.commit()
-    
-    return {"status": "success", "message": "Agent removed successfully"}
 
 
 @router.get("/{conversation_id}/export", response_model=dict)
@@ -1339,7 +1123,6 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
         select(Conversation)
         .options(
             selectinload(Conversation.users).selectinload(ConversationUser.user),
-            selectinload(Conversation.agents),
             selectinload(Conversation.participants)
         )
         .where(Conversation.id == conversation_id)
@@ -1452,15 +1235,6 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
     
     # Format response
     users = [cu.user for cu in conversation.users if cu.user and cu.is_active]
-    agents = [
-        {
-            "agent_type": ca.agent.agent_type if ca.agent else "UNKNOWN",
-            "added_at": ca.activated_at,
-            "is_active": ca.is_active,
-            "configuration": json.loads(ca.configuration) if ca.configuration else None
-        }
-        for ca in conversation.agents
-    ]
     participants = [
         cp 
         for cp in conversation.participants 
@@ -1477,7 +1251,6 @@ async def get_conversation_with_details(conversation_id: UUID, db: AsyncSession)
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         users=users,
-        agents=agents,
         participants=participants,
         recent_messages=formatted_messages,  # All messages in chronological order
         owner_id=conversation.created_by_user_id  # For backward compatibility

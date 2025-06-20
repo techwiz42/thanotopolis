@@ -301,7 +301,7 @@ Implementing enhanced organization registration and agent management system with
 - Create `Agent` table to track agent configurations
 - Add `is_free_agent` boolean field (True = available to all, False = proprietary)
 - Add `owner_tenant_id` field for proprietary agents
-- Update `ConversationAgent` to reference Agent model instead of just agent_type string
+- ~~Update `ConversationAgent` to reference Agent model instead of just agent_type string~~ *(REMOVED: ConversationAgent model removed in favor of dynamic agent discovery)*
 
 ### Implementation Progress
 

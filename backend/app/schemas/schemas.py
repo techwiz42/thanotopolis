@@ -200,9 +200,6 @@ class ConversationUpdate(BaseModel):
 class ConversationUserAdd(BaseModel):
     user_id: UUID
 
-class ConversationAgentAdd(BaseModel):
-    agent_type: str
-    configuration: Optional[Dict[str, Any]] = None
 
 class ConversationParticipantAdd(BaseModel):
     participant_id: UUID
@@ -243,7 +240,6 @@ class ConversationResponse(BaseModel):
     
     # Include related entities
     users: Optional[List[UserResponse]] = []
-    agents: Optional[List[Dict[str, Any]]] = []  # {agent_type, added_at, is_active, configuration}
     participants: Optional[List[ParticipantResponse]] = []
     recent_messages: Optional[List[MessageResponse]] = []
     

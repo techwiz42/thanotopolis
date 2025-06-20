@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 
 from app.models.models import (
-    User, Conversation, Message, ConversationUser, ConversationAgent, 
+    User, Conversation, Message, ConversationUser, 
     ConversationParticipant, ConversationStatus, MessageType
 )
 from app.schemas.schemas import ConversationCreate, MessageCreate
@@ -44,8 +44,8 @@ async def test_create_conversation_success(
     assert data["title"] == "Test Conversation"
     assert data["description"] == "A test conversation"
     assert data["status"] == "active"
-    assert len(data["agents"]) == 1
-    assert data["agents"][0]["agent_type"] == "WEBSEARCH"
+    # Note: agents are not directly stored in the conversation response,
+    # they are referenced when messages are processed
     assert len(data["participants"]) == 1
     assert data["participants"][0]["identifier"] == "test@example.com"
 

@@ -18,7 +18,7 @@ from app.services.rag.pgvector_query_service import pgvector_query_service
 from app.agents.collaboration_manager import collaboration_manager
 from app.agents.common_context import CommonAgentContext
 from app.agents.base_agent import BaseAgent
-from app.models.models import Message, ConversationAgent, ConversationUser
+from app.models.models import Message, ConversationUser
 from app.agents.agent_calculator_tool import AgentCalculatorTool
 
 logger = logging.getLogger(__name__)

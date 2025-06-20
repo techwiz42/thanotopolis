@@ -32,7 +32,6 @@ from .schemas import (
     ConversationResponse,
     ConversationListResponse,
     ConversationUserAdd,
-    ConversationAgentAdd,
     ConversationParticipantAdd,
     
     # Message
@@ -81,7 +80,6 @@ __all__ = [
     "ConversationResponse",
     "ConversationListResponse",
     "ConversationUserAdd",
-    "ConversationAgentAdd",
     "ConversationParticipantAdd",
     
     # Message

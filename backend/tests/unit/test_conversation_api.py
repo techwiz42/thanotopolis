@@ -14,7 +14,7 @@ import json
 from datetime import datetime
 
 from app.models.models import (
-    User, Conversation, Message, ConversationUser, ConversationAgent, Agent,
+    User, Conversation, Message, ConversationUser, Agent,
     ConversationParticipant, ConversationStatus, MessageType
 )
 from app.schemas.schemas import ConversationCreate, MessageCreate, ConversationResponse

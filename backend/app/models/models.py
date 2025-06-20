@@ -131,7 +131,6 @@ class Agent(Base):
     
     # Relationships
     owner_tenant = relationship("Tenant", back_populates="agents")
-    conversation_agents = relationship("ConversationAgent", back_populates="agent", cascade="all, delete-orphan")
     # NEW: Telephony relationship
     call_usages = relationship("CallAgent", back_populates="agent", cascade="all, delete-orphan")
 
@@ -152,7 +151,6 @@ class Conversation(Base):
     created_by = relationship("User", foreign_keys=[created_by_user_id], back_populates="conversations_created")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
     users = relationship("ConversationUser", back_populates="conversation", cascade="all, delete-orphan")
-    agents = relationship("ConversationAgent", back_populates="conversation", cascade="all, delete-orphan")
     participants = relationship("ConversationParticipant", back_populates="conversation", cascade="all, delete-orphan")
     # NEW: Telephony relationship
     phone_calls = relationship("PhoneCall", back_populates="conversation", cascade="all, delete-orphan")
@@ -174,25 +172,6 @@ class ConversationUser(Base):
     conversation = relationship("Conversation", back_populates="users")
     user = relationship("User", back_populates="conversation_users")
 
-class ConversationAgent(Base):
-    __tablename__ = "conversation_agents"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
-    is_active = Column(Boolean, default=True)
-    activated_at = Column(DateTime(timezone=True), server_default=func.now())
-    deactivated_at = Column(DateTime(timezone=True), nullable=True)
-    
-    # Agent configuration for this conversation
-    configuration = Column(JSON, nullable=True)
-    
-    # Unique constraint
-    __table_args__ = (UniqueConstraint('conversation_id', 'agent_id', name='unique_conversation_agent'),)
-    
-    # Relationships
-    conversation = relationship("Conversation", back_populates="agents")
-    agent = relationship("Agent", back_populates="conversation_agents")
 
 class ConversationParticipant(Base):
     __tablename__ = "conversation_participants"

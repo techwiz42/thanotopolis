@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.db.database import get_db_context, init_db, check_db_connection
 from app.models.models import (
     Tenant, User, Conversation, Message, ConversationParticipant,
-    ConversationUser, ConversationAgent, ParticipantType, MessageType
+    ConversationUser, ParticipantType, MessageType
 )
 from app.auth.auth import AuthService
 import uuid
