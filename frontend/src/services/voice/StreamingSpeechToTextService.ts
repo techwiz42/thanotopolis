@@ -404,18 +404,28 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     setError(null);
     
     try {
+      // Get available audio input devices
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter(device => device.kind === 'audioinput');
+      
+      console.log('Available audio input devices:', audioInputs.map(d => ({ 
+        deviceId: d.deviceId, 
+        label: d.label 
+      })));
+
       // Request microphone access with optimized constraints for better multilingual sensitivity
+      // Note: echoCancellation disabled to allow computer audio (like Google Translate) to be detected
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: true,
+          echoCancellation: false, // Allow computer audio to be detected
           noiseSuppression: false, // Disable to preserve speech characteristics for language detection
           autoGainControl: true,
           sampleRate: 16000, // Explicitly request 16kHz to match Deepgram requirements
           // Optimized for multilingual support
           advanced: [
             { autoGainControl: { exact: true } },
-            { echoCancellation: { exact: true } },
+            { echoCancellation: { exact: false } }, // Allow computer audio
             { noiseSuppression: { exact: false } }, // Critical for non-English languages
             { sampleRate: { exact: 16000 } } // Ensure consistent sample rate
           ]

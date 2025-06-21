@@ -257,11 +257,20 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       return;
     }
 
+    // Remember if STT was active before starting TTS
+    const wasSTTActive = voiceState.isSTTEnabled && voiceState.isSTTActive;
+    
     try {
       // Stop any currently playing audio BEFORE setting active state
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
         currentAudioRef.current = null;
+      }
+      
+      // Temporarily pause STT to prevent feedback
+      if (wasSTTActive) {
+        console.log('Pausing STT during TTS playback to prevent feedback');
+        sttServiceRef.current.stopListening();
       }
       
       setVoiceState(prev => ({ ...prev, isTTSActive: true }));
@@ -295,6 +304,14 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
         setVoiceState(prev => ({ ...prev, isTTSActive: false }));
         URL.revokeObjectURL(audioUrl);
         currentAudioRef.current = null;
+        
+        // Resume STT if it was active before TTS started
+        if (wasSTTActive && voiceState.isSTTEnabled) {
+          console.log('Resuming STT after TTS playback completed');
+          setTimeout(() => {
+            sttServiceRef.current.startListening().catch(console.error);
+          }, 100); // Small delay to ensure audio cleanup
+        }
       };
 
       audio.onerror = () => {
@@ -302,12 +319,29 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
         URL.revokeObjectURL(audioUrl);
         currentAudioRef.current = null;
         console.error('Error playing TTS audio');
+        
+        // Resume STT if it was active before TTS started (even on error)
+        if (wasSTTActive && voiceState.isSTTEnabled) {
+          console.log('Resuming STT after TTS error');
+          setTimeout(() => {
+            sttServiceRef.current.startListening().catch(console.error);
+          }, 100);
+        }
       };
 
       await audio.play();
     } catch (error) {
       console.error('Error with TTS:', error);
       setVoiceState(prev => ({ ...prev, isTTSActive: false }));
+      
+      // Resume STT if it was active before TTS started (even on error)
+      if (wasSTTActive && voiceState.isSTTEnabled) {
+        console.log('Resuming STT after TTS initialization error');
+        setTimeout(() => {
+          sttServiceRef.current.startListening().catch(console.error);
+        }, 100);
+      }
+      
       toast({
         title: "Voice Output Error",
         description: "Failed to generate speech",
@@ -318,12 +352,22 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
 
   // Stop speaking
   const stopSpeaking = useCallback(() => {
+    const wasTTSActive = voiceState.isTTSActive;
+    
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
     setVoiceState(prev => ({ ...prev, isTTSActive: false }));
-  }, []);
+    
+    // If TTS was manually stopped and STT is enabled but not active, try to resume STT
+    if (wasTTSActive && voiceState.isSTTEnabled && !voiceState.isSTTActive) {
+      console.log('Resuming STT after manually stopping TTS');
+      setTimeout(() => {
+        sttServiceRef.current.startListening().catch(console.error);
+      }, 100);
+    }
+  }, [voiceState]);
 
   // Set manual override flag
   const setManualOverride = useCallback(() => {

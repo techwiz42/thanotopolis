@@ -314,7 +314,8 @@ export default function ConversationPage() {
   // Track completed agent messages for TTS to prevent duplicates
   const completedMessagesRef = useRef<Set<string>>(new Set());
 
-  const handleMessage = useCallback((message: Message) => {
+  // Handle NEW WebSocket messages (includes TTS for new agent responses)
+  const handleNewWebSocketMessage = useCallback((message: Message) => {
     // Use refs to get current TTS state - avoid stale closure
     const currentTTSEnabled = currentTTSEnabledRef.current;
     const currentSpeakTextFn = currentSpeakTextRef.current;
@@ -336,7 +337,7 @@ export default function ConversationPage() {
           resetStreamingForAgent(message.sender.name, message.id);
         }
         
-        // Handle TTS for NEW agent messages only
+        // Handle TTS for NEW agent messages only (only for WebSocket messages)
         if (currentTTSEnabled && message.content.trim() && message.id) {
           // Only speak if we haven't spoken this message before
           if (!completedMessagesRef.current.has(message.id)) {
@@ -375,22 +376,16 @@ export default function ConversationPage() {
       }
     }
     
-    messageQueueRef.current.push(message);
-    if (!isProcessingRef.current) {
-      isProcessingRef.current = true;
-      requestAnimationFrame(() => {
-        const messagesToAdd = [...messageQueueRef.current];
-        messageQueueRef.current = [];
-        isProcessingRef.current = false;
-        
-        messagesToAdd.forEach(msg => {
-          addMessage(msg);
-        });
-        
-        scrollToBottom(true);
-      });
-    }
+    // Add message to display
+    addMessage(message);
+    scrollToBottom(true);
   }, [addMessage, resetStreamingForAgent, scrollToBottom, typingUsers.size, streamingState]);
+
+  // Handle ALL messages (used for initial load and WebSocket) - NO TTS logic here
+  const handleMessage = useCallback((message: Message) => {
+    // Just add the message without TTS processing - this is used for initial load
+    addMessage(message);
+  }, [addMessage]);
 
   const handleTypingStatus = useCallback((status: TypingStatusMessage) => {
     setTypingUsers(prev => {
@@ -435,10 +430,10 @@ export default function ConversationPage() {
     token,
     userId: user?.id,
     userEmail: user?.email,
-    onMessage: handleMessage,
+    onMessage: handleNewWebSocketMessage, // Use the WebSocket-specific handler with TTS
     onTypingStatus: handleTypingStatus,
     onToken: handleTokenMessage
-  }), [conversationId, token, user?.id, user?.email, handleMessage, handleTypingStatus, handleTokenMessage]);
+  }), [conversationId, token, user?.id, user?.email, handleNewWebSocketMessage, handleTypingStatus, handleTokenMessage]);
 
   // Using the websocket hook
   const { sendMessage, sendTypingStatus, isConnected, connectionError, wsConnected } = useWebSocket(wsConfig);
