@@ -1,5 +1,93 @@
 // src/services/voice/StreamingSpeechToTextService.ts
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { advancedLanguageDetection, LanguageDetectionResult } from './AdvancedLanguageDetection';
+
+// Simple client-side language detection fallback
+function detectLanguageFallback(text: string): { language: string | null, confidence: number } {
+  if (!text || text.length < 5) return { language: null, confidence: 0 };
+  
+  const lowerText = text.toLowerCase();
+  
+  // Simple pattern-based detection (very basic but better than nothing)
+  const patterns = {
+    'es': {
+      words: ['el', 'la', 'de', 'que', 'y', 'en', 'un', 'es', 'se', 'no', 'te', 'lo', 'le', 'da', 'su', 'por', 'son', 'con', 'para', 'como', 'está', 'muy', 'bien', 'sí', 'gracias', 'hola', 'qué', 'cómo', 'dónde'],
+      endings: ['ción', 'dad', 'mente', 'ando', 'endo'],
+      chars: ['ñ', 'á', 'é', 'í', 'ó', 'ú']
+    },
+    'fr': {
+      words: ['le', 'de', 'et', 'à', 'un', 'il', 'être', 'et', 'en', 'avoir', 'que', 'pour', 'dans', 'ce', 'son', 'une', 'sur', 'avec', 'ne', 'se', 'pas', 'tout', 'plus', 'par', 'grand', 'en', 'je', 'tu', 'nous', 'vous', 'ils', 'bonjour', 'merci', 'où', 'comment'],
+      endings: ['tion', 'ment', 'eur', 'euse', 'ique'],
+      chars: ['à', 'é', 'è', 'ê', 'ë', 'î', 'ï', 'ô', 'ù', 'û', 'ü', 'ÿ', 'ç']
+    },
+    'de': {
+      words: ['der', 'die', 'und', 'in', 'den', 'von', 'zu', 'das', 'mit', 'sich', 'des', 'auf', 'für', 'ist', 'im', 'dem', 'nicht', 'ein', 'eine', 'als', 'auch', 'es', 'an', 'werden', 'aus', 'er', 'hat', 'dass', 'sie', 'nach', 'wird', 'bei', 'einer', 'um', 'am', 'sind', 'noch', 'wie', 'einem', 'über', 'einen', 'so', 'zum', 'war', 'haben', 'nur', 'oder', 'aber', 'vor', 'zur', 'bis', 'mehr', 'durch', 'man', 'sein', 'wurde', 'sei', 'in'],
+      endings: ['ung', 'heit', 'keit', 'schaft', 'tum'],
+      chars: ['ä', 'ö', 'ü', 'ß']
+    },
+    'it': {
+      words: ['il', 'di', 'che', 'e', 'la', 'per', 'un', 'in', 'con', 'del', 'da', 'a', 'al', 'le', 'si', 'gli', 'una', 'o', 'anche', 'come', 'ma', 'se', 'nel', 'non', 'più', 'sono', 'molto', 'bene', 'ciao', 'grazie', 'dove', 'come'],
+      endings: ['zione', 'mente', 'ezza', 'ità'],
+      chars: ['à', 'è', 'é', 'ì', 'ò', 'ù']
+    },
+    'pt': {
+      words: ['o', 'de', 'a', 'e', 'do', 'da', 'em', 'um', 'para', 'é', 'com', 'não', 'uma', 'os', 'no', 'se', 'na', 'por', 'mais', 'as', 'dos', 'como', 'mas', 'foi', 'ao', 'ele', 'das', 'tem', 'à', 'seu', 'sua', 'ou', 'ser', 'quando', 'muito', 'há', 'nos', 'já', 'está', 'eu', 'também', 'só', 'pelo', 'pela', 'até', 'isso', 'ela', 'entre', 'era', 'depois', 'sem', 'mesmo', 'aos', 'ter', 'seus', 'suas', 'numa', 'pelos', 'pelas', 'esse', 'eles', 'estão', 'você', 'tinha', 'foram', 'essa', 'num', 'nem', 'suas', 'meu', 'às', 'minha', 'têm', 'numa', 'pelos', 'pelas', 'olá', 'obrigado', 'onde', 'como'],
+      endings: ['ção', 'mente', 'dade', 'ismo'],
+      chars: ['ã', 'õ', 'á', 'à', 'é', 'ê', 'í', 'ó', 'ô', 'ú', 'ç']
+    }
+  };
+  
+  const scores: { [key: string]: number } = {};
+  
+  for (const [lang, data] of Object.entries(patterns)) {
+    let score = 0;
+    
+    // Check for common words
+    const words = lowerText.split(/\s+/);
+    for (const word of words) {
+      if (data.words.includes(word)) {
+        score += 2;
+      }
+    }
+    
+    // Check for characteristic endings
+    for (const ending of data.endings) {
+      const regex = new RegExp(ending + '\\b', 'g');
+      const matches = lowerText.match(regex);
+      if (matches) {
+        score += matches.length * 1.5;
+      }
+    }
+    
+    // Check for characteristic characters
+    for (const char of data.chars) {
+      const regex = new RegExp(char, 'g');
+      const matches = lowerText.match(regex);
+      if (matches) {
+        score += matches.length * 1;
+      }
+    }
+    
+    scores[lang] = score;
+  }
+  
+  // Default to English if no other language has a strong signal
+  scores['en'] = Math.max(1, scores['en'] || 0);
+  
+  // Find the highest scoring language
+  const sortedLangs = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  const topLang = sortedLangs[0];
+  
+  if (topLang[1] > 0) {
+    const confidence = Math.min(0.9, topLang[1] / (text.length / 5)); // Normalize by text length
+    return { 
+      language: topLang[0], 
+      confidence: Math.max(0.1, confidence) 
+    };
+  }
+  
+  return { language: 'en', confidence: 0.6 }; // Default fallback
+}
 
 /**
  * Type for streaming STT options
@@ -42,8 +130,18 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     onLanguageDetected: () => {},
   };
 
-  // Merge options
-  const opts = { ...defaultOptions, ...options };
+  // Merge options with memoization to prevent recreation
+  const opts = useMemo(() => ({ ...defaultOptions, ...options }), [
+    options.token,
+    options.languageCode, 
+    options.model,
+    options.onTranscription,
+    options.onSpeechStart,
+    options.onUtteranceEnd,
+    options.onConnectionChange,
+    options.onError,
+    options.onLanguageDetected
+  ]);
 
   // States
   const [isListening, setIsListening] = useState(false);
@@ -58,11 +156,17 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef<boolean>(false);
   const isStartingRef = useRef<boolean>(false);
+  
+  // Advanced language detection
+  const audioBufferRef = useRef<Float32Array[]>([]);
+  const lastDetectionRef = useRef<number>(0);
 
-  // Update connection state
+  // Update connection state - use ref to avoid dependency on opts
   const updateConnectionState = useCallback((connected: boolean) => {
     setIsConnected(connected);
-    opts.onConnectionChange(connected);
+    if (opts.onConnectionChange) {
+      opts.onConnectionChange(connected);
+    }
   }, [opts]);
 
   // Handle WebSocket messages
@@ -86,13 +190,70 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
             const isFinal = data.is_final || false;
             const speechFinal = data.speech_final || false;
             
-            // Handle language detection
+            // Debug: Log all received data to see what we're getting
+            console.log('📨 Raw WebSocket Data:', {
+              type: data.type,
+              transcript: data.transcript?.substring(0, 50) + '...',
+              detected_language: data.detected_language,
+              language_confidence: data.language_confidence,
+              confidence: data.confidence,
+              is_final: data.is_final,
+              speech_final: data.speech_final,
+              alternatives: data.alternatives,
+              allKeys: Object.keys(data)
+            });
+            
+            // Enhanced language detection with detailed logging
             if (data.detected_language) {
-              console.log(`Detected language: ${data.detected_language}, confidence: ${data.language_confidence || 'unknown'}`);
+              const languageConfidence = data.language_confidence || 0;
+              const transcriptConfidence = data.confidence || 0;
+              const textLength = data.transcript ? data.transcript.length : 0;
               
-              // Call language detection callback
-              const confidence = data.language_confidence || data.confidence || 0.5;
-              opts.onLanguageDetected(data.detected_language, confidence);
+              console.log(`🌍 Language Detection:`, {
+                language: data.detected_language,
+                languageConfidence: languageConfidence,
+                transcriptConfidence: transcriptConfidence,
+                textLength: textLength,
+                transcript: data.transcript?.substring(0, 50) + '...',
+                isFinal: isFinal,
+                speechFinal: speechFinal,
+                rawData: {
+                  language_confidence: data.language_confidence,
+                  confidence: data.confidence,
+                  alternatives: data.alternatives
+                }
+              });
+              
+              // Enhanced confidence calculation
+              let finalConfidence = languageConfidence;
+              
+              // Boost confidence for longer text samples (more reliable)
+              if (textLength > 10) {
+                finalConfidence = Math.min(1.0, finalConfidence * 1.1);
+              }
+              if (textLength > 30) {
+                finalConfidence = Math.min(1.0, finalConfidence * 1.1);
+              }
+              
+              // Consider transcript confidence as well
+              if (transcriptConfidence > 0) {
+                finalConfidence = (finalConfidence + transcriptConfidence) / 2;
+              }
+              
+              // Only trigger detection for meaningful confidence levels
+              if (finalConfidence >= 0.3) {
+                opts.onLanguageDetected(data.detected_language, finalConfidence);
+              } else {
+                console.log(`⚠️ Skipping low confidence detection: ${finalConfidence}`);
+              }
+            } else if (isFinal || speechFinal) {
+              // Fallback: Client-side language detection if backend doesn't provide it
+              console.log('🔍 No backend language detection, trying client-side fallback...');
+              const fallbackDetection = detectLanguageFallback(data.transcript);
+              if (fallbackDetection.language && fallbackDetection.confidence > 0.5) {
+                console.log('🎯 Fallback detection:', fallbackDetection);
+                opts.onLanguageDetected(fallbackDetection.language, fallbackDetection.confidence);
+              }
             }
             
             // For now, treat speech_final as the main final indicator
@@ -470,7 +631,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     }
   }, [isListening, connectWebSocket, processAudioStream, opts]);
 
-  // Stop listening
+  // Stop listening - remove dependency on updateConnectionState to avoid loops
   const stopListening = useCallback(() => {
     console.log('stopListening called, current state:', { isListening, isConnected });
     console.log('Stack trace:', new Error().stack);
@@ -518,9 +679,13 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     }
     
     setIsListening(false);
-    updateConnectionState(false);
+    setIsConnected(false);
+    // Call connection change callback directly to avoid dependency loop
+    if (opts.onConnectionChange) {
+      opts.onConnectionChange(false);
+    }
     isStartingRef.current = false;
-  }, [updateConnectionState]);
+  }, [opts.onConnectionChange]);
 
   // Toggle listening
   const toggleListening = useCallback(async () => {
@@ -531,11 +696,37 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     }
   }, [isListening, startListening, stopListening]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount - use refs to avoid stale closures
   useEffect(() => {
     return () => {
-      if (isListening) {
-        stopListening();
+      // Use direct cleanup instead of relying on stopListening
+      // Clear reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      
+      // Close WebSocket
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      
+      // Stop audio processing
+      if (processorRef.current) {
+        processorRef.current.disconnect();
+        processorRef.current = null;
+      }
+      
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+      
+      // Stop media stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       }
     };
   }, []);

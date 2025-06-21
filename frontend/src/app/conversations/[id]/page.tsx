@@ -218,7 +218,10 @@ export default function ConversationPage() {
     speakText,
     stopSpeaking,
     currentAudio,
-    setManualOverride
+    setManualOverride,
+    // Phase 2: Session language lock features
+    sessionLanguageLock,
+    resetLanguageLock
   } = useVoice({
     conversationId,
     onTranscript: handleVoiceTranscript,
@@ -494,6 +497,8 @@ export default function ConversationPage() {
               confidence={languageConfidence}
               isAutoDetecting={isAutoDetecting}
               isManualOverride={isManualOverride}
+              sessionLanguageLock={sessionLanguageLock}
+              onResetLanguageLock={resetLanguageLock}
             />
           )}
           
@@ -608,13 +613,52 @@ export default function ConversationPage() {
                   isSTTEnabled={isSTTEnabled}
                 />
                 
-                {/* Debug info for development */}
-                {process.env.NODE_ENV === 'development' && (
-                  <div className="mt-2 text-xs text-gray-400 space-y-1">
-                    <div>WS: {wsConnected ? '✓' : '✗'} | Connected: {isConnected ? '✓' : '✗'} | Disabled: {isMessageInputDisabled ? '✓' : '✗'}</div>
-                    <div>STT: {isSTTEnabled ? '✓' : '✗'} | TTS: {isTTSEnabled ? '✓' : '✗'} | Recording: {isSTTActive ? '✓' : '✗'} | Speaking: {isTTSActive ? '✓' : '✗'}</div>
-                    {voiceTranscript && <div>Voice: "{voiceTranscript}"</div>}
-                    {pendingVoiceText && <div>Pending: "{pendingVoiceText}"</div>}
+                {/* Enhanced debug info for development */}
+                {(process.env.NODE_ENV === 'development' || true) && (
+                  <div className="mt-2 p-3 bg-gray-50 rounded-md text-xs text-gray-600 space-y-2">
+                    <div className="font-semibold">🔧 Debug Panel</div>
+                    
+                    {/* Connection Status */}
+                    <div>
+                      <span className="font-medium">Connection:</span> WS: {wsConnected ? '✅' : '❌'} | API: {isConnected ? '✅' : '❌'} | Input: {isMessageInputDisabled ? '🔒' : '✅'}
+                    </div>
+                    
+                    {/* Voice Status */}
+                    <div>
+                      <span className="font-medium">Voice:</span> STT: {isSTTEnabled ? '🎙️' : '❌'} | TTS: {isTTSEnabled ? '🔊' : '❌'} | Recording: {isSTTActive ? '🟢' : '⚫'} | Speaking: {isTTSActive ? '🔊' : '⚫'}
+                    </div>
+                    
+                    {/* Language Detection Status */}
+                    {detectedLanguage && (
+                      <div>
+                        <span className="font-medium">Detection:</span> {detectedLanguage} ({Math.round(languageConfidence * 100)}%) 
+                        {sessionLanguageLock.isLocked && <span className="text-purple-600 font-bold"> 🔒 LOCKED</span>}
+                        {isAutoDetecting && <span className="text-blue-600"> 🧠 AUTO</span>}
+                        {isManualOverride && <span className="text-orange-600"> 👤 MANUAL</span>}
+                      </div>
+                    )}
+                    
+                    {/* Voice Transcript */}
+                    {voiceTranscript && (
+                      <div>
+                        <span className="font-medium">Voice:</span> "{voiceTranscript.substring(0, 100)}{voiceTranscript.length > 100 ? '...' : ''}"
+                      </div>
+                    )}
+                    
+                    {/* Pending Text */}
+                    {pendingVoiceText && (
+                      <div>
+                        <span className="font-medium">Pending:</span> "{pendingVoiceText}"
+                      </div>
+                    )}
+                    
+                    {/* Session Lock Info */}
+                    {sessionLanguageLock.isLocked && (
+                      <div>
+                        <span className="font-medium">Lock:</span> {sessionLanguageLock.language} @ {Math.round(sessionLanguageLock.confidence * 100)}% 
+                        <span className="text-gray-500"> (locked {Math.round((Date.now() - sessionLanguageLock.timestamp) / 1000)}s ago)</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

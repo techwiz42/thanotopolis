@@ -1,12 +1,20 @@
 import React, { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Brain, Globe, Signal, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Brain, Globe, Signal, AlertTriangle, CheckCircle2, Lock, Unlock } from 'lucide-react';
 
 interface LanguageDetectionIndicatorProps {
   detectedLanguage: string | null;
   confidence: number;
   isAutoDetecting: boolean;
   isManualOverride: boolean;
+  // Phase 2: Session language lock state
+  sessionLanguageLock?: {
+    language: string | null;
+    confidence: number;
+    timestamp: number;
+    isLocked: boolean;
+  };
+  onResetLanguageLock?: () => void;
   className?: string;
 }
 
@@ -126,6 +134,8 @@ export function LanguageDetectionIndicator({
   confidence,
   isAutoDetecting,
   isManualOverride,
+  sessionLanguageLock,
+  onResetLanguageLock,
   className = ''
 }: LanguageDetectionIndicatorProps) {
   const [showTooltip, setShowTooltip] = useState(false);
@@ -142,19 +152,43 @@ export function LanguageDetectionIndicator({
     );
   }
 
-  // If no language detected and not auto-detecting
-  if (!detectedLanguage) {
+  // Phase 2: Check if language is locked
+  const isLanguageLocked = sessionLanguageLock?.isLocked;
+  const lockedLanguage = sessionLanguageLock?.language;
+  const lockedConfidence = sessionLanguageLock?.confidence || 0;
+
+  // If no language detected and not auto-detecting and not locked
+  if (!detectedLanguage && !isLanguageLocked) {
     return null;
   }
 
-  const languageName = LANGUAGE_NAMES[detectedLanguage] || detectedLanguage;
-  const confidenceLevel = getConfidenceLevel(confidence);
-  const badgeColor = getConfidenceColor(confidence, isManualOverride);
-  const icon = getConfidenceIcon(confidence, isManualOverride);
+  // Phase 2: Use locked language if available, otherwise detected language
+  const displayLanguage = isLanguageLocked ? lockedLanguage : detectedLanguage;
+  const displayConfidence = isLanguageLocked ? lockedConfidence : confidence;
+  
+  if (!displayLanguage) {
+    return null;
+  }
 
-  const tooltipContent = isManualOverride 
-    ? `Language manually set to ${languageName}`
-    : `Auto-detected ${languageName} (${(confidence * 100).toFixed(0)}% confidence)`;
+  const languageName = LANGUAGE_NAMES[displayLanguage] || displayLanguage;
+  const confidenceLevel = getConfidenceLevel(displayConfidence);
+  
+  // Phase 2: Enhanced badge color for locked languages
+  const badgeColor = isLanguageLocked 
+    ? 'bg-purple-100 text-purple-800 border-purple-200' // Special color for locked
+    : getConfidenceColor(displayConfidence, isManualOverride);
+  
+  // Phase 2: Enhanced icon for locked languages
+  const icon = isLanguageLocked 
+    ? <Lock className="h-3 w-3" />
+    : getConfidenceIcon(displayConfidence, isManualOverride);
+
+  // Phase 2: Enhanced tooltip with lock information
+  const tooltipContent = isLanguageLocked
+    ? `Language LOCKED to ${languageName} (${(lockedConfidence * 100).toFixed(0)}% confidence) - Click to unlock`
+    : isManualOverride 
+      ? `Language manually set to ${languageName}`
+      : `Auto-detected ${languageName} (${(displayConfidence * 100).toFixed(0)}% confidence)`;
 
   return (
     <div className={`relative flex items-center space-x-1 ${className}`}>
@@ -165,16 +199,22 @@ export function LanguageDetectionIndicator({
       >
         <Badge 
           variant="outline" 
-          className={`transition-colors duration-200 cursor-help ${badgeColor}`}
+          className={`transition-colors duration-200 ${isLanguageLocked ? 'cursor-pointer hover:bg-purple-200' : 'cursor-help'} ${badgeColor}`}
+          onClick={isLanguageLocked ? onResetLanguageLock : undefined}
         >
           {icon}
           <span className="ml-1 text-xs font-medium">
             {languageName}
           </span>
-          {!isManualOverride && (
+          {/* Phase 2: Show confidence for both locked and detected languages */}
+          {(!isManualOverride || isLanguageLocked) && (
             <span className="ml-1 text-xs opacity-75">
-              ({(confidence * 100).toFixed(0)}%)
+              ({(displayConfidence * 100).toFixed(0)}%)
             </span>
+          )}
+          {/* Phase 2: Lock indicator */}
+          {isLanguageLocked && (
+            <span className="ml-1 text-xs font-bold opacity-90">🔒</span>
           )}
         </Badge>
         
