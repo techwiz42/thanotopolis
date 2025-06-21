@@ -84,7 +84,7 @@ export default function CallManagementPage() {
   const [perPage] = useState(20);
 
   // Filters
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('all');
 
@@ -130,7 +130,7 @@ export default function CallManagementPage() {
         token,
         page,
         perPage,
-        statusFilter || undefined
+        statusFilter === 'all' ? undefined : statusFilter
       );
       
       setCalls(response.calls);
@@ -352,7 +352,7 @@ export default function CallManagementPage() {
                     <SelectValue placeholder="All Statuses" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All Statuses</SelectItem>
+                    <SelectItem value="all">All Statuses</SelectItem>
                     <SelectItem value="completed">Completed</SelectItem>
                     <SelectItem value="in_progress">In Progress</SelectItem>
                     <SelectItem value="failed">Failed</SelectItem>

@@ -185,7 +185,9 @@ export default function TelephonySetupPage() {
     // Refresh the config
     if (token) {
       telephonyService.getTelephonyConfig(token)
-        .then(setExistingConfig)
+        .then((config) => {
+          setExistingConfig(config);
+        })
         .catch(console.error);
     }
   };
@@ -226,8 +228,7 @@ export default function TelephonySetupPage() {
         <Alert className="mb-6">
           <Phone className="h-4 w-4" />
           <AlertDescription>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between">
                 <div>
                   <strong>Your Business Number:</strong> {telephonyService.getDisplayPhoneNumber(existingConfig)}
                   <br />
@@ -283,10 +284,9 @@ export default function TelephonySetupPage() {
               </div>
               
               {/* Setup Status */}
-              <div className="text-sm text-muted-foreground">
+              <div className="mt-2 text-sm text-muted-foreground">
                 <strong>Status:</strong> {telephonyService.getSetupStatus(existingConfig)}
               </div>
-            </div>
           </AlertDescription>
         </Alert>
       )}

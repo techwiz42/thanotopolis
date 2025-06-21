@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "pete@cyberiad.ai"
     SMTP_FROM_NAME: str = "Cyberiad.ai"
 
+    # Twilio Settings
+    TWILIO_ACCOUNT_SID: Optional[str] = os.getenv("TWILIO_ACCOUNT_SID")
+    TWILIO_AUTH_TOKEN: Optional[str] = os.getenv("TWILIO_AUTH_TOKEN")
+    TWILIO_PHONE_NUMBER: Optional[str] = os.getenv("TWILIO_PHONE_NUMBER")
+
 settings = Settings()
 
 # Compute WebSocket origins from CORS origins

@@ -47,21 +47,28 @@ const MessageInput: React.FC<MessageInputProps> = ({
 
   // Handle voice transcript updates
   useEffect(() => {
-    if (voiceTranscript !== lastVoiceTranscriptRef.current) {
-      lastVoiceTranscriptRef.current = voiceTranscript;
-      
-      if (voiceTranscript) {
-        // Simply set the message to the voice transcript
-        // The parent component already handles final vs interim logic
-        setMessage(voiceTranscript);
-        
-        // Auto-focus when voice input is active
-        if (textareaRef.current && isVoiceActive) {
-          textareaRef.current.focus();
-          textareaRef.current.setSelectionRange(voiceTranscript.length, voiceTranscript.length);
-        }
-      }
+    // Skip if voice transcript hasn't changed
+    if (voiceTranscript === lastVoiceTranscriptRef.current) {
+      return;
     }
+    
+    // Always update when voice transcript changes
+    if (voiceTranscript) {
+      // Set the message to the voice transcript
+      setMessage(voiceTranscript);
+      
+      // Auto-focus when voice input is active
+      if (textareaRef.current && isVoiceActive) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(voiceTranscript.length, voiceTranscript.length);
+      }
+    } else if (voiceTranscript === '' && lastVoiceTranscriptRef.current !== '') {
+      // Clear message when voice transcript is explicitly cleared
+      setMessage('');
+    }
+    
+    // Update the ref after processing
+    lastVoiceTranscriptRef.current = voiceTranscript;
   }, [voiceTranscript, isVoiceActive]);
 
   // Update message when voice transcript is finalized
@@ -201,19 +208,35 @@ const MessageInput: React.FC<MessageInputProps> = ({
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
 
+    console.log('[MessageInput] handleSend - sending message:', trimmedMessage);
+
     // Send message with existing metadata if any
     onSendMessage(trimmedMessage, messageMetadata || undefined);
     
+    // Clear all state
     setMessage('');
     setMessageMetadata(null);
     setPendingVoiceTranscript('');
     lastVoiceTranscriptRef.current = '';
     
+    // Clear voice transcript in parent component
+    if (onVoiceTranscriptFinal) {
+      console.log('[MessageInput] handleSend - clearing parent voice transcript');
+      onVoiceTranscriptFinal('');
+    }
+    
     if (onTypingStatus && isTyping) {
       setIsTyping(false);
       onTypingStatus(false);
     }
-  }, [message, messageMetadata, onSendMessage, onTypingStatus, isTyping]);
+    
+    // Force focus back to empty input
+    if (textareaRef.current) {
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
+    }
+  }, [message, messageMetadata, onSendMessage, onTypingStatus, isTyping, onVoiceTranscriptFinal]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -298,18 +321,33 @@ const MessageInput: React.FC<MessageInputProps> = ({
         
         // Only send if message hasn't changed for at least 4.5 seconds (allowing for small timing variations)
         if (timeSinceLastChange >= 4500) {
-          console.log('[MessageInput] Sending message:', message);
+          console.log('[MessageInput] Auto-send - sending message:', message);
           const trimmedMessage = message.trim();
           if (trimmedMessage) {
             onSendMessage(trimmedMessage, messageMetadata || undefined);
+            
+            // Clear all state
             setMessage('');
             setMessageMetadata(null);
             setPendingVoiceTranscript('');
             lastVoiceTranscriptRef.current = '';
             
+            // Clear voice transcript in parent component
+            if (onVoiceTranscriptFinal) {
+              console.log('[MessageInput] Auto-send - clearing parent voice transcript');
+              onVoiceTranscriptFinal('');
+            }
+            
             if (onTypingStatus && isTyping) {
               setIsTyping(false);
               onTypingStatus(false);
+            }
+            
+            // Force focus back to empty input
+            if (textareaRef.current) {
+              setTimeout(() => {
+                textareaRef.current?.focus();
+              }, 100);
             }
           }
         } else {
@@ -323,7 +361,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
         clearTimeout(autoSendTimeoutRef.current);
       }
     };
-  }, [isSTTEnabled, message, onSendMessage, messageMetadata, onTypingStatus, isTyping]);
+  }, [isSTTEnabled, message, onSendMessage, messageMetadata, onTypingStatus, isTyping, onVoiceTranscriptFinal]);
 
   // Use message directly since voice transcript is already included
   const displayMessage = message;

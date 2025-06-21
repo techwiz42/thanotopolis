@@ -10,12 +10,17 @@ interface VoiceState {
   isSTTActive: boolean;
   isTTSActive: boolean;
   isSTTConnecting: boolean;
+  detectedLanguage: string | null;
+  languageConfidence: number;
+  isAutoDetecting: boolean;
+  isManualOverride: boolean;
 }
 
 interface UseVoiceProps {
   conversationId: string;
   onTranscript?: (transcript: string, isFinal: boolean, speechFinal?: boolean) => void;
   languageCode?: string;
+  onLanguageAutoUpdate?: (detectedLanguage: string) => void;
 }
 
 interface UseVoiceReturn extends VoiceState {
@@ -23,9 +28,11 @@ interface UseVoiceReturn extends VoiceState {
   toggleTTS: () => void;
   speakText: (text: string) => Promise<void>;
   stopSpeaking: () => void;
+  currentAudio: HTMLAudioElement | null;
+  setManualOverride: () => void;
 }
 
-export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoiceProps): UseVoiceReturn => {
+export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguageAutoUpdate }: UseVoiceProps): UseVoiceReturn => {
   const { token } = useAuth();
   const { toast } = useToast();
   
@@ -34,7 +41,11 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
     isTTSEnabled: false,
     isSTTActive: false,
     isTTSActive: false,
-    isSTTConnecting: false
+    isSTTConnecting: false,
+    detectedLanguage: null,
+    languageConfidence: 0,
+    isAutoDetecting: false,
+    isManualOverride: false
   });
 
   // Refs for managing resources
@@ -56,8 +67,28 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
       setVoiceState(prev => ({ 
         ...prev, 
         isSTTActive: isConnected && prev.isSTTEnabled,
-        isSTTConnecting: !isConnected && prev.isSTTEnabled
+        isSTTConnecting: !isConnected && prev.isSTTEnabled,
+        isAutoDetecting: isConnected && prev.isSTTEnabled && (languageCode === 'auto' || !languageCode)
       }));
+    },
+    onLanguageDetected: (language: string, confidence: number) => {
+      console.log('Language detected:', language, 'with confidence:', confidence);
+      setVoiceState(prev => ({ 
+        ...prev, 
+        detectedLanguage: language,
+        languageConfidence: confidence,
+        isAutoDetecting: prev.isSTTActive && (languageCode === 'auto' || !languageCode)
+      }));
+
+      // Auto-update language selector if confidence is high and we're in auto-detection mode
+      // Temporarily lowered threshold from 0.8 to 0.6 for testing
+      if (confidence >= 0.6 && 
+          (languageCode === 'auto' || !languageCode) && 
+          onLanguageAutoUpdate && 
+          !voiceState.isManualOverride) {
+        console.log('High confidence language detection, auto-updating language selector to:', language);
+        onLanguageAutoUpdate(language);
+      }
     },
     onError: (error: string) => {
       console.error('STT Error:', error);
@@ -70,7 +101,8 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
         ...prev, 
         isSTTEnabled: false,
         isSTTActive: false,
-        isSTTConnecting: false
+        isSTTConnecting: false,
+        isAutoDetecting: false
       }));
     }
   }), [token, languageCode, onTranscript, toast]);
@@ -222,12 +254,13 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
     }
 
     try {
-      setVoiceState(prev => ({ ...prev, isTTSActive: true }));
-
-      // Stop any currently playing audio
+      // Stop any currently playing audio BEFORE setting active state
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
+        currentAudioRef.current = null;
       }
+      
+      setVoiceState(prev => ({ ...prev, isTTSActive: true }));
 
       const response = await fetch('/api/voice/tts/stream', {
         method: 'POST',
@@ -288,6 +321,15 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
     setVoiceState(prev => ({ ...prev, isTTSActive: false }));
   }, []);
 
+  // Set manual override flag
+  const setManualOverride = useCallback(() => {
+    setVoiceState(prev => ({ 
+      ...prev, 
+      isManualOverride: true,
+      isAutoDetecting: false
+    }));
+  }, []);
+
   // Handle language changes while STT is enabled
   const lastLanguageRef = useRef<string | undefined>(languageCode);
   useEffect(() => {
@@ -341,6 +383,8 @@ export const useVoice = ({ conversationId, onTranscript, languageCode }: UseVoic
     toggleSTT,
     toggleTTS,
     speakText,
-    stopSpeaking
+    stopSpeaking,
+    currentAudio: currentAudioRef.current,
+    setManualOverride
   };
 };

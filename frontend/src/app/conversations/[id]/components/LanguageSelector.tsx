@@ -13,6 +13,9 @@ interface LanguageSelectorProps {
   onChange: (language: string) => void;
   disabled?: boolean;
   className?: string;
+  isAutoDetected?: boolean;
+  detectedLanguage?: string | null;
+  onManualOverride?: () => void;
 }
 
 // Language codes in standard locale format (e.g., fr-FR)
@@ -65,25 +68,62 @@ const SUPPORTED_LANGUAGES = [
   // Note: Removed some Baltic languages not confirmed in Nova-2 docs
 ];
 
-export function LanguageSelector({ value, onChange, disabled, className }: LanguageSelectorProps) {
+export function LanguageSelector({ 
+  value, 
+  onChange, 
+  disabled, 
+  className,
+  isAutoDetected = false,
+  detectedLanguage = null,
+  onManualOverride
+}: LanguageSelectorProps) {
   // Find the current language name for display
   const currentLanguage = SUPPORTED_LANGUAGES.find(lang => lang.code === value);
   
+  // Handle language change with manual override notification
+  const handleLanguageChange = (newLanguage: string) => {
+    // If this is a manual change (different from auto-detected), notify parent
+    if (isAutoDetected && detectedLanguage && newLanguage !== detectedLanguage && onManualOverride) {
+      onManualOverride();
+    }
+    onChange(newLanguage);
+  };
+  
   return (
     <div className={`flex items-center space-x-2 ${className}`}>
-      <Globe className="h-4 w-4 text-gray-700" />
+      <Globe className={`h-4 w-4 ${isAutoDetected ? 'text-blue-600' : 'text-gray-700'}`} />
       <Select
         value={value}
-        onValueChange={onChange}
+        onValueChange={handleLanguageChange}
         disabled={disabled}
       >
-        <SelectTrigger className="w-48 bg-white border-gray-300 text-gray-900">
+        <SelectTrigger className={`w-48 bg-white text-gray-900 transition-colors ${
+          isAutoDetected 
+            ? 'border-blue-300 ring-1 ring-blue-100 bg-blue-50' 
+            : 'border-gray-300'
+        }`}>
           <SelectValue placeholder="Select language" />
         </SelectTrigger>
         <SelectContent className="bg-white border border-gray-200 shadow-lg max-h-60 overflow-y-auto">
+          {/* Add auto-detect option */}
+          <SelectItem value="auto" className="bg-white hover:bg-gray-100">
+            <div className="flex items-center space-x-2">
+              <Globe className="h-3 w-3 text-blue-600" />
+              <span>Auto-detect language</span>
+            </div>
+          </SelectItem>
+          
+          {/* Separator */}
+          <div className="border-t border-gray-200 my-1" />
+          
           {SUPPORTED_LANGUAGES.map((lang) => (
             <SelectItem key={lang.code} value={lang.code} className="bg-white hover:bg-gray-100">
-              {lang.name}
+              <div className="flex items-center justify-between w-full">
+                <span>{lang.name}</span>
+                {isAutoDetected && detectedLanguage === lang.code && (
+                  <span className="text-xs text-blue-600 ml-2">• Auto-detected</span>
+                )}
+              </div>
             </SelectItem>
           ))}
         </SelectContent>

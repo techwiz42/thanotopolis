@@ -21,6 +21,8 @@ export interface StreamingSttOptions {
   onConnectionChange?: (isConnected: boolean) => void;
   /** Callback when error occurs */
   onError?: (error: string) => void;
+  /** Callback when language is detected */
+  onLanguageDetected?: (language: string, confidence: number) => void;
 }
 
 /**
@@ -37,6 +39,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     onUtteranceEnd: () => {},
     onConnectionChange: () => {},
     onError: () => {},
+    onLanguageDetected: () => {},
   };
 
   // Merge options
@@ -83,9 +86,13 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
             const isFinal = data.is_final || false;
             const speechFinal = data.speech_final || false;
             
-            // Log for debugging
+            // Handle language detection
             if (data.detected_language) {
-              console.log(`Detected language: ${data.detected_language}`);
+              console.log(`Detected language: ${data.detected_language}, confidence: ${data.language_confidence || 'unknown'}`);
+              
+              // Call language detection callback
+              const confidence = data.language_confidence || data.confidence || 0.5;
+              opts.onLanguageDetected(data.detected_language, confidence);
             }
             
             // For now, treat speech_final as the main final indicator
@@ -259,11 +266,12 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
       
       // Enhanced audio activity tracking for multilingual support
       let recentAudioFramesWithActivity = 0;
-      const RECENT_AUDIO_THRESHOLD = 5; // Increased frames to keep sending after detecting activity
+      const RECENT_AUDIO_THRESHOLD = 10; // Increased to capture more initial audio
       let lastSentTime = 0;
-      const MIN_SEND_INTERVAL = 40; // Reduced for better responsiveness (was 50ms)
+      const MIN_SEND_INTERVAL = 20; // Reduced for better initial syllable capture
       let consecutiveFramesWithoutAudio = 0;
       const MAX_SILENT_FRAMES = 100; // Send heartbeat audio every N silent frames to keep connection alive
+      let isFirstAudioFrame = true; // Track first audio detection
       
       processorRef.current.onaudioprocess = (e) => {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -288,12 +296,19 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
         rmsLevel = Math.sqrt(rmsLevel / inputData.length);
         
         // Use RMS for better noise detection - critical for different languages
-        hasAudio = rmsLevel > 0.003 || maxAmplitude > 0.005; // Lower thresholds for better sensitivity
+        // Lower thresholds for first frames to capture initial syllables
+        const rmsThreshold = isFirstAudioFrame ? 0.001 : 0.003;
+        const amplitudeThreshold = isFirstAudioFrame ? 0.003 : 0.005;
+        hasAudio = rmsLevel > rmsThreshold || maxAmplitude > amplitudeThreshold;
         
         // Update activity trackers
         if (hasAudio) {
           recentAudioFramesWithActivity = RECENT_AUDIO_THRESHOLD;
           consecutiveFramesWithoutAudio = 0;
+          if (isFirstAudioFrame) {
+            isFirstAudioFrame = false; // Reset after first audio detection
+            console.log('First audio detected, using lower thresholds');
+          }
         } else {
           recentAudioFramesWithActivity = Math.max(0, recentAudioFramesWithActivity - 1);
           consecutiveFramesWithoutAudio++;

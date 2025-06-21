@@ -615,6 +615,257 @@ capabilities = [
 - **Conversation Agent ID**: conversation_agents table requires agent_id but this should reference agent_type directly for dynamic discovery
 - **Active Bug**: Starting new conversations fails with `null value in column "agent_id" of relation "conversation_agents" violates not-null constraint` - the system is trying to insert conversation_agents with agent_id=None instead of using dynamic agent discovery
 
+## Issue 7: Voice Transcript Persistence After Message Send (December 21, 2024)
+
+### Problem Identified
+After sending a message via Speech-to-Text (STT), the voice transcript text would persist and appear in the next input box. This occurred when messages were sent via:
+- Send button click
+- Enter key press
+- Auto-send after 5 seconds of STT inactivity
+
+### Root Cause
+The `MessageInput` component cleared its local state after sending a message but didn't notify the parent component to clear the voice transcript props (`voiceTranscript` and `pendingVoiceText`). The parent component continued passing the old transcript values to the input, causing them to reappear.
+
+### Solution Implemented
+
+#### MessageInput Component (`/frontend/src/app/conversations/[id]/components/MessageInput.tsx`)
+Added calls to `onVoiceTranscriptFinal('')` when sending messages to clear the parent's voice transcript state:
+
+1. **Manual Send (Button/Enter)**:
+```typescript
+const handleSend = useCallback(() => {
+  // ... send message logic ...
+  
+  // Clear voice transcript in parent component
+  if (onVoiceTranscriptFinal) {
+    onVoiceTranscriptFinal('');
+  }
+}, [...dependencies, onVoiceTranscriptFinal]);
+```
+
+2. **Auto-Send (5-second timeout)**:
+```typescript
+// In the auto-send useEffect
+if (trimmedMessage) {
+  onSendMessage(trimmedMessage, messageMetadata || undefined);
+  // ... clear local state ...
+  
+  // Clear voice transcript in parent component
+  if (onVoiceTranscriptFinal) {
+    onVoiceTranscriptFinal('');
+  }
+}
+```
+
+### How It Works
+- Parent component (`page.tsx`) has `handleVoiceTranscriptFinal` that clears all transcript-related state
+- MessageInput now calls this handler whenever a message is sent
+- This ensures voice transcript is cleared from both child and parent components
+- Prevents transcript from appearing in the next input box
+
+### Testing
+1. Enable STT and speak a message
+2. Send the message (via button, Enter, or wait for auto-send)
+3. Verify the input box is completely clear
+4. Speak again - only new transcript should appear, not old text
+
+## Language Auto-Detection Enhancement
+
+### Overview
+The STT system includes sophisticated language auto-detection capabilities that provide real-time feedback to users about detected languages and confidence levels. This feature is fully documented in `/frontend/STT_LANGUAGE_AUTO_DETECTION_PROJECT.md`.
+
+### Key Features Implemented
+1. **Language Detection Indicator**: Visual display of detected language with confidence percentage
+2. **Auto-Update Language Selector**: Automatically updates to detected language when confidence ≥ 80%
+3. **Manual Override Protection**: Users can override auto-detection and system respects their choice
+4. **Confidence-Based Visual Feedback**: Color-coded indicators (green/amber/red) for detection reliability
+
+### Related Files
+- `/frontend/STT_LANGUAGE_AUTO_DETECTION_PROJECT.md` - Complete project documentation
+- `/frontend/src/app/conversations/[id]/components/LanguageDetectionIndicator.tsx` - Detection display component
+- `/frontend/src/app/conversations/[id]/components/LanguageSelector.tsx` - Enhanced language selector
+- `/frontend/src/services/voice/StreamingSpeechToTextService.ts` - STT service with language detection
+- `/frontend/src/app/conversations/[id]/hooks/useVoice.ts` - Voice hook with auto-detection state
+
+### Current Status
+- Phase 1: ✅ COMPLETED - Basic auto-detection with UI feedback
+- Phase 2: Ready for implementation - Smart language switching
+- Phase 3: Planned - Hybrid detection with Whisper integration
+
+## Issue 8: Input Box Not Clearing After Message Send (December 21, 2024)
+
+### Problem Identified
+After sending a message that contained voice transcript text (from STT), the input box would retain the text instead of clearing. This occurred in all send scenarios:
+- Send button click
+- Enter key press  
+- Auto-send after 5 seconds of STT inactivity
+
+### Root Cause
+The voice transcript effect in MessageInput component had a race condition where the ref was being updated before checking if the transcript was cleared. This prevented the component from detecting when the voice transcript was explicitly cleared by the parent.
+
+### Solution Implemented
+Modified the voice transcript effect in `/frontend/src/app/conversations/[id]/components/MessageInput.tsx` to properly handle transcript clearing:
+
+```typescript
+// Handle voice transcript updates
+useEffect(() => {
+  // Always update when voice transcript changes
+  if (voiceTranscript) {
+    // Set the message to the voice transcript
+    setMessage(voiceTranscript);
+    
+    // Auto-focus when voice input is active
+    if (textareaRef.current && isVoiceActive) {
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(voiceTranscript.length, voiceTranscript.length);
+    }
+  } else if (voiceTranscript === '' && lastVoiceTranscriptRef.current !== '') {
+    // Clear message when voice transcript is explicitly cleared
+    setMessage('');
+  }
+  
+  // Update the ref after processing
+  lastVoiceTranscriptRef.current = voiceTranscript;
+}, [voiceTranscript, isVoiceActive]);
+```
+
+### How It Works
+1. Parent component clears voice transcript by calling `handleVoiceTranscriptFinal('')`
+2. This sets `voiceTranscript` prop to empty string
+3. MessageInput effect detects the transition from non-empty to empty transcript
+4. Message state is cleared, making the input box empty
+5. The ref is updated after processing to avoid race conditions
+
+### Testing
+1. Enable STT and speak a message
+2. Send the message using any method
+3. Verify input box is completely cleared
+4. Type or speak new content - should start fresh without old text
+
+## Issue 9: Enhanced Speech-to-Text Reliability (December 21, 2024)
+
+### Problems Identified
+1. **First syllables cut off**: Initial audio detection threshold was too high, missing beginning of speech
+2. **Only last utterance kept**: Transcript was being replaced instead of accumulated across multiple utterances  
+3. **Input box not clearing**: After sending messages, voice transcript would persist in next input
+
+### Root Causes
+1. **Audio Detection Sensitivity**: High thresholds (0.003 RMS, 0.005 amplitude) missed soft-spoken beginnings
+2. **Transcript Replacement Logic**: System replaced entire transcript instead of accumulating utterances
+3. **State Synchronization**: Race conditions between voice transcript clearing and effect updates
+
+### Solutions Implemented
+
+#### 1. Improved Initial Audio Capture
+**File**: `/frontend/src/services/voice/StreamingSpeechToTextService.ts`
+
+**Enhanced Audio Detection**:
+- Lower initial thresholds for first audio frames (0.001 RMS, 0.003 amplitude) 
+- Increased activity threshold from 5 to 10 frames to capture more initial audio
+- Reduced minimum send interval from 40ms to 20ms for better responsiveness
+- Added first-frame detection with logging
+
+**Key Changes**:
+```typescript
+// Track first audio detection for lower thresholds
+let isFirstAudioFrame = true;
+
+// Lower thresholds for first frames to capture initial syllables
+const rmsThreshold = isFirstAudioFrame ? 0.001 : 0.003;
+const amplitudeThreshold = isFirstAudioFrame ? 0.003 : 0.005;
+hasAudio = rmsLevel > rmsThreshold || maxAmplitude > amplitudeThreshold;
+
+// Reset after first audio detection
+if (hasAudio && isFirstAudioFrame) {
+  isFirstAudioFrame = false;
+  console.log('First audio detected, using lower thresholds');
+}
+```
+
+#### 2. Utterance Accumulation System
+**File**: `/frontend/src/app/conversations/[id]/page.tsx`
+
+**Intelligent Transcript Handling**:
+- Accumulate complete utterances instead of replacing
+- Smart punctuation insertion between utterances
+- Proper spacing and sentence boundaries
+- Enhanced logging for debugging
+
+**Key Logic**:
+```typescript
+if (speechFinal && isFinal) {
+  // Add this utterance to accumulated transcript with proper spacing
+  const currentAccumulated = accumulatedTranscriptRef.current.trim();
+  const newTranscript = transcript.trim();
+  
+  if (currentAccumulated && !currentAccumulated.endsWith('.') && !currentAccumulated.endsWith('!') && !currentAccumulated.endsWith('?')) {
+    // Add punctuation if missing
+    accumulatedTranscriptRef.current = currentAccumulated + '. ' + newTranscript;
+  } else if (currentAccumulated) {
+    // Just add space
+    accumulatedTranscriptRef.current = currentAccumulated + ' ' + newTranscript;
+  } else {
+    // First utterance
+    accumulatedTranscriptRef.current = newTranscript;
+  }
+}
+```
+
+#### 3. Enhanced Input Clearing
+**File**: `/frontend/src/app/conversations/[id]/components/MessageInput.tsx`
+
+**Improved State Management**:
+- Added change detection to prevent unnecessary effect runs
+- Enhanced debugging logs for tracking state transitions
+- Added forced focus restoration after sending
+- Proper parent-child state synchronization
+
+**Key Improvements**:
+```typescript
+// Skip if voice transcript hasn't changed
+if (voiceTranscript === lastVoiceTranscriptRef.current) {
+  return;
+}
+
+// Enhanced send handler with debugging
+console.log('[MessageInput] handleSend - sending message:', trimmedMessage);
+// Clear all state and force focus restoration
+if (textareaRef.current) {
+  setTimeout(() => {
+    textareaRef.current?.focus();
+  }, 100);
+}
+```
+
+### Behavior Changes
+
+#### Before Fixes:
+- ❌ First syllables often missed or cut off
+- ❌ Each new utterance replaced previous ones 
+- ❌ Input box retained old transcript after sending
+- ❌ Inconsistent audio detection sensitivity
+
+#### After Fixes:
+- ✅ **Better Initial Capture**: Lower thresholds capture soft-spoken beginnings
+- ✅ **Utterance Accumulation**: Multiple speech segments combine intelligently
+- ✅ **Smart Punctuation**: Automatic sentence boundaries and spacing
+- ✅ **Clean Input Clearing**: Input box properly clears after all send methods
+- ✅ **Enhanced Debugging**: Comprehensive logging for troubleshooting
+
+### Testing Scenarios
+1. **Initial Syllable Capture**: Speak softly at beginning - should capture full words
+2. **Multiple Utterances**: Say "Hello there" pause "How are you today" - should accumulate as "Hello there. How are you today"
+3. **Send and Clear**: After sending, input should be completely empty for next use
+4. **Manual Send**: Click send button - input clears immediately
+5. **Auto-send**: Wait 5 seconds during STT - message sends and input clears
+6. **Enter Key Send**: Press Enter - input clears immediately
+
+### Performance Impact
+- Minimal CPU increase from enhanced audio processing
+- Better user experience with more reliable speech capture
+- Reduced frustration from missed speech beginnings
+- Improved overall STT accuracy and usability
+
 ## Future Improvements
 1. Consider implementing a message cache to avoid reloading messages
 2. Add reconnection status indicator for users

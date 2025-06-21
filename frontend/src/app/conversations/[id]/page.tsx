@@ -13,6 +13,7 @@ import MessageList from '@/app/conversations/[id]/components/MessageList';
 import MessageInput from '@/app/conversations/[id]/components/MessageInput';
 import VoiceControls from '@/app/conversations/[id]/components/VoiceControls';
 import { LanguageSelector } from '@/app/conversations/[id]/components/LanguageSelector';
+import { LanguageDetectionIndicator } from '@/app/conversations/[id]/components/LanguageDetectionIndicator';
 import { TypingIndicator } from '@/app/conversations/[id]/components/TypingIndicator';
 import { StreamingIndicator } from '@/app/conversations/[id]/components/StreamingIndicator';
 
@@ -79,6 +80,12 @@ export default function ConversationPage() {
       }
     }, 150); // Slightly longer delay to ensure STT restart is complete
   }, []);
+
+  // Handle auto-detected language updates
+  const handleLanguageAutoUpdate = useCallback((detectedLanguage: string) => {
+    console.log('Auto-updating language to:', detectedLanguage);
+    handleLanguageChange(detectedLanguage);
+  }, [handleLanguageChange]);
   
   // Streaming tokens handling
   const { streamingState, handleToken, resetStreamingForAgent } = useStreamingTokens();
@@ -113,13 +120,14 @@ export default function ConversationPage() {
   const lastFinalTranscriptRef = useRef<string>('');
   const lastInterimTranscriptRef = useRef<string>('');
 
-  // Voice transcript handler - Accumulate across utterances
+  // Voice transcript handler - Accumulate utterances across speech sessions
   const handleVoiceTranscript = useCallback((transcript: string, isFinal: boolean, speechFinal?: boolean) => {
     console.log('=== Transcript Event ===', { 
       transcript: transcript.substring(0, 50) + '...', // Log first 50 chars
       isFinal, 
       speechFinal,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      accumulated: accumulatedTranscriptRef.current.substring(0, 30) + '...'
     });
     
     if (!transcript.trim()) {
@@ -127,54 +135,62 @@ export default function ConversationPage() {
     }
     
     if (speechFinal && isFinal) {
-      // Speech is final - this utterance is complete, append to accumulated
-      console.log('Speech final - appending to accumulated transcript');
+      // Speech is final - this utterance is complete, add to accumulated text
+      console.log('Speech final - adding to accumulated transcript');
       
-      // Only append if this transcript is different from the last final
-      if (transcript !== lastFinalTranscriptRef.current) {
-        if (accumulatedTranscriptRef.current) {
-          accumulatedTranscriptRef.current += ' ' + transcript;
-        } else {
-          accumulatedTranscriptRef.current = transcript;
-        }
+      // Add this utterance to the accumulated transcript with proper spacing
+      const currentAccumulated = accumulatedTranscriptRef.current.trim();
+      const newTranscript = transcript.trim();
+      
+      if (currentAccumulated && !currentAccumulated.endsWith('.') && !currentAccumulated.endsWith('!') && !currentAccumulated.endsWith('?')) {
+        // Add punctuation if missing
+        accumulatedTranscriptRef.current = currentAccumulated + '. ' + newTranscript;
+      } else if (currentAccumulated) {
+        // Just add space
+        accumulatedTranscriptRef.current = currentAccumulated + ' ' + newTranscript;
+      } else {
+        // First utterance
+        accumulatedTranscriptRef.current = newTranscript;
       }
       
       lastFinalTranscriptRef.current = '';
       lastInterimTranscriptRef.current = '';
       setVoiceTranscript(accumulatedTranscriptRef.current);
       setPendingVoiceText('');
+      
+      console.log('Accumulated transcript now:', accumulatedTranscriptRef.current);
     } else if (isFinal) {
-      // Final but not speech final - update current utterance
+      // Final but not speech final - update current utterance  
       console.log('Final transcript (not speech final)');
       
       // Only update if different from last final
       if (transcript !== lastFinalTranscriptRef.current) {
         lastFinalTranscriptRef.current = transcript;
         
-        // Show accumulated + current final transcript
-        const displayTranscript = accumulatedTranscriptRef.current 
-          ? accumulatedTranscriptRef.current + ' ' + transcript
-          : transcript;
+        // Show accumulated transcript plus this final utterance
+        const currentAccumulated = accumulatedTranscriptRef.current.trim();
+        const displayText = currentAccumulated ? 
+          (currentAccumulated + (currentAccumulated.endsWith('.') || currentAccumulated.endsWith('!') || currentAccumulated.endsWith('?') ? ' ' : '. ') + transcript) :
+          transcript;
         
-        setVoiceTranscript(displayTranscript);
+        setVoiceTranscript(displayText);
         setPendingVoiceText('');
       }
     } else {
-      // Interim transcript - only update if different
+      // Interim transcript - show accumulated plus current interim
       if (transcript !== lastInterimTranscriptRef.current) {
         lastInterimTranscriptRef.current = transcript;
         
-        const displayTranscript = accumulatedTranscriptRef.current 
-          ? accumulatedTranscriptRef.current + ' ' + transcript
-          : transcript;
-        
-        setPendingVoiceText(displayTranscript);
+        // Show as pending text (will be combined on display)
+        setPendingVoiceText(transcript);
       }
     }
   }, []); // No dependencies to avoid stale closures
 
   // Handle final voice transcript from MessageInput
   const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {
+    console.log('[ConversationPage] handleVoiceTranscriptFinal called with:', finalTranscript);
+    
     // Clear the voice transcript state since it's now been committed to the message
     setVoiceTranscript('');
     setPendingVoiceText('');
@@ -182,6 +198,8 @@ export default function ConversationPage() {
     accumulatedTranscriptRef.current = '';
     lastFinalTranscriptRef.current = '';
     lastInterimTranscriptRef.current = '';
+    
+    console.log('[ConversationPage] Voice transcript state cleared');
   }, []);
 
   // Using the voice hook
@@ -191,14 +209,21 @@ export default function ConversationPage() {
     isSTTActive,
     isTTSActive,
     isSTTConnecting,
+    detectedLanguage,
+    languageConfidence,
+    isAutoDetecting,
+    isManualOverride,
     toggleSTT,
     toggleTTS,
     speakText,
-    stopSpeaking
+    stopSpeaking,
+    currentAudio,
+    setManualOverride
   } = useVoice({
     conversationId,
     onTranscript: handleVoiceTranscript,
-    languageCode: selectedLanguage
+    languageCode: selectedLanguage,
+    onLanguageAutoUpdate: handleLanguageAutoUpdate
   });
   
   // Use refs to avoid stale closure issues with TTS
@@ -318,9 +343,19 @@ export default function ConversationPage() {
             // Mark as completed immediately to prevent duplicates
             completedMessagesRef.current.add(message.id);
             
+            // Cancel any existing TTS timeout for this message
+            if (pendingTTSRef.current[message.id]) {
+              clearTimeout(pendingTTSRef.current[message.id]);
+            }
+            
             // Wait a moment for streaming to complete, then speak
-            setTimeout(() => {
-              currentSpeakTextFn(message.content);
+            pendingTTSRef.current[message.id] = setTimeout(() => {
+              // Double-check TTS is still enabled and we haven't already started playing
+              if (currentTTSEnabledRef.current && !currentAudio) {
+                currentSpeakTextFn(message.content);
+              }
+              // Clean up the timeout reference
+              delete pendingTTSRef.current[message.id];
             }, 800);
             
             // Clean up after a minute
@@ -457,20 +492,26 @@ export default function ConversationPage() {
         <h1 className="text-2xl font-semibold">{conversation.title}</h1>
         
         <div className="flex items-center space-x-4">
+          {/* Language Detection Indicator - Always visible when STT is enabled */}
+          {isSTTEnabled && (
+            <LanguageDetectionIndicator
+              detectedLanguage={detectedLanguage}
+              confidence={languageConfidence}
+              isAutoDetecting={isAutoDetecting}
+              isManualOverride={isManualOverride}
+            />
+          )}
+          
           {/* Language Selector - Only visible when STT is enabled */}
           {isSTTEnabled && (
             <LanguageSelector
               value={selectedLanguage}
               onChange={handleLanguageChange}
               disabled={false}
+              isAutoDetected={!isManualOverride && !!detectedLanguage}
+              detectedLanguage={detectedLanguage}
+              onManualOverride={setManualOverride}
             />
-          )}
-          
-          {/* Debug info for language selector */}
-          {isSTTEnabled && (
-            <div className="text-xs text-gray-400">
-              Lang: {selectedLanguage} | Active: {isSTTActive ? '✓' : '✗'} | Disabled: {isSTTActive ? 'Yes' : 'No'}
-            </div>
           )}
           
           {/* Voice Controls */}
