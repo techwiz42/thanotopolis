@@ -84,8 +84,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       // Temporarily lowered threshold from 0.8 to 0.6 for testing
       if (confidence >= 0.6 && 
           (languageCode === 'auto' || !languageCode) && 
-          onLanguageAutoUpdate && 
-          !voiceState.isManualOverride) {
+          onLanguageAutoUpdate) {
         console.log('High confidence language detection, auto-updating language selector to:', language);
         onLanguageAutoUpdate(language);
       }
@@ -105,18 +104,23 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
         isAutoDetecting: false
       }));
     }
-  }), [token, languageCode, onTranscript, toast]);
+  }), [token, languageCode, onTranscript, toast, onLanguageAutoUpdate]);
 
   // Initialize streaming STT service with current options
   const sttService = useStreamingSpeechToText(sttOptions);
 
-  // Cleanup function
+
+  // Store sttService in a ref to avoid cleanup dependency issues
+  const sttServiceRef = useRef(sttService);
+  sttServiceRef.current = sttService;
+
+  // Cleanup function - use ref to avoid dependency issues
   const cleanup = useCallback(() => {
     console.log('Voice hook cleanup called');
-    // Stop STT service
-    if (sttService.isListening) {
+    // Stop STT service using ref
+    if (sttServiceRef.current?.isListening) {
       console.log('Stopping STT service from cleanup');
-      sttService.stopListening();
+      sttServiceRef.current.stopListening();
     }
 
     // Stop any playing audio
@@ -124,7 +128,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
-  }, []); // Remove sttService dependency to prevent constant re-runs
+  }, []); // Empty dependencies - use refs instead
 
   // Initialize STT service
   const initializeSTT = useCallback(async () => {
@@ -140,7 +144,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
     try {
       setVoiceState(prev => ({ ...prev, isSTTConnecting: true }));
       
-      await sttService.startListening();
+      await sttServiceRef.current.startListening();
       
       // Don't check isConnected immediately - connection happens asynchronously
       // The onConnectionChange callback will update the state when connection is ready
@@ -157,13 +161,13 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       setVoiceState(prev => ({ ...prev, isSTTConnecting: false }));
       return false;
     }
-  }, [token, toast, sttService]);
+  }, [token, toast]); // Remove sttService dependency
 
   // Stop STT
   const stopSTT = useCallback(() => {
     console.log('Stopping STT...');
     
-    sttService.stopListening();
+    sttServiceRef.current.stopListening();
 
     setVoiceState(prev => ({ 
       ...prev, 
@@ -171,7 +175,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
     }));
     
     console.log('STT stopped');
-  }, [sttService]);
+  }, []); // Remove sttService dependency
 
   // Toggle STT
   const toggleSTT = useCallback(async () => {
@@ -194,7 +198,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
           return { ...prev, isSTTEnabled: false };
         } else {
           // Enable STT - check if already listening to prevent duplicates
-          if (sttService.isListening) {
+          if (sttServiceRef.current.isListening) {
             console.log('STT already listening, skipping initialization...');
             isTogglingSTTRef.current = false;
             return { ...prev, isSTTEnabled: true };
@@ -219,7 +223,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       console.error('Error in toggleSTT:', error);
       isTogglingSTTRef.current = false;
     }
-  }, [initializeSTT, stopSTT, sttService.isListening]);
+  }, [initializeSTT, stopSTT]);
 
   // Update state based on service state
   useEffect(() => {
@@ -342,7 +346,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       console.log('Language changed from', lastLanguageRef.current, 'to', languageCode, '- restarting STT connection');
       
       // Stop current connection and ensure cleanup
-      sttService.stopListening();
+      sttServiceRef.current.stopListening();
       
       // Wait for cleanup and state updates, then restart with new language
       const restartSTT = async () => {
@@ -350,7 +354,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
         let attempts = 0;
         const maxAttempts = 10;
         
-        while (sttService.isListening && attempts < maxAttempts) {
+        while (sttServiceRef.current.isListening && attempts < maxAttempts) {
           console.log(`Waiting for STT to stop... attempt ${attempts + 1}`);
           await new Promise(resolve => setTimeout(resolve, 100));
           attempts++;
