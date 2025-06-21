@@ -85,7 +85,7 @@ export const getOptimalAudioConstraints = (): MediaStreamConstraints => {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
-      // Request specific sample rate for Deepgram
+      // Request specific sample rate for Soniox
       sampleSize: 16
     },
     video: false

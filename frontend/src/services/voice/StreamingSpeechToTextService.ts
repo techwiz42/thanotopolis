@@ -114,7 +114,7 @@ export interface StreamingSttOptions {
 }
 
 /**
- * Streaming STT service using Deepgram via WebSocket
+ * Streaming STT service using Soniox via WebSocket
  */
 export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
   // Default options
@@ -582,7 +582,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
           echoCancellation: false, // Allow computer audio to be detected
           noiseSuppression: false, // Disable to preserve speech characteristics for language detection
           autoGainControl: true,
-          sampleRate: 16000, // Explicitly request 16kHz to match Deepgram requirements
+          sampleRate: 16000, // Explicitly request 16kHz to match Soniox requirements
           // Optimized for multilingual support
           advanced: [
             { autoGainControl: { exact: true } },

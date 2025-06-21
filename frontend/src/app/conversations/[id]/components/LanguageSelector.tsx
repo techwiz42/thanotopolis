@@ -19,8 +19,8 @@ interface LanguageSelectorProps {
 }
 
 // Language codes in standard locale format (e.g., fr-FR)
-// The backend will map these to Deepgram's expected format (e.g., fr)
-// Based on confirmed Deepgram Nova-2 support
+// The backend will map these to Soniox's expected format (e.g., fr)
+// Based on Soniox language support
 const SUPPORTED_LANGUAGES = [
   // English variants (Nova-3 & Nova-2 supported)
   { code: 'en-US', name: 'English (US)' },

@@ -75,7 +75,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const handleVoiceTranscriptFinal = useCallback((finalTranscript: string) => {
     if (finalTranscript.trim()) {
       // Simply replace the message with the final transcript
-      // Deepgram already provides the complete utterance
+      // Soniox already provides the complete utterance
       setMessage(finalTranscript);
       setPendingVoiceTranscript('');
       

@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "YOU_GOT_NOTHIN")
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "NOT_SET")
     DEEPGRAM_API_KEY: str = os.getenv("DEEPGRAM_API_KEY", "NOT_SET")
+    SONIOX_API_KEY: str = os.getenv("SONIOX_API_KEY", "NOT_SET")
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "NOT_SET")
 
     DEFAULT_AGENT_MODEL: str = "gpt-4o-mini"

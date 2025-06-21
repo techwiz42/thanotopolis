@@ -175,11 +175,11 @@ class TestStreamingSTTUnit:
         mock_file.content_type = "audio/wav"
         mock_file.filename = "test.wav"
         
-        with patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
+        with patch('app.api.streaming_stt.soniox_service') as mock_soniox, \
              patch('app.api.streaming_stt.usage_service') as mock_usage_service:
             
-            mock_deepgram.is_available.return_value = True
-            mock_deepgram.transcribe_file = AsyncMock(return_value={
+            mock_soniox.is_available.return_value = True
+            mock_soniox.transcribe_file = AsyncMock(return_value={
                 "success": True,
                 "transcript": "Hello world test transcript",
                 "confidence": 0.95,
@@ -209,7 +209,7 @@ class TestStreamingSTTUnit:
         mock_usage_service.record_stt_usage.assert_called_once()
         usage_call = mock_usage_service.record_stt_usage.call_args
         assert usage_call[1]["word_count"] == 4  # "Hello world test transcript"
-        assert usage_call[1]["service_provider"] == "deepgram"
+        assert usage_call[1]["service_provider"] == "soniox"
 
     @pytest.mark.asyncio
     async def test_transcribe_audio_file_service_unavailable(self):
@@ -218,8 +218,8 @@ class TestStreamingSTTUnit:
         mock_db = AsyncMock(spec=AsyncSession)
         mock_file = Mock(spec=UploadFile)
         
-        with patch('app.api.streaming_stt.deepgram_service') as mock_deepgram:
-            mock_deepgram.is_available.return_value = False
+        with patch('app.api.streaming_stt.soniox_service') as mock_soniox:
+            mock_soniox.is_available.return_value = False
             
             with pytest.raises(HTTPException) as exc_info:
                 await transcribe_audio_file(
@@ -246,11 +246,11 @@ class TestStreamingSTTUnit:
         mock_file.content_type = "audio/wav"
         mock_file.filename = "silent.wav"
         
-        with patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
+        with patch('app.api.streaming_stt.soniox_service') as mock_soniox, \
              patch('app.api.streaming_stt.usage_service') as mock_usage_service:
             
-            mock_deepgram.is_available.return_value = True
-            mock_deepgram.transcribe_file = AsyncMock(return_value={
+            mock_soniox.is_available.return_value = True
+            mock_soniox.transcribe_file = AsyncMock(return_value={
                 "success": True,
                 "transcript": "",  # Empty transcript
                 "confidence": 0.0,
@@ -294,22 +294,19 @@ class TestStreamingSTTUnit:
     @pytest.mark.asyncio
     async def test_get_stt_status(self):
         """Test STT status endpoint."""
-        with patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
-             patch('app.api.streaming_stt.settings') as mock_settings:
+        with patch('app.api.streaming_stt.soniox_service') as mock_soniox:
             
-            mock_deepgram.is_available.return_value = True
-            mock_settings.DEEPGRAM_MODEL = "nova-2"
-            mock_settings.DEEPGRAM_LANGUAGE = "en"
+            mock_soniox.is_available.return_value = True
             
             # Add some mock connections to stt_manager
             stt_manager.active_connections = {"conn1": {}, "conn2": {}}
             
             result = await get_stt_status()
             
-        assert result["service"] == "deepgram"
+        assert result["service"] == "soniox"
         assert result["available"] is True
-        assert result["model"] == "nova-2"
-        assert result["language"] == "en"
+        assert result["model"] == "soniox-auto"
+        assert result["language"] == "auto-detect"
         assert result["active_connections"] == 2
         assert "timestamp" in result
 
@@ -392,10 +389,10 @@ class TestWebSocketSTTIntegration:
     async def test_websocket_stt_service_unavailable(self, mock_websocket, mock_user, mock_db):
         """Test WebSocket STT when service is unavailable."""
         with patch('app.api.streaming_stt.authenticate_stt_websocket') as mock_auth, \
-             patch('app.api.streaming_stt.deepgram_service') as mock_deepgram:
+             patch('app.api.streaming_stt.soniox_service') as mock_soniox:
             
             mock_auth.return_value = mock_user
-            mock_deepgram.is_available.return_value = False
+            mock_soniox.is_available.return_value = False
             
             await websocket_streaming_stt(
                 websocket=mock_websocket,
@@ -411,11 +408,11 @@ class TestWebSocketSTTIntegration:
     async def test_websocket_stt_successful_connection(self, mock_websocket, mock_user, mock_db):
         """Test successful WebSocket STT connection."""
         with patch('app.api.streaming_stt.authenticate_stt_websocket') as mock_auth, \
-             patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
+             patch('app.api.streaming_stt.soniox_service') as mock_soniox, \
              patch('app.api.streaming_stt.stt_manager') as mock_manager:
             
             mock_auth.return_value = mock_user
-            mock_deepgram.is_available.return_value = True
+            mock_soniox.is_available.return_value = True
             
             connection_id = "test_connection_123"
             mock_manager.connect = AsyncMock(return_value=connection_id)
@@ -447,13 +444,13 @@ class TestWebSocketSTTIntegration:
     async def test_websocket_stt_audio_processing(self, mock_websocket, mock_user, mock_db):
         """Test WebSocket STT audio data processing."""
         with patch('app.api.streaming_stt.authenticate_stt_websocket') as mock_auth, \
-             patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
+             patch('app.api.streaming_stt.soniox_service') as mock_soniox, \
              patch('app.api.streaming_stt.stt_manager') as mock_manager, \
              patch('app.api.streaming_stt.usage_service') as mock_usage_service, \
              patch('app.api.streaming_stt.settings') as mock_settings:
             
             mock_auth.return_value = mock_user
-            mock_deepgram.is_available.return_value = True
+            mock_soniox.is_available.return_value = True
             mock_settings.DEEPGRAM_MODEL = "nova-2"
             
             connection_id = "test_connection_123"
@@ -470,7 +467,7 @@ class TestWebSocketSTTIntegration:
             
             # Mock transcription session
             mock_session = AsyncMock()
-            mock_deepgram.start_live_transcription = AsyncMock(return_value=mock_session)
+            mock_soniox.start_live_transcription = AsyncMock(return_value=mock_session)
             
             mock_usage_service.record_stt_usage = AsyncMock()
             
@@ -488,7 +485,7 @@ class TestWebSocketSTTIntegration:
             )
             
             # Verify transcription session was started
-            mock_deepgram.start_live_transcription.assert_called_once()
+            mock_soniox.start_live_transcription.assert_called_once()
             mock_session.start.assert_called_once()
             mock_session.send_audio.assert_called_once_with(audio_data)
 
@@ -496,11 +493,11 @@ class TestWebSocketSTTIntegration:
     async def test_websocket_stt_control_messages(self, mock_websocket, mock_user, mock_db):
         """Test WebSocket STT control message handling."""
         with patch('app.api.streaming_stt.authenticate_stt_websocket') as mock_auth, \
-             patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
+             patch('app.api.streaming_stt.soniox_service') as mock_soniox, \
              patch('app.api.streaming_stt.stt_manager') as mock_manager:
             
             mock_auth.return_value = mock_user
-            mock_deepgram.is_available.return_value = True
+            mock_soniox.is_available.return_value = True
             
             connection_id = "test_connection_123"
             mock_connection = {
@@ -552,11 +549,11 @@ class TestWebSocketSTTIntegration:
     async def test_websocket_stt_invalid_control_message(self, mock_websocket, mock_user, mock_db):
         """Test WebSocket STT with invalid control message."""
         with patch('app.api.streaming_stt.authenticate_stt_websocket') as mock_auth, \
-             patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
+             patch('app.api.streaming_stt.soniox_service') as mock_soniox, \
              patch('app.api.streaming_stt.stt_manager') as mock_manager:
             
             mock_auth.return_value = mock_user
-            mock_deepgram.is_available.return_value = True
+            mock_soniox.is_available.return_value = True
             
             connection_id = "test_connection_123"
             mock_connection = {
@@ -597,11 +594,11 @@ class TestWebSocketSTTIntegration:
     async def test_websocket_stt_exception_handling(self, mock_websocket, mock_user, mock_db):
         """Test WebSocket STT exception handling."""
         with patch('app.api.streaming_stt.authenticate_stt_websocket') as mock_auth, \
-             patch('app.api.streaming_stt.deepgram_service') as mock_deepgram, \
+             patch('app.api.streaming_stt.soniox_service') as mock_soniox, \
              patch('app.api.streaming_stt.stt_manager') as mock_manager:
             
             mock_auth.return_value = mock_user
-            mock_deepgram.is_available.return_value = True
+            mock_soniox.is_available.return_value = True
             
             connection_id = "test_connection_123"
             mock_manager.connect = AsyncMock(return_value=connection_id)
@@ -631,11 +628,9 @@ class TestSTTUsageTracking:
         
         mock_db = AsyncMock(spec=AsyncSession)
         
-        with patch('app.api.streaming_stt.usage_service') as mock_usage_service, \
-             patch('app.api.streaming_stt.settings') as mock_settings:
+        with patch('app.api.streaming_stt.usage_service') as mock_usage_service:
             
             mock_usage_service.record_stt_usage = AsyncMock()
-            mock_settings.DEEPGRAM_MODEL = "nova-2"
             
             # Simulate transcript callback
             transcript_data = {
@@ -654,15 +649,15 @@ class TestSTTUsageTracking:
                         tenant_id=mock_user.tenant_id,
                         user_id=mock_user.id,
                         word_count=word_count,
-                        service_provider="deepgram",
-                        model_name=mock_settings.DEEPGRAM_MODEL
+                        service_provider="soniox",
+                        model_name="soniox-auto"
                     )
             
             # Verify usage was recorded
             mock_usage_service.record_stt_usage.assert_called_once()
             call_args = mock_usage_service.record_stt_usage.call_args[1]
             assert call_args["word_count"] == 8  # Count of words in transcript
-            assert call_args["service_provider"] == "deepgram"
+            assert call_args["service_provider"] == "soniox"
             assert call_args["tenant_id"] == mock_user.tenant_id
             assert call_args["user_id"] == mock_user.id
 
@@ -691,8 +686,8 @@ class TestSTTUsageTracking:
                     tenant_id=mock_user.tenant_id,
                     user_id=mock_user.id,
                     word_count=count_words(transcript_text),
-                    service_provider="deepgram",
-                    model_name="nova-2"
+                    service_provider="soniox",
+                    model_name="soniox-auto"
                 )
             
             # Should not record usage for interim transcript
@@ -724,8 +719,8 @@ class TestSTTUsageTracking:
                         tenant_id=mock_user.tenant_id,
                         user_id=mock_user.id,
                         word_count=word_count,
-                        service_provider="deepgram",
-                        model_name="nova-2"
+                        service_provider="soniox",
+                        model_name="soniox-auto"
                     )
             
             # Should not record usage for empty transcript

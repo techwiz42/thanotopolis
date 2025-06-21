@@ -13,7 +13,7 @@ import io
 from app.auth.auth import get_current_user, get_current_active_user
 from app.db.database import get_db
 from app.models.models import User
-from app.services.voice import deepgram_service
+from app.services.voice import soniox_service
 from app.services.usage_service import usage_service
 from app.core.config import settings
 
@@ -116,8 +116,8 @@ async def websocket_streaming_stt(
             await websocket.close(code=4001, reason="Authentication failed")
             return
         
-        # Check if Deepgram is available
-        if not deepgram_service.is_available():
+        # Check if Soniox is available
+        if not soniox_service.is_available():
             await websocket.close(code=4003, reason="Speech-to-text service unavailable")
             return
         
@@ -166,8 +166,8 @@ async def websocket_streaming_stt(
                                             tenant_id=user.tenant_id,
                                             user_id=user.id,
                                             word_count=word_count,
-                                            service_provider="deepgram",
-                                            model_name=settings.DEEPGRAM_MODEL
+                                            service_provider="soniox",
+                                            model_name="soniox-auto"
                                         ))
                                 
                                 # Include detected language if available
@@ -205,9 +205,9 @@ async def websocket_streaming_stt(
                             use_language = None if session_language in [None, 'auto', 'auto-detect'] else session_language
                             enable_detection = session_language in [None, 'auto', 'auto-detect']
                             
-                            logger.info(f"Creating transcription session - Language: {use_language or 'auto-detect'}, Model: {session_model or settings.DEEPGRAM_MODEL}")
+                            logger.info(f"Creating Soniox transcription session - Language: {use_language or 'auto-detect'}")
                             
-                            transcription_session = await deepgram_service.start_live_transcription(
+                            transcription_session = await soniox_service.start_live_transcription(
                                 on_message=on_transcript_message,
                                 on_error=on_transcript_error,
                                 interim_results=True,
@@ -215,7 +215,6 @@ async def websocket_streaming_stt(
                                 smart_format=True,
                                 language=use_language,
                                 detect_language=enable_detection,
-                                model=session_model,
                                 encoding="linear16",
                                 sample_rate=16000,
                                 channels=1
@@ -262,7 +261,7 @@ async def websocket_streaming_stt(
                                         "type": "transcription_ready",
                                         "message": "Ready to receive audio",
                                         "language": control_language or language or "auto-detect",
-                                        "model": control_model or model or settings.DEEPGRAM_MODEL,
+                                        "model": "soniox-auto",
                                         "timestamp": datetime.utcnow().isoformat()
                                     })
                             
@@ -329,8 +328,8 @@ async def transcribe_audio_file(
 ):
     """Transcribe an uploaded audio file."""
     try:
-        # Check if Deepgram is available
-        if not deepgram_service.is_available():
+        # Check if Soniox is available
+        if not soniox_service.is_available():
             raise HTTPException(status_code=503, detail="Speech-to-text service unavailable")
         
         # Read audio file
@@ -340,7 +339,7 @@ async def transcribe_audio_file(
         content_type = audio_file.content_type or "audio/wav"
         
         # Transcribe with auto language detection if no language specified
-        result = await deepgram_service.transcribe_file(
+        result = await soniox_service.transcribe_file(
             audio_data=audio_data,
             content_type=content_type,
             language=language,  # If None, will auto-detect
@@ -364,8 +363,8 @@ async def transcribe_audio_file(
                     tenant_id=current_user.tenant_id,
                     user_id=current_user.id,
                     word_count=word_count,
-                    service_provider="deepgram",
-                    model_name=model or settings.DEEPGRAM_MODEL
+                    service_provider="soniox",
+                    model_name="soniox-auto"
                 )
         
         return {
@@ -396,10 +395,10 @@ async def transcribe_audio_file(
 async def get_stt_status():
     """Get STT service status."""
     return {
-        "service": "deepgram",
-        "available": deepgram_service.is_available(),
-        "model": settings.DEEPGRAM_MODEL,
-        "language": settings.DEEPGRAM_LANGUAGE,
+        "service": "soniox",
+        "available": soniox_service.is_available(),
+        "model": "soniox-auto",
+        "language": "auto-detect",
         "active_connections": len(stt_manager.active_connections),
         "timestamp": datetime.utcnow().isoformat()
     }
