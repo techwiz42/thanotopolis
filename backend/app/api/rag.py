@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 import uuid
+from uuid import UUID
 
 from app.db.database import get_db
 from app.auth.auth import get_current_user
