@@ -123,6 +123,12 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
   // Track session language lock to avoid dependency issues
   const sessionLanguageLockRef = useRef(sessionLanguageLock);
   
+  // Track previous language to detect changes
+  const previousLanguageRef = useRef(languageCode);
+  
+  // Track STT state before TTS starts
+  const sttWasEnabledRef = useRef(false);
+  
   // Update ref when state changes
   useEffect(() => {
     sessionLanguageLockRef.current = sessionLanguageLock;
@@ -329,6 +335,35 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
     isListening: isRecording
   } = useStreamingSpeechToText(sttOptions);
 
+  // Handle language changes - restart STT connection when language changes
+  useEffect(() => {
+    if (languageCode !== previousLanguageRef.current && voiceState.isSTTEnabled) {
+      console.log('Language changed from', previousLanguageRef.current, 'to', languageCode, '- restarting STT');
+      
+      // Stop current STT
+      stopSTT();
+      
+      // Restart STT with new language after a brief delay
+      setTimeout(async () => {
+        try {
+          await startSTT();
+          console.log('STT restarted with new language:', languageCode);
+        } catch (error) {
+          console.error('Failed to restart STT with new language:', error);
+          setVoiceState(prev => ({ 
+            ...prev, 
+            isSTTEnabled: false, 
+            isSTTActive: false, 
+            isSTTConnecting: false 
+          }));
+        }
+      }, 500);
+    }
+    
+    // Update the previous language reference
+    previousLanguageRef.current = languageCode;
+  }, [languageCode, voiceState.isSTTEnabled, stopSTT, startSTT]);
+
   // Update STT state based on service state
   useEffect(() => {
     setVoiceState(prev => ({
@@ -387,19 +422,29 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
         setCurrentAudio(null);
       }
 
+      // Temporarily disable STT during TTS to prevent feedback
+      sttWasEnabledRef.current = voiceState.isSTTEnabled;
+      if (sttWasEnabledRef.current) {
+        stopSTT();
+      }
+
       setVoiceState(prev => ({ ...prev, isTTSActive: true }));
 
-      const response = await fetch('/api/tts', {
+      const formData = new FormData();
+      formData.append('text', text.substring(0, 500)); // Limit text length
+      // Don't send voice_id to use backend default (TxGEqnHWrfWFTfGW9XjX - James voice)
+      formData.append('output_format', 'mp3_44100_128');
+      formData.append('stability', '0.5');
+      formData.append('similarity_boost', '0.5');
+      formData.append('style', '0.0');
+      formData.append('use_speaker_boost', 'true');
+
+      const response = await fetch('/api/voice/tts/synthesize', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          text: text.substring(0, 500), // Limit text length
-          voice: 'alloy',
-          format: 'mp3'
-        })
+        body: formData
       });
 
       if (!response.ok) {
@@ -412,17 +457,35 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
 
       setCurrentAudio(audio);
 
-      audio.onended = () => {
+      audio.onended = async () => {
         setVoiceState(prev => ({ ...prev, isTTSActive: false }));
         setCurrentAudio(null);
         URL.revokeObjectURL(audioUrl);
+        
+        // Re-enable STT if it was enabled before TTS started
+        if (sttWasEnabledRef.current) {
+          try {
+            await startSTT();
+          } catch (error) {
+            console.error('Failed to restart STT after TTS:', error);
+          }
+        }
       };
 
-      audio.onerror = () => {
+      audio.onerror = async () => {
         setVoiceState(prev => ({ ...prev, isTTSActive: false }));
         setCurrentAudio(null);
         URL.revokeObjectURL(audioUrl);
         console.error('Audio playback error');
+        
+        // Re-enable STT if it was enabled before TTS started
+        if (sttWasEnabledRef.current) {
+          try {
+            await startSTT();
+          } catch (error) {
+            console.error('Failed to restart STT after TTS error:', error);
+          }
+        }
       };
 
       await audio.play();
@@ -432,22 +495,40 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       setVoiceState(prev => ({ ...prev, isTTSActive: false }));
       setCurrentAudio(null);
       
+      // Re-enable STT if it was enabled before TTS started (even on error)
+      if (sttWasEnabledRef.current) {
+        try {
+          await startSTT();
+        } catch (sttError) {
+          console.error('Failed to restart STT after TTS error:', sttError);
+        }
+      }
+      
       toast({
         title: "Text-to-Speech Error",
         description: error instanceof Error ? error.message : "Failed to generate speech",
         variant: "destructive"
       });
     }
-  }, [voiceState.isTTSEnabled, currentAudio, token, toast]);
+  }, [voiceState.isTTSEnabled, currentAudio, token, toast, stopSTT, startSTT]);
 
   // Stop speaking
-  const stopSpeaking = useCallback(() => {
+  const stopSpeaking = useCallback(async () => {
     if (currentAudio) {
       currentAudio.pause();
       setCurrentAudio(null);
       setVoiceState(prev => ({ ...prev, isTTSActive: false }));
+      
+      // Re-enable STT if it was enabled before TTS started
+      if (sttWasEnabledRef.current) {
+        try {
+          await startSTT();
+        } catch (error) {
+          console.error('Failed to restart STT after stopping TTS:', error);
+        }
+      }
     }
-  }, [currentAudio]);
+  }, [currentAudio, startSTT]);
 
   // Cleanup on unmount
   useEffect(() => {

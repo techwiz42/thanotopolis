@@ -50,31 +50,30 @@ class TenantAwareAgentManager(AgentManager):
                     continue
                 
                 # Check if agent has ownership properties defined
-                is_free_agent = True
-                owner_domain = None
+                owner_domains = []
                 
                 if isinstance(agent_instance, BaseAgent):
-                    # Check for IS_FREE_AGENT class attribute
-                    is_free_agent = getattr(agent_instance.__class__, 'IS_FREE_AGENT', True)
-                    owner_domain = getattr(agent_instance.__class__, 'OWNER_DOMAIN', None)
+                    # Get OWNER_DOMAINS - now expects a list of domains
+                    # If OWNER_DOMAINS is empty list [], it's a free agent
+                    owner_domains = getattr(agent_instance.__class__, 'OWNER_DOMAINS', [])
                 
-                # If it's a free agent, it's available to everyone
-                if is_free_agent:
+                # If it's a free agent (empty list), it's available to everyone
+                if owner_domains == []:
                     available_agents.append(agent_type)
                     continue
                 
-                # For proprietary agents, check if user's organization matches
-                if owner_domain:
+                # For proprietary agents, check if user's organization is in the allowed list
+                if owner_domains:
                     # Get user's tenant subdomain
                     tenant_query = select(Tenant.subdomain).where(Tenant.id == user.tenant_id)
                     tenant_result = await db.execute(tenant_query)
                     user_subdomain = tenant_result.scalar_one_or_none()
                     
-                    if user_subdomain == owner_domain:
+                    if user_subdomain in owner_domains:
                         available_agents.append(agent_type)
-                        logger.info(f"Proprietary agent {agent_type} is available to user from {owner_domain} org")
+                        logger.info(f"Proprietary agent {agent_type} is available to user from {user_subdomain} org (allowed orgs: {owner_domains})")
                     else:
-                        logger.info(f"Proprietary agent {agent_type} (owned by {owner_domain}) not available to user from {user_subdomain}")
+                        logger.info(f"Proprietary agent {agent_type} (allowed orgs: {owner_domains}) not available to user from {user_subdomain}")
                 else:
                     # If we can't determine ownership, treat as unavailable for safety
                     logger.warning(f"Cannot determine ownership for agent {agent_type}, treating as unavailable")
@@ -93,8 +92,9 @@ class TenantAwareAgentManager(AgentManager):
         for agent_type in self.get_available_agents():
             agent_instance = self.get_agent(agent_type)
             if agent_instance:
-                is_free_agent = getattr(agent_instance.__class__, 'IS_FREE_AGENT', True)
-                if is_free_agent:
+                # Check OWNER_DOMAINS - empty list means free agent
+                owner_domains = getattr(agent_instance.__class__, 'OWNER_DOMAINS', [])
+                if owner_domains == []:
                     free_agents.append(agent_type)
         return free_agents
     
@@ -104,8 +104,9 @@ class TenantAwareAgentManager(AgentManager):
         for agent_type in self.get_available_agents():
             agent_instance = self.get_agent(agent_type)
             if agent_instance:
-                is_free_agent = getattr(agent_instance.__class__, 'IS_FREE_AGENT', True)
-                if is_free_agent:
+                # Check OWNER_DOMAINS - empty list means free agent
+                owner_domains = getattr(agent_instance.__class__, 'OWNER_DOMAINS', [])
+                if owner_domains == []:
                     free_agents.append(agent_type)
         return free_agents
     

@@ -10,20 +10,22 @@ from app.agents.base_agent import BaseAgent
 
 class MockFreeAgent(BaseAgent):
     """Mock free agent available to all organizations."""
-    IS_FREE_AGENT = True
-    OWNER_DOMAIN = None
+    OWNER_DOMAINS = []  # Empty list means free agent
 
 
 class MockProprietaryAgent(BaseAgent):
     """Mock proprietary agent owned by 'demo' organization."""
-    IS_FREE_AGENT = False
-    OWNER_DOMAIN = "demo"
+    OWNER_DOMAINS = ["demo"]  # Only available to demo org
 
 
 class MockProprietaryAgentAcme(BaseAgent):
     """Mock proprietary agent owned by 'acme' organization."""
-    IS_FREE_AGENT = False
-    OWNER_DOMAIN = "acme"
+    OWNER_DOMAINS = ["acme"]  # Only available to acme org
+
+
+class MockMultiOrgAgent(BaseAgent):
+    """Mock proprietary agent available to multiple organizations."""
+    OWNER_DOMAINS = ["demo", "acme", "testorg"]  # Available to multiple orgs
 
 
 class TestTenantAwareAgentManager:
@@ -170,24 +172,24 @@ class TestTenantAwareAgentManager:
                 assert len(available) == 2
 
     @pytest.mark.asyncio
-    async def test_get_available_agents_for_user_no_owner_domain(self, manager, mock_db, demo_user):
-        """Test agents without owner domain are treated as unavailable for safety."""
-        # Create mock agent with no owner domain
-        class MockNoOwnerAgent(BaseAgent):
-            IS_FREE_AGENT = False
-            # No OWNER_DOMAIN attribute
+    async def test_get_available_agents_for_user_no_owner_domains(self, manager, mock_db, demo_user):
+        """Test agents without OWNER_DOMAINS attribute default to free agents."""
+        # Create mock agent with no OWNER_DOMAINS attribute
+        class MockNoOwnerDomainsAgent(BaseAgent):
+            # No OWNER_DOMAINS attribute - should default to []
+            pass
         
-        with patch.object(manager, 'get_available_agents', return_value=['no_owner_agent']):
+        with patch.object(manager, 'get_available_agents', return_value=['no_owner_domains_agent']):
             with patch.object(manager, 'get_agent') as mock_get_agent:
-                mock_agent = MockNoOwnerAgent()
+                mock_agent = MockNoOwnerDomainsAgent()
                 mock_get_agent.return_value = mock_agent
                 
                 # Get available agents
                 available = await manager.get_available_agents_for_user(demo_user, mock_db)
                 
-                # Should not include the agent without owner domain
-                assert 'no_owner_agent' not in available
-                assert len(available) == 0
+                # Should include the agent (defaults to free agent)
+                assert 'no_owner_domains_agent' in available
+                assert len(available) == 1
 
     @pytest.mark.asyncio
     async def test_get_available_agents_for_user_agent_not_found(self, manager, mock_db, demo_user):
@@ -208,13 +210,25 @@ class TestTenantAwareAgentManager:
         mock_db = AsyncMock()
         mock_db.execute.side_effect = Exception("Database error")
         
-        with patch.object(manager, '_get_free_agents_only_sync', return_value=['free_agent']) as mock_fallback:
-            # Get available agents
-            available = await manager.get_available_agents_for_user(demo_user, mock_db)
-            
-            # Should fall back to free agents only
-            mock_fallback.assert_called_once()
-            assert available == ['free_agent']
+        # Mock available agents including a proprietary one to ensure DB query is attempted
+        with patch.object(manager, 'get_available_agents', return_value=['free_agent', 'proprietary_agent']):
+            with patch.object(manager, 'get_agent') as mock_get_agent:
+                # Mock agent instances - need at least one proprietary agent to trigger DB query
+                mock_free_agent = MockFreeAgent()
+                mock_proprietary_agent = MockProprietaryAgent()  # This will trigger the DB query
+                
+                mock_get_agent.side_effect = lambda agent_type: {
+                    'free_agent': mock_free_agent,
+                    'proprietary_agent': mock_proprietary_agent
+                }.get(agent_type)
+                
+                with patch.object(manager, '_get_free_agents_only_sync', return_value=['free_agent']) as mock_fallback:
+                    # Get available agents
+                    available = await manager.get_available_agents_for_user(demo_user, mock_db)
+                    
+                    # Should fall back to free agents only
+                    mock_fallback.assert_called_once()
+                    assert available == ['free_agent']
 
     def test_get_free_agents_only_sync(self, manager):
         """Test synchronous fallback method for getting free agents."""
@@ -346,6 +360,29 @@ class TestTenantAwareAgentManager:
             
             # Should return empty list
             assert available == []
+
+    @pytest.mark.asyncio
+    async def test_get_available_agents_for_user_multi_org_access(self, manager, mock_db, demo_user):
+        """Test proprietary agents with multiple organization access."""
+        # Mock available agents including multi-org agent
+        with patch.object(manager, 'get_available_agents', return_value=['multi_org_agent', 'single_org_agent']):
+            with patch.object(manager, 'get_agent') as mock_get_agent:
+                # Mock agent instances
+                mock_multi_org = MockMultiOrgAgent()  # Available to demo, acme, testorg
+                mock_single_org = MockProprietaryAgentAcme()  # Only available to acme
+                
+                mock_get_agent.side_effect = lambda agent_type: {
+                    'multi_org_agent': mock_multi_org,
+                    'single_org_agent': mock_single_org
+                }.get(agent_type)
+                
+                # Get available agents for demo user
+                available = await manager.get_available_agents_for_user(demo_user, mock_db)
+                
+                # Should include multi-org agent but not single-org agent
+                assert 'multi_org_agent' in available
+                assert 'single_org_agent' not in available
+                assert len(available) == 1
 
     @pytest.mark.asyncio
     async def test_edge_case_none_user_tenant_id(self, manager, mock_db):

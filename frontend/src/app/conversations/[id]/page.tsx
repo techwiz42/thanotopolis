@@ -68,7 +68,7 @@ export default function ConversationPage() {
       localStorage.setItem('stt-language', language);
     }
     
-    // Restore focus to message input after language change
+    // Restore focus to message input after language change and STT restart
     setTimeout(() => {
       // More specific selector for the message input textarea
       const messageInput = document.querySelector('textarea[data-testid="message-input"], textarea') as HTMLTextAreaElement;
@@ -78,7 +78,7 @@ export default function ConversationPage() {
         const length = messageInput.value.length;
         messageInput.setSelectionRange(length, length);
       }
-    }, 150); // Slightly longer delay to ensure STT restart is complete
+    }, 800); // Longer delay to account for STT restart (500ms + buffer)
   }, []);
 
   // Handle auto-detected language updates
@@ -319,6 +319,13 @@ export default function ConversationPage() {
 
   // Handle NEW WebSocket messages (includes TTS for new agent responses)
   const handleNewWebSocketMessage = useCallback((message: Message) => {
+    console.log('📨 New WebSocket message received:', { 
+      id: message.id, 
+      content: message.content.substring(0, 50),
+      sender: message.sender.type,
+      isOwner: message.sender.is_owner 
+    });
+    
     // Use refs to get current TTS state - avoid stale closure
     const currentTTSEnabled = currentTTSEnabledRef.current;
     const currentSpeakTextFn = currentSpeakTextRef.current;
@@ -341,9 +348,12 @@ export default function ConversationPage() {
         }
         
         // Handle TTS for NEW agent messages only (only for WebSocket messages)
-        if (currentTTSEnabled && message.content.trim() && message.id) {
+        // This should NOT affect message display - text should ALWAYS be shown
+        if (currentTTSEnabled && message.content.trim() && message.id && !message.sender.is_owner) {
           // Only speak if we haven't spoken this message before
           if (!completedMessagesRef.current.has(message.id)) {
+            console.log('🔊 Auto-TTS triggered for message:', message.id, message.content.substring(0, 50));
+            
             // Mark as completed immediately to prevent duplicates
             completedMessagesRef.current.add(message.id);
             
@@ -356,11 +366,14 @@ export default function ConversationPage() {
             pendingTTSRef.current[message.id] = setTimeout(() => {
               // Double-check TTS is still enabled and we haven't already started playing
               if (currentTTSEnabledRef.current && !currentAudio) {
+                console.log('🎵 Speaking message:', message.id);
                 currentSpeakTextFn(message.content);
+              } else {
+                console.log('🚫 TTS skipped:', { ttsEnabled: currentTTSEnabledRef.current, audioPlaying: !!currentAudio });
               }
               // Clean up the timeout reference
               delete pendingTTSRef.current[message.id];
-            }, 800);
+            }, 1200); // Increased delay to ensure message is fully displayed first
             
             // Clean up after a minute
             setTimeout(() => completedMessagesRef.current.delete(message.id), 60000);
