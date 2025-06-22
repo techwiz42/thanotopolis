@@ -4,7 +4,7 @@
 
 - **Total Backend Source Files**: 58 (excluding __init__.py files, tests, migrations, and test scripts)
 - **Total Test Files**: 17 (16 unit tests, 1 integration test)
-- **Test Coverage**: Approximately 29.3% of modules have corresponding tests
+- **Test Coverage**: 61.6% line coverage (5,310 out of 8,626 lines covered)
 
 ## Detailed Breakdown
 
@@ -159,6 +159,15 @@
 | Schemas | 1 | 0 | 0% |
 | Main | 1 | 0 | 0% |
 | **TOTAL** | **51** | **19** | **37.3%** |
+
+## Current Coverage Metrics (June 2025)
+
+**Latest Coverage Report:**
+- **Total Line Coverage**: 61.6%
+- **Total Lines**: 8,626
+- **Covered Lines**: 5,310
+- **Missing Lines**: 3,316
+- **Excluded Lines**: 0
 
 ## Updated Coverage Analysis (January 2025)
 
