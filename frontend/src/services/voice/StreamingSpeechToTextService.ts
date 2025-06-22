@@ -97,7 +97,7 @@ export interface StreamingSttOptions {
   token?: string;
   /** Language code for speech recognition */
   languageCode?: string;
-  /** Model to use (nova-2, nova, etc.) */
+  /** Model to use (removed for Soniox compatibility) */
   model?: string;
   /** Callback when transcription is received */
   onTranscription?: (text: string, isFinal: boolean) => void;
@@ -121,7 +121,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
   const defaultOptions: Required<StreamingSttOptions> = {
     token: '',
     languageCode: 'auto', // Default to auto-detection
-    model: 'nova-2', // Use nova-2 for better multilingual support
+    model: 'soniox-auto', // Use Soniox auto model
     onTranscription: () => {},
     onSpeechStart: () => {},
     onUtteranceEnd: () => {},
@@ -294,9 +294,13 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
       const backendHost = process.env.NEXT_PUBLIC_API_URL ? new URL(process.env.NEXT_PUBLIC_API_URL).host : 'localhost:8000';
       const params = new URLSearchParams({
         token: authToken,
-        language: opts.languageCode,
-        model: opts.model
+        language: opts.languageCode
       });
+      
+      // Only add model parameter if it's specified and not the default Soniox model
+      if (opts.model && opts.model !== 'soniox-auto') {
+        params.set('model', opts.model);
+      }
       const wsUrl = `${protocol}//${backendHost}/api/ws/stt/stream?${params.toString()}`;
       
       console.log('Connecting to streaming STT WebSocket:', wsUrl);
@@ -308,11 +312,15 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
         console.log('STT WebSocket opened successfully');
         
         // Send start transcription control message with language configuration
-        const startMessage = {
+        const startMessage: any = {
           type: 'start_transcription',
-          language: opts.languageCode,
-          model: opts.model
+          language: opts.languageCode
         };
+        
+        // Only include model if it's not the default Soniox model
+        if (opts.model && opts.model !== 'soniox-auto') {
+          startMessage.model = opts.model;
+        }
         
         console.log('Sending start transcription message:', startMessage);
         ws.send(JSON.stringify(startMessage));

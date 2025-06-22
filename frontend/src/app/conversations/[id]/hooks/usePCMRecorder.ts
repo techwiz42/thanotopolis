@@ -8,7 +8,7 @@ import { useRef } from 'react';
 export interface StreamingSttOptions {
   /** Language code for speech recognition */
   languageCode?: string;
-  /** Model to use (nova-2, nova, etc.) */
+  /** Model to use (for Soniox compatibility) */
   model?: string;
   /** Callback when transcription is received */
   onTranscription?: (text: string, isFinal: boolean) => void;

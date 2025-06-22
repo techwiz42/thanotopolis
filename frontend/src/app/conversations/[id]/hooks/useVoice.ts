@@ -314,7 +314,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
   const sttOptions = useMemo(() => ({
     token: token || '',
     languageCode: languageCode || 'auto',
-    model: 'nova-2',
+    model: 'soniox-auto',
     onTranscription: handleTranscription,
     onConnectionChange: handleConnectionChange,
     onLanguageDetected: handleLanguageDetected
@@ -338,14 +338,39 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
     }));
   }, [isRecording, sttConnected]);
 
+  // Handle language changes gracefully - stop STT if running, then allow restart
+  useEffect(() => {
+    const isCurrentlyEnabled = voiceState.isSTTEnabled;
+    const isCurrentlyActive = voiceState.isSTTActive;
+    
+    // If STT is currently active and language changed, restart it
+    if (isCurrentlyEnabled && isCurrentlyActive && sttConnected) {
+      console.log('Language changed while STT active, restarting...');
+      // Brief pause to allow service to reconnect, then restart if still enabled
+      setTimeout(() => {
+        if (voiceState.isSTTEnabled && sttConnected && !isRecording) {
+          console.log('Restarting STT after language change');
+          startSTT();
+        }
+      }, 100);
+    }
+  }, [languageCode]); // Only trigger on language changes
+
   // Toggle STT
   const toggleSTT = useCallback(async () => {
     try {
-      if (!voiceState.isSTTEnabled) {
-        await startSTT();
+      const currentlyEnabled = voiceState.isSTTEnabled;
+      console.log('STT toggle requested, currently enabled:', currentlyEnabled);
+      
+      if (!currentlyEnabled) {
+        // Enabling STT
+        console.log('Enabling STT...');
         setVoiceState(prev => ({ ...prev, isSTTEnabled: true, isAutoDetecting: true }));
+        await startSTT();
       } else {
-        stopSTT();
+        // Disabling STT
+        console.log('Disabling STT...');
+        // Set state first to prevent race conditions
         setVoiceState(prev => ({ 
           ...prev, 
           isSTTEnabled: false, 
@@ -353,9 +378,19 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
           isSTTConnecting: false,
           isAutoDetecting: false 
         }));
+        // Then stop the service
+        stopSTT();
       }
     } catch (error) {
       console.error('STT toggle error:', error);
+      // Reset state on error
+      setVoiceState(prev => ({ 
+        ...prev, 
+        isSTTEnabled: false, 
+        isSTTActive: false, 
+        isSTTConnecting: false,
+        isAutoDetecting: false 
+      }));
       toast({
         title: "Voice Input Error",
         description: error instanceof Error ? error.message : "Failed to toggle voice input",

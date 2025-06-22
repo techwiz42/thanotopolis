@@ -1,5 +1,5 @@
 // src/app/conversations/[id]/components/MessageInput.tsx
-import React, { useState, useCallback, useEffect, useRef, ChangeEvent, DragEvent } from 'react';
+import React, { useState, useCallback, useEffect, useRef, ChangeEvent, DragEvent, forwardRef, useImperativeHandle } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Send, Paperclip, Loader2 } from 'lucide-react';
@@ -19,7 +19,11 @@ export interface MessageInputProps {
   isSTTEnabled?: boolean;
 }
 
-const MessageInput: React.FC<MessageInputProps> = ({ 
+export interface MessageInputRef {
+  focus: () => void;
+}
+
+const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(({ 
   onSendMessage,
   onTypingStatus,
   disabled = false,
@@ -28,7 +32,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
   isVoiceActive = false,
   onVoiceTranscriptFinal,
   isSTTEnabled = false
-}: MessageInputProps) => {
+}: MessageInputProps, ref) => {
   const [message, setMessage] = useState('');
   const [messageMetadata, setMessageMetadata] = useState<MessageMetadata | null>(null);
   const [isTyping, setIsTyping] = useState(false);
@@ -43,6 +47,18 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const autoSendTimeoutRef = useRef<NodeJS.Timeout>();
   
   const { token, user } = useAuth();
+
+  // Expose focus method to parent component
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        // Position cursor at end of text
+        const length = textareaRef.current.value.length;
+        textareaRef.current.setSelectionRange(length, length);
+      }
+    }
+  }), []);
   const { toast } = useToast();
 
   // Handle voice transcript updates
@@ -390,6 +406,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
             isVoiceActive ? 'ring-2 ring-red-200 bg-red-50' : ''
           }`}
           disabled={disabled}
+          data-testid="message-input"
         />
         <div className="absolute right-12 bottom-2 flex items-center gap-2">
           <input
@@ -447,6 +464,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
       `}</style>
     </div>
   );
-};
+});
+
+MessageInput.displayName = 'MessageInput';
 
 export default MessageInput;

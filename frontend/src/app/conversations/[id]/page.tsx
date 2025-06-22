@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Loader2, ChevronLeft, UserPlus } from 'lucide-react';
 
 import MessageList from '@/app/conversations/[id]/components/MessageList';
-import MessageInput from '@/app/conversations/[id]/components/MessageInput';
+import MessageInput, { MessageInputRef } from '@/app/conversations/[id]/components/MessageInput';
 import VoiceControls from '@/app/conversations/[id]/components/VoiceControls';
 import { LanguageSelector } from '@/app/conversations/[id]/components/LanguageSelector';
 import { LanguageDetectionIndicator } from '@/app/conversations/[id]/components/LanguageDetectionIndicator';
@@ -68,17 +68,32 @@ export default function ConversationPage() {
       localStorage.setItem('stt-language', language);
     }
     
-    // Restore focus to message input after language change
-    setTimeout(() => {
-      // More specific selector for the message input textarea
-      const messageInput = document.querySelector('textarea[data-testid="message-input"], textarea') as HTMLTextAreaElement;
-      if (messageInput) {
-        messageInput.focus();
-        // Ensure cursor is at the end if there's existing text
-        const length = messageInput.value.length;
-        messageInput.setSelectionRange(length, length);
+    // Enhanced focus restoration that waits for dropdown to close
+    const restoreFocus = () => {
+      if (messageInputRef.current) {
+        console.log('Restoring focus to message input after language change');
+        messageInputRef.current.focus();
+        return true;
       }
-    }, 150); // Slightly longer delay to ensure STT restart is complete
+      return false;
+    };
+    
+    // Wait longer for the dropdown to fully close before restoring focus
+    setTimeout(() => {
+      if (!restoreFocus()) {
+        // Try again after another render cycle
+        requestAnimationFrame(() => {
+          if (!restoreFocus()) {
+            // Final attempt with additional delay
+            setTimeout(() => {
+              if (!restoreFocus()) {
+                console.warn('All focus restoration attempts failed');
+              }
+            }, 150);
+          }
+        });
+      }
+    }, 200); // Increased initial delay to allow dropdown to close
   }, []);
 
   // Handle auto-detected language updates
@@ -94,6 +109,7 @@ export default function ConversationPage() {
   const isProcessingRef = useRef(false);
   const awaitingInputTimeoutRef = useRef<NodeJS.Timeout>();
   const pendingTTSRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
+  const messageInputRef = useRef<MessageInputRef>(null);
 
   // Using the conversation hook
   const { conversation, error, isLoading } = useConversation(conversationId, token);
@@ -603,6 +619,7 @@ export default function ConversationPage() {
                 ))}
                 
                 <MessageInput
+                  ref={messageInputRef}
                   onSendMessage={handleSendMessage}
                   onTypingStatus={sendTypingStatus}
                   disabled={isMessageInputDisabled}

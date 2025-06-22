@@ -22,17 +22,17 @@ interface LanguageSelectorProps {
 // The backend will map these to Soniox's expected format (e.g., fr)
 // Based on Soniox language support
 const SUPPORTED_LANGUAGES = [
-  // English variants (Nova-3 & Nova-2 supported)
+  // English variants (Soniox supported)
   { code: 'en-US', name: 'English (US)' },
   { code: 'en-GB', name: 'English (UK)' },
   { code: 'en-AU', name: 'English (Australia)' },
   { code: 'en-IN', name: 'English (India)' },
   
-  // Spanish (Nova-3 & Nova-2 supported)
+  // Spanish (Soniox supported)
   { code: 'es-ES', name: 'Spanish (Spain)' },
   { code: 'es-MX', name: 'Spanish (Mexico)' },
   
-  // Other languages (Nova-2 supported)
+  // Other languages (Soniox supported)
   { code: 'fr-FR', name: 'French (France)' },
   { code: 'fr-CA', name: 'French (Canada)' },
   { code: 'de-DE', name: 'German' },
@@ -64,8 +64,8 @@ const SUPPORTED_LANGUAGES = [
   { code: 'hu-HU', name: 'Hungarian' },
   { code: 'ro-RO', name: 'Romanian' },
   
-  // Note: Removed Arabic (ar-SA) and Hebrew (he-IL) as they're not in Nova-2 docs
-  // Note: Removed some Baltic languages not confirmed in Nova-2 docs
+  // Note: Language support based on Soniox documentation
+  // Additional languages may be available - check Soniox docs for updates
 ];
 
 export function LanguageSelector({ 
@@ -96,6 +96,13 @@ export function LanguageSelector({
         value={value}
         onValueChange={handleLanguageChange}
         disabled={disabled}
+        onOpenChange={(open) => {
+          // Don't interfere with focus when opening/closing
+          if (!open) {
+            // When closing, let the parent handle focus restoration
+            console.log('Language selector closed');
+          }
+        }}
       >
         <SelectTrigger className={`w-48 bg-white text-gray-900 transition-colors ${
           isAutoDetected 

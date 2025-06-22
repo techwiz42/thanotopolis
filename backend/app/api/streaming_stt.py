@@ -118,8 +118,11 @@ async def websocket_streaming_stt(
         
         # Check if Soniox is available
         if not soniox_service.is_available():
+            logger.error("Soniox service not available during WebSocket connection")
             await websocket.close(code=4003, reason="Speech-to-text service unavailable")
             return
+        
+        logger.info(f"Soniox service is available for user {user.email}")
         
         # Connect to STT manager
         connection_id = await stt_manager.connect(websocket, user)
@@ -148,6 +151,7 @@ async def websocket_streaming_stt(
                     if "bytes" in message:
                         # Audio data received
                         audio_data = message["bytes"]
+                        logger.debug(f"Received audio data: {len(audio_data)} bytes for connection {connection_id}")
                         
                         # Start transcription session if not active
                         if not connection["is_transcribing"]:
@@ -185,7 +189,11 @@ async def websocket_streaming_stt(
                                 if transcript_data.get("detected_language"):
                                     response_data["detected_language"] = transcript_data["detected_language"]
                                 
-                                asyncio.create_task(websocket.send_json(response_data))
+                                # Send response safely (don't use create_task for WebSocket sending)
+                                try:
+                                    asyncio.create_task(websocket.send_json(response_data))
+                                except Exception as send_error:
+                                    logger.error(f"Error sending transcript response: {send_error}")
                             
                             def on_transcript_error(error):
                                 """Handle transcript errors."""
@@ -244,6 +252,7 @@ async def websocket_streaming_stt(
                         try:
                             control_data = json.loads(message["text"])
                             control_type = control_data.get("type")
+                            logger.info(f"Received control message: {control_type} for connection {connection_id}")
                             
                             if control_type == "start_transcription":
                                 # Extract language and model from control message

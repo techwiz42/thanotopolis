@@ -21,11 +21,16 @@ class SonioxService:
         else:
             try:
                 # Set the API key for Soniox
+                api_key_preview = settings.SONIOX_API_KEY[:10] + "..." if len(settings.SONIOX_API_KEY) > 10 else settings.SONIOX_API_KEY
+                logger.info(f"Setting Soniox API key (preview: {api_key_preview})")
                 speech_service.set_api_key(settings.SONIOX_API_KEY)
                 self.available = True
                 logger.info("Soniox client initialized successfully")
             except Exception as e:
+                import traceback
                 logger.error(f"Failed to initialize Soniox client: {e}")
+                logger.error(f"Exception type: {type(e).__name__}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 self.available = False
     
     def is_available(self) -> bool:
@@ -67,17 +72,31 @@ class SonioxService:
             config = TranscriptionConfig()
             
             # Set basic audio parameters
+            config.audio_format = "pcm_s16le"  # Set audio format explicitly
             config.sample_rate_hertz = 16000
             config.num_audio_channels = 1
+            
+            # Use en_v2 model - the only model available in this Soniox account
+            config.model = "en_v2"
+            logger.info(f"Using en_v2 model (only available model) for file transcription, language: {language}")
             
             # Enable features
             config.enable_profanity_filter = False
             config.enable_global_speaker_diarization = diarize
             config.enable_speaker_identification = diarize
             
-            # Create client and transcribe
+            # Create client and transcribe in thread pool to avoid blocking
             client = speech_service.SpeechClient()
-            result = client.transcribe(audio_data, config)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, 
+                client.Transcribe, 
+                config,  # config comes first
+                audio_data  # audio comes second
+            )
+            
+            # Log model used
+            logger.info(f"Successfully called Soniox with model: {config.model}")
             
             # Format response
             formatted_result = {
@@ -91,12 +110,26 @@ class SonioxService:
             }
             
             # Extract transcript
-            if result and result.words:
+            if result:
+                # Handle if result is a list
+                if isinstance(result, list):
+                    # Concatenate all results
+                    all_words = []
+                    for r in result:
+                        if hasattr(r, 'words') and r.words:
+                            all_words.extend(r.words)
+                    result_words = all_words
+                elif hasattr(result, 'words'):
+                    result_words = result.words
+                else:
+                    result_words = []
+                    
+            if result and result_words:
                 transcript_parts = []
                 word_data = []
                 speakers = set()
                 
-                for word in result.words:
+                for word in result_words:
                     transcript_parts.append(word.text)
                     
                     word_info = {
@@ -174,9 +207,15 @@ class SonioxService:
         
         # Create transcript config
         config = TranscriptionConfig()
+        config.audio_format = "pcm_s16le"  # Set audio format explicitly
         config.sample_rate_hertz = sample_rate
         config.num_audio_channels = channels
         config.include_nonfinal = interim_results
+        
+        # Use en_v2 temporarily until omnispeech_v1 access is granted
+        # TODO: Replace with omnispeech_v1 for automatic language detection
+        config.model = "en_v2"
+        logger.info(f"Using en_v2 model temporarily (waiting for omnispeech_v1 access) for language: {language}")
         
         # Enable features
         config.enable_profanity_filter = False
@@ -269,23 +308,66 @@ class LiveTranscriptionSession:
     async def _transcribe_chunk(self, audio_data: bytes):
         """Transcribe an audio chunk."""
         try:
-            if not self.client or len(audio_data) < 1000:  # Skip tiny chunks
+            if not self.client:
+                logger.warning("Soniox client not initialized in _transcribe_chunk")
                 return
                 
-            # Transcribe the chunk
-            result = self.client.transcribe(audio_data, self.config)
+            if len(audio_data) < 1000:  # Skip tiny chunks
+                logger.debug(f"Skipping tiny audio chunk of {len(audio_data)} bytes")
+                return
+                
+            logger.debug(f"Transcribing audio chunk of {len(audio_data)} bytes")
             
-            if result and result.words:
-                await self._handle_result(result)
+            # Create a config for chunk transcription (without include_nonfinal)
+            chunk_config = TranscriptionConfig()
+            chunk_config.audio_format = self.config.audio_format
+            chunk_config.sample_rate_hertz = self.config.sample_rate_hertz
+            chunk_config.num_audio_channels = self.config.num_audio_channels
+            
+            # Use en_v2 model - the only model available in this Soniox account
+            chunk_config.model = "en_v2"
+            
+            chunk_config.enable_profanity_filter = self.config.enable_profanity_filter
+            chunk_config.enable_streaming_speaker_diarization = False
+            chunk_config.enable_global_speaker_diarization = False
+            chunk_config.enable_speaker_identification = False
+            chunk_config.include_nonfinal = False  # Must be False for Transcribe method
+            
+            # Transcribe the chunk in a thread pool to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, 
+                self.client.Transcribe, 
+                chunk_config,  # Use chunk-specific config
+                audio_data  # audio comes second
+            )
+            
+            if result:
+                # Handle if result is a list of results
+                if isinstance(result, list):
+                    for r in result:
+                        if hasattr(r, 'words') and r.words:
+                            await self._handle_result(r)
+                # Handle single result
+                elif hasattr(result, 'words'):
+                    if result.words:  # Only process if there are words
+                        await self._handle_result(result)
+                else:
+                    logger.warning(f"Unexpected result type from Soniox: {type(result)}")
                 
         except Exception as e:
+            import traceback
             logger.error(f"Error transcribing Soniox chunk: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Exception args: {e.args}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Don't propagate transcription errors to avoid stopping the stream
     
     async def _handle_result(self, result):
         """Handle a transcription result from Soniox."""
         try:
-            if not result or not result.words:
+            if not result or not hasattr(result, 'words') or not result.words:
+                logger.debug("Soniox result has no words, skipping")
                 return
                 
             # Extract transcript from words
@@ -293,14 +375,37 @@ class LiveTranscriptionSession:
             words_data = []
             
             for word in result.words:
-                transcript_parts.append(word.text)
-                words_data.append({
-                    "word": word.text,
-                    "start": word.start_ms / 1000.0,
-                    "end": word.end_ms / 1000.0,
+                # Debug: log word attributes
+                logger.debug(f"Soniox word attributes: {dir(word)}")
+                
+                # Get word text
+                word_text = getattr(word, 'text', '') or getattr(word, 'word', '')
+                if word_text:
+                    transcript_parts.append(word_text)
+                
+                # Build word data with safe attribute access
+                word_data = {
+                    "word": word_text,
                     "confidence": getattr(word, 'confidence', 1.0),
                     "speaker": getattr(word, 'speaker', None)
-                })
+                }
+                
+                # Try to get timing information
+                if hasattr(word, 'start_ms'):
+                    word_data["start"] = word.start_ms / 1000.0
+                elif hasattr(word, 'start'):
+                    word_data["start"] = word.start / 1000.0
+                else:
+                    word_data["start"] = 0.0
+                    
+                if hasattr(word, 'end_ms'):
+                    word_data["end"] = word.end_ms / 1000.0
+                elif hasattr(word, 'end'):
+                    word_data["end"] = word.end / 1000.0
+                else:
+                    word_data["end"] = 0.0
+                    
+                words_data.append(word_data)
             
             transcript_text = " ".join(transcript_parts)
             
