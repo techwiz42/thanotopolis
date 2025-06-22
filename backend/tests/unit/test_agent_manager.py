@@ -448,6 +448,515 @@ class TestAgentManager:
         with patch('app.agents.agent_manager.Runner') as mock_runner, \
              patch.object(manager, '_select_agent', return_value="TEST"):
             
+            # Mock the runner to simulate streaming
+            mock_runner_instance = AsyncMock()
+            mock_runner.return_value = mock_runner_instance
+            mock_runner_instance.run_stream.return_value = ["token1", "token2", "final"]
+            
+            with patch.object(manager, '_prepare_context', return_value="test context"):
+                result = await manager.process_conversation(
+                    message="Test streaming message",
+                    conversation_agents=[],
+                    agents_config={},
+                    thread_id="test-thread",
+                    streaming_callback=mock_callback
+                )
+                
+                # Verify streaming callback was called
+                assert len(callback_calls) > 0
+
+
+class TestAgentManagerErrorHandling:
+    """Test error handling scenarios in AgentManager."""
+    
+    def setup_method(self):
+        """Set up test fixtures."""
+        # Create a minimal manager for testing
+        with patch.object(AgentManager, '_discover_agents'):
+            self.manager = AgentManager()
+            self.manager.discovered_agents = {"TEST_AGENT": Mock()}
+    
+    @pytest.mark.asyncio
+    @patch('app.agents.agent_manager.input_sanitizer')
+    async def test_process_conversation_input_sanitization_error(self, mock_sanitizer):
+        """Test handling of input sanitization errors."""
+        mock_sanitizer.sanitize_input.side_effect = Exception("Sanitization failed")
+        
+        with pytest.raises(Exception, match="Sanitization failed"):
+            await self.manager.process_conversation(
+                message="Test message",
+                conversation_agents=[],
+                agents_config={},
+                thread_id="test-thread"
+            )
+    
+    @pytest.mark.asyncio
+    @patch('app.agents.agent_manager.input_sanitizer')
+    async def test_process_conversation_context_preparation_error(self, mock_sanitizer):
+        """Test handling of context preparation errors."""
+        mock_sanitizer.sanitize_input.return_value = ("clean", False, None)
+        mock_sanitizer.wrap_user_input.return_value = "<user_message>clean</user_message>"
+        
+        with patch.object(self.manager, '_prepare_context', side_effect=Exception("Context error")):
+            with pytest.raises(Exception, match="Context error"):
+                await self.manager.process_conversation(
+                    message="Test message",
+                    conversation_agents=[],
+                    agents_config={},
+                    thread_id="test-thread"
+                )
+    
+    @pytest.mark.asyncio
+    @patch('app.agents.agent_manager.input_sanitizer')
+    async def test_process_conversation_agent_selection_error(self, mock_sanitizer):
+        """Test handling of agent selection errors."""
+        mock_sanitizer.sanitize_input.return_value = ("clean", False, None)
+        mock_sanitizer.wrap_user_input.return_value = "<user_message>clean</user_message>"
+        
+        with patch.object(self.manager, '_prepare_context', return_value="context"), \
+             patch.object(self.manager, '_select_agent', side_effect=Exception("Selection error")):
+            
+            with pytest.raises(Exception, match="Selection error"):
+                await self.manager.process_conversation(
+                    message="Test message",
+                    conversation_agents=[],
+                    agents_config={},
+                    thread_id="test-thread"
+                )
+    
+    @pytest.mark.asyncio
+    @patch('app.agents.agent_manager.input_sanitizer')
+    async def test_process_conversation_missing_agent(self, mock_sanitizer):
+        """Test handling when selected agent doesn't exist."""
+        mock_sanitizer.sanitize_input.return_value = ("clean", False, None)
+        mock_sanitizer.wrap_user_input.return_value = "<user_message>clean</user_message>"
+        
+        with patch.object(self.manager, '_prepare_context', return_value="context"), \
+             patch.object(self.manager, '_select_agent', return_value="NONEXISTENT_AGENT"):
+            
+            with pytest.raises(Exception):
+                await self.manager.process_conversation(
+                    message="Test message",
+                    conversation_agents=[],
+                    agents_config={},
+                    thread_id="test-thread"
+                )
+    
+    @pytest.mark.asyncio
+    async def test_prepare_context_buffer_manager_error(self):
+        """Test context preparation when buffer manager fails."""
+        with patch('app.agents.agent_manager.buffer_manager') as mock_buffer:
+            mock_buffer.get_buffer_context.side_effect = Exception("Buffer error")
+            
+            # Should fall back to database query
+            with patch('app.agents.agent_manager.get_db_context') as mock_db, \
+                 patch.object(self.manager, '_get_conversation_history_from_db', return_value="db history"):
+                mock_db.return_value.__aenter__ = AsyncMock()
+                mock_db.return_value.__aexit__ = AsyncMock()
+                
+                context = await self.manager._prepare_context("test-thread", {})
+                
+                # Should contain fallback content
+                assert "db history" in context
+    
+    @pytest.mark.asyncio 
+    async def test_prepare_context_database_error(self):
+        """Test context preparation when both buffer and database fail."""
+        with patch('app.agents.agent_manager.buffer_manager') as mock_buffer:
+            mock_buffer.get_buffer_context.side_effect = Exception("Buffer error")
+            
+            with patch('app.agents.agent_manager.get_db_context') as mock_db:
+                mock_db.side_effect = Exception("Database error")
+                
+                # Should handle gracefully and return minimal context
+                context = await self.manager._prepare_context("test-thread", {})
+                
+                assert isinstance(context, str)
+                assert len(context) > 0  # Should have some fallback content
+    
+    @pytest.mark.asyncio
+    async def test_prepare_context_rag_service_error(self):
+        """Test context preparation when RAG service fails."""
+        with patch('app.agents.agent_manager.buffer_manager') as mock_buffer:
+            mock_buffer.get_buffer_context.return_value = "buffer context"
+            
+            with patch('app.agents.agent_manager.pgvector_query_service') as mock_rag:
+                mock_rag.query_documents.side_effect = Exception("RAG error")
+                
+                # Should continue without RAG content
+                context = await self.manager._prepare_context("test-thread", {})
+                
+                assert "buffer context" in context
+                # Should not contain RAG content but should not fail
+    
+    @pytest.mark.asyncio
+    async def test_select_agent_timeout(self):
+        """Test agent selection timeout handling."""
+        # Mock a MODERATOR that times out
+        mock_moderator = Mock()
+        self.manager.discovered_agents["MODERATOR"] = mock_moderator
+        
+        with patch('app.agents.agent_manager.Runner') as mock_runner:
+            mock_runner_instance = AsyncMock()
+            mock_runner.return_value = mock_runner_instance
+            
+            # Simulate timeout
+            mock_runner_instance.run_stream.side_effect = asyncio.TimeoutError("Timeout")
+            
+            # Should handle timeout and use fallback
+            result = await self.manager._select_agent("test message", Mock(), "test-thread")
+            
+            # Should return a fallback agent type
+            assert isinstance(result, str)
+    
+    @pytest.mark.asyncio
+    async def test_select_agent_invalid_json_response(self):
+        """Test agent selection with invalid JSON response."""
+        mock_moderator = Mock()
+        self.manager.discovered_agents["MODERATOR"] = mock_moderator
+        
+        with patch('app.agents.agent_manager.Runner') as mock_runner:
+            mock_runner_instance = AsyncMock()
+            mock_runner.return_value = mock_runner_instance
+            
+            # Return invalid JSON
+            mock_runner_instance.run_stream.return_value = ["invalid", "json", "response"]
+            
+            # Should handle gracefully and use fallback
+            result = await self.manager._select_agent("test message", Mock(), "test-thread")
+            
+            assert isinstance(result, str)
+    
+    @pytest.mark.asyncio
+    async def test_select_agent_missing_moderator(self):
+        """Test agent selection when MODERATOR agent is missing."""
+        # Remove MODERATOR from discovered agents
+        self.manager.discovered_agents.pop("MODERATOR", None)
+        
+        # Should handle gracefully and use fallback
+        result = await self.manager._select_agent("test message", Mock(), "test-thread")
+        
+        assert isinstance(result, str)
+    
+    @pytest.mark.asyncio
+    async def test_handle_collaboration_error(self):
+        """Test collaboration handling when collaboration manager fails."""
+        mock_context = Mock()
+        mock_context.collaborators = ["AGENT1"]
+        
+        with patch('app.agents.agent_manager.collaboration_manager') as mock_collab:
+            mock_collab.initiate_collaboration.side_effect = Exception("Collaboration error")
+            
+            # Should handle error gracefully
+            with pytest.raises(Exception, match="Collaboration error"):
+                await self.manager._handle_collaboration(
+                    message="test",
+                    selected_agent="TEST",
+                    context=mock_context,
+                    thread_id="test-thread"
+                )
+
+
+class TestAgentManagerEdgeCases:
+    """Test edge cases and boundary conditions."""
+    
+    def setup_method(self):
+        """Set up test fixtures."""
+        with patch.object(AgentManager, '_discover_agents'):
+            self.manager = AgentManager()
+            self.manager.discovered_agents = {"TEST_AGENT": Mock()}
+    
+    def test_get_agent_descriptions_empty(self):
+        """Test getting descriptions when no agents are registered."""
+        self.manager.discovered_agents = {}
+        
+        descriptions = self.manager.get_agent_descriptions()
+        
+        assert descriptions == {}
+    
+    def test_get_available_agents_empty(self):
+        """Test getting available agents when none are registered."""
+        self.manager.discovered_agents = {}
+        
+        agents = self.manager.get_available_agents()
+        
+        assert agents == []
+    
+    def test_get_agent_nonexistent(self):
+        """Test getting a nonexistent agent."""
+        agent = self.manager.get_agent("NONEXISTENT")
+        
+        assert agent is None
+    
+    def test_resolve_agent_name_exact_match(self):
+        """Test agent name resolution with exact match."""
+        self.manager.discovered_agents["EXACT_MATCH"] = Mock()
+        
+        result = self.manager._resolve_agent_name("EXACT_MATCH")
+        
+        assert result == "EXACT_MATCH"
+    
+    def test_resolve_agent_name_case_insensitive(self):
+        """Test agent name resolution with case differences."""
+        self.manager.discovered_agents["TEST_AGENT"] = Mock()
+        
+        result = self.manager._resolve_agent_name("test_agent")
+        
+        assert result == "TEST_AGENT"
+    
+    def test_resolve_agent_name_partial_match(self):
+        """Test agent name resolution with partial match."""
+        self.manager.discovered_agents["LONG_AGENT_NAME"] = Mock()
+        
+        result = self.manager._resolve_agent_name("LONG")
+        
+        assert result == "LONG_AGENT_NAME"
+    
+    def test_resolve_agent_name_no_match(self):
+        """Test agent name resolution with no match."""
+        result = self.manager._resolve_agent_name("NONEXISTENT")
+        
+        assert result is None
+    
+    def test_resolve_agent_name_empty_input(self):
+        """Test agent name resolution with empty input."""
+        result = self.manager._resolve_agent_name("")
+        
+        assert result is None
+    
+    def test_resolve_agent_name_none_input(self):
+        """Test agent name resolution with None input."""
+        result = self.manager._resolve_agent_name(None)
+        
+        assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_process_conversation_empty_message(self):
+        """Test processing empty message."""
+        with patch('app.agents.agent_manager.input_sanitizer') as mock_sanitizer:
+            mock_sanitizer.sanitize_input.return_value = ("", False, None)
+            mock_sanitizer.wrap_user_input.return_value = "<user_message></user_message>"
+            
+            with patch.object(self.manager, '_prepare_context', return_value="context"), \
+                 patch.object(self.manager, '_select_agent', return_value="TEST_AGENT"):
+                
+                # Mock agent processing
+                with patch('app.agents.agent_manager.Runner') as mock_runner:
+                    mock_runner_instance = AsyncMock()
+                    mock_runner.return_value = mock_runner_instance
+                    mock_runner_instance.run_stream.return_value = ["Empty", "response"]
+                    
+                    result = await self.manager.process_conversation(
+                        message="",
+                        conversation_agents=[],
+                        agents_config={},
+                        thread_id="test-thread"
+                    )
+                    
+                    assert isinstance(result, tuple)
+                    assert len(result) == 2
+    
+    @pytest.mark.asyncio
+    async def test_process_conversation_very_long_message(self):
+        """Test processing very long message."""
+        long_message = "x" * 10000  # Very long message
+        
+        with patch('app.agents.agent_manager.input_sanitizer') as mock_sanitizer:
+            mock_sanitizer.sanitize_input.return_value = (long_message, False, None)
+            mock_sanitizer.wrap_user_input.return_value = f"<user_message>{long_message}</user_message>"
+            
+            with patch.object(self.manager, '_prepare_context', return_value="context"), \
+                 patch.object(self.manager, '_select_agent', return_value="TEST_AGENT"):
+                
+                # Mock agent processing
+                with patch('app.agents.agent_manager.Runner') as mock_runner:
+                    mock_runner_instance = AsyncMock()
+                    mock_runner.return_value = mock_runner_instance
+                    mock_runner_instance.run_stream.return_value = ["Long", "response"]
+                    
+                    result = await self.manager.process_conversation(
+                        message=long_message,
+                        conversation_agents=[],
+                        agents_config={},
+                        thread_id="test-thread"
+                    )
+                    
+                    assert isinstance(result, tuple)
+    
+    @pytest.mark.asyncio
+    async def test_process_conversation_special_characters(self):
+        """Test processing message with special characters."""
+        special_message = "Test with émojis 🚀 and spëcial chars @#$%"
+        
+        with patch('app.agents.agent_manager.input_sanitizer') as mock_sanitizer:
+            mock_sanitizer.sanitize_input.return_value = (special_message, False, None)
+            mock_sanitizer.wrap_user_input.return_value = f"<user_message>{special_message}</user_message>"
+            
+            with patch.object(self.manager, '_prepare_context', return_value="context"), \
+                 patch.object(self.manager, '_select_agent', return_value="TEST_AGENT"):
+                
+                # Mock agent processing
+                with patch('app.agents.agent_manager.Runner') as mock_runner:
+                    mock_runner_instance = AsyncMock()
+                    mock_runner.return_value = mock_runner_instance
+                    mock_runner_instance.run_stream.return_value = ["Special", "response"]
+                    
+                    result = await self.manager.process_conversation(
+                        message=special_message,
+                        conversation_agents=[],
+                        agents_config={},
+                        thread_id="test-thread"
+                    )
+                    
+                    assert isinstance(result, tuple)
+
+
+class TestAgentManagerIntegration:
+    """Integration tests for AgentManager with mocked dependencies."""
+    
+    def setup_method(self):
+        """Set up test fixtures."""
+        with patch.object(AgentManager, '_discover_agents'):
+            self.manager = AgentManager()
+            
+            # Set up mock agents
+            self.mock_moderator = Mock()
+            self.mock_agent = Mock()
+            self.manager.discovered_agents = {
+                "MODERATOR": self.mock_moderator,
+                "TEST_AGENT": self.mock_agent
+            }
+    
+    @pytest.mark.asyncio
+    async def test_full_conversation_workflow_success(self):
+        """Test complete successful conversation workflow."""
+        message = "Test integration message"
+        
+        # Mock all dependencies
+        with patch('app.agents.agent_manager.input_sanitizer') as mock_sanitizer, \
+             patch('app.agents.agent_manager.buffer_manager') as mock_buffer, \
+             patch('app.agents.agent_manager.pgvector_query_service') as mock_rag:
+            
+            # Set up input sanitization
+            mock_sanitizer.sanitize_input.return_value = (message, False, None)
+            mock_sanitizer.wrap_user_input.return_value = f"<user_message>{message}</user_message>"
+            
+            # Set up buffer manager
+            mock_buffer.get_buffer_context.return_value = "buffer context"
+            
+            # Set up RAG service
+            mock_rag.query_documents.return_value = "relevant context"
+            
+            # Mock agent selection
+            with patch('app.agents.agent_manager.Runner') as mock_runner:
+                # Mock moderator selection
+                mock_moderator_runner = AsyncMock()
+                mock_moderator_runner.run_stream.return_value = ['{"agent": "TEST_AGENT"}']
+                
+                # Mock agent response
+                mock_agent_runner = AsyncMock()
+                mock_agent_runner.run_stream.return_value = ["Test", " response"]
+                
+                def runner_side_effect(*args, **kwargs):
+                    # Return different runners based on agent
+                    if args and hasattr(args[0], 'name') and args[0].name == "MODERATOR":
+                        return mock_moderator_runner
+                    return mock_agent_runner
+                
+                mock_runner.side_effect = runner_side_effect
+                
+                result = await self.manager.process_conversation(
+                    message=message,
+                    conversation_agents=[],
+                    agents_config={},
+                    thread_id="integration-test"
+                )
+                
+                assert isinstance(result, tuple)
+                assert len(result) == 2
+                assert result[0] == "TEST_AGENT"
+                assert isinstance(result[1], str)
+    
+    @pytest.mark.asyncio
+    async def test_conversation_with_collaboration_workflow(self):
+        """Test conversation workflow with collaboration."""
+        message = "Collaborate with multiple agents"
+        
+        with patch('app.agents.agent_manager.input_sanitizer') as mock_sanitizer, \
+             patch('app.agents.agent_manager.collaboration_manager') as mock_collab_mgr:
+            
+            mock_sanitizer.sanitize_input.return_value = (message, False, None)
+            mock_sanitizer.wrap_user_input.return_value = f"<user_message>{message}</user_message>"
+            
+            # Mock collaboration manager
+            mock_collab_mgr.initiate_collaboration.return_value = "collab-id-123"
+            mock_collab_mgr.get_collaboration_result.return_value = "Collaborative response"
+            
+            # Mock agent selection that sets collaborators
+            with patch.object(self.manager, '_select_agent') as mock_select, \
+                 patch.object(self.manager, '_prepare_context', return_value="context"):
+                
+                async def set_collaborators(message, context, thread_id):
+                    context.collaborators = ["SECONDARY_AGENT"]
+                    return "TEST_AGENT"
+                
+                mock_select.side_effect = set_collaborators
+                
+                result = await self.manager.process_conversation(
+                    message=message,
+                    conversation_agents=[],
+                    agents_config={},
+                    thread_id="collab-test"
+                )
+                
+                assert result[1] == "Collaborative response"
+                mock_collab_mgr.initiate_collaboration.assert_called_once()
+                mock_collab_mgr.get_collaboration_result.assert_called_once_with("collab-id-123")
+    
+    @pytest.mark.asyncio
+    async def test_conversation_with_streaming_callback(self):
+        """Test conversation workflow with streaming callback."""
+        message = "Test streaming"
+        callback_tokens = []
+        
+        async def streaming_callback(token):
+            callback_tokens.append(token)
+        
+        with patch('app.agents.agent_manager.input_sanitizer') as mock_sanitizer:
+            mock_sanitizer.sanitize_input.return_value = (message, False, None)
+            mock_sanitizer.wrap_user_input.return_value = f"<user_message>{message}</user_message>"
+            
+            with patch.object(self.manager, '_prepare_context', return_value="context"), \
+                 patch.object(self.manager, '_select_agent', return_value="TEST_AGENT"):
+                
+                # Mock streaming runner
+                with patch('app.agents.agent_manager.Runner') as mock_runner:
+                    mock_runner_instance = AsyncMock()
+                    mock_runner.return_value = mock_runner_instance
+                    
+                    # Mock streaming response
+                    async def mock_stream(*args, **kwargs):
+                        callback = kwargs.get('streaming_callback')
+                        if callback:
+                            await callback("Stream")
+                            await callback(" token")
+                        return ["Stream", " token", " response"]
+                    
+                    mock_runner_instance.run_stream = mock_stream
+                    
+                    result = await self.manager.process_conversation(
+                        message=message,
+                        conversation_agents=[],
+                        agents_config={},
+                        thread_id="stream-test",
+                        streaming_callback=streaming_callback
+                    )
+                    
+                    # Verify streaming worked
+                    assert "Stream" in callback_tokens
+                    assert " token" in callback_tokens
+                    assert isinstance(result, tuple)
+            
             mock_stream_result = Mock()
             mock_stream_result.final_output = "Final response"
             
