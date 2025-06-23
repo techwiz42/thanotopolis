@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import { useStreamingSpeechToText } from '@/services/voice/StreamingSpeechToTextService';
 import { advancedLanguageDetection, LanguageDetectionResult } from '@/services/voice/AdvancedLanguageDetection';
+import { cleanTextForTTS, chunkTextForTTS } from '../utils/voiceUtils';
 
 // Simple fallback detection function
 function detectLanguageFallback(text: string): { language: string | null, confidence: number } {
@@ -403,102 +404,234 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
   const toggleTTS = useCallback(() => {
     setVoiceState(prev => ({ ...prev, isTTSEnabled: !prev.isTTSEnabled }));
     
-    // Stop current audio if disabling TTS
+    // Stop current audio if disabling TTS - but only if manually disabling
     if (voiceState.isTTSEnabled && currentAudio) {
-      currentAudio.pause();
-      setCurrentAudio(null);
-      setVoiceState(prev => ({ ...prev, isTTSActive: false }));
+      try {
+        // Mark as intentionally stopped to prevent error logging
+        currentAudio.dataset.intentionallyStopped = 'true';
+        currentAudio.pause();
+        setCurrentAudio(null);
+        setVoiceState(prev => ({ ...prev, isTTSActive: false }));
+      } catch (error) {
+        console.warn('Error stopping TTS audio during toggle:', error);
+        setCurrentAudio(null);
+        setVoiceState(prev => ({ ...prev, isTTSActive: false }));
+      }
     }
   }, [voiceState.isTTSEnabled, currentAudio]);
 
-  // Text-to-speech function
+  // Create refs for stable values to avoid dependency issues
+  const tokenRef = useRef(token);
+  const voiceStateRef = useRef(voiceState);
+  const languageCodeRef = useRef(languageCode);
+  const stopSTTRef = useRef(stopSTT);
+  const startSTTRef = useRef(startSTT);
+  
+  // Update refs when values change
+  useEffect(() => {
+    tokenRef.current = token;
+    voiceStateRef.current = voiceState;
+    languageCodeRef.current = languageCode;
+    stopSTTRef.current = stopSTT;
+    startSTTRef.current = startSTT;
+  }, [token, voiceState, languageCode, stopSTT, startSTT]);
+
+  // Text-to-speech function with improved processing and chunking
   const speakText = useCallback(async (text: string) => {
-    if (!voiceState.isTTSEnabled || !text.trim()) return;
+    if (!voiceStateRef.current.isTTSEnabled || !text.trim()) return;
+
+    // Capture state variables at the start to avoid closure issues
+    const originalDetectionEnabled = voiceStateRef.current.isAutoDetecting;
 
     try {
-      // Stop any currently playing audio
+      // Stop any currently playing audio with proper error handling
       if (currentAudio) {
-        currentAudio.pause();
-        setCurrentAudio(null);
+        try {
+          // Set a flag to indicate we're intentionally stopping
+          currentAudio.dataset.intentionallyStopped = 'true';
+          currentAudio.pause();
+          setCurrentAudio(null);
+        } catch (pauseError) {
+          console.warn('Audio pause error (expected during interruption):', pauseError);
+          setCurrentAudio(null);
+        }
       }
 
       // Temporarily disable STT during TTS to prevent feedback
-      sttWasEnabledRef.current = voiceState.isSTTEnabled;
+      sttWasEnabledRef.current = voiceStateRef.current.isSTTEnabled;
       if (sttWasEnabledRef.current) {
-        stopSTT();
+        console.log('🔇 Temporarily stopping STT during TTS to prevent feedback');
+        try {
+          stopSTTRef.current();
+        } catch (sttStopError) {
+          console.warn('Error stopping STT during TTS (non-critical):', sttStopError);
+        }
       }
 
       setVoiceState(prev => ({ ...prev, isTTSActive: true }));
 
-      const formData = new FormData();
-      formData.append('text', text.substring(0, 500)); // Limit text length
-      // Don't send voice_id to use backend default (TxGEqnHWrfWFTfGW9XjX - James voice)
-      formData.append('output_format', 'mp3_44100_128');
-      formData.append('stability', '0.5');
-      formData.append('similarity_boost', '0.5');
-      formData.append('style', '0.0');
-      formData.append('use_speaker_boost', 'true');
+      // Get current language for stable voice selection
+      const currentLanguage = voiceStateRef.current.detectedLanguage || languageCodeRef.current || 'en';
+      
+      // Split text into manageable chunks for long messages
+      const textChunks = chunkTextForTTS(text, 800);
+      console.log(`🎙️ TTS processing ${textChunks.length} chunks for language: ${currentLanguage}`);
 
-      const response = await fetch('/api/voice/tts/synthesize', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      if (!response.ok) {
-        throw new Error(`TTS API error: ${response.status}`);
+      // Temporarily disable language detection during TTS to prevent drift
+      if (originalDetectionEnabled) {
+        setVoiceState(prev => ({ ...prev, isAutoDetecting: false }));
+        console.log('🔒 Language detection disabled during TTS to prevent drift');
       }
 
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-
-      setCurrentAudio(audio);
-
-      audio.onended = async () => {
-        setVoiceState(prev => ({ ...prev, isTTSActive: false }));
-        setCurrentAudio(null);
-        URL.revokeObjectURL(audioUrl);
-        
-        // Re-enable STT if it was enabled before TTS started
-        if (sttWasEnabledRef.current) {
-          try {
-            await startSTT();
-          } catch (error) {
-            console.error('Failed to restart STT after TTS:', error);
-          }
+      // Process each chunk sequentially
+      for (let i = 0; i < textChunks.length; i++) {
+        // Check if TTS is still enabled before processing chunk
+        if (!voiceStateRef.current.isTTSEnabled) {
+          console.log('🛑 TTS was disabled during processing, stopping playback');
+          break;
         }
-      };
-
-      audio.onerror = async () => {
-        setVoiceState(prev => ({ ...prev, isTTSActive: false }));
-        setCurrentAudio(null);
-        URL.revokeObjectURL(audioUrl);
-        console.error('Audio playback error');
         
-        // Re-enable STT if it was enabled before TTS started
-        if (sttWasEnabledRef.current) {
-          try {
-            await startSTT();
-          } catch (error) {
-            console.error('Failed to restart STT after TTS error:', error);
-          }
+        const chunk = textChunks[i];
+        console.log(`🎙️ Speaking chunk ${i + 1}/${textChunks.length}: "${chunk.substring(0, 50)}..."`);
+
+        const formData = new FormData();
+        formData.append('text', chunk); // Use cleaned and chunked text
+        // Don't send voice_id to use backend default (TxGEqnHWrfWFTfGW9XjX - James voice)
+        formData.append('output_format', 'mp3_44100_128');
+        formData.append('stability', '0.5');
+        formData.append('similarity_boost', '0.5');
+        formData.append('style', '0.0');
+        formData.append('use_speaker_boost', 'true');
+
+        const response = await fetch('/api/voice/tts/synthesize', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${tokenRef.current}`
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`TTS API error: ${response.status}`);
         }
-      };
 
-      await audio.play();
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
 
-    } catch (error) {
-      console.error('TTS error:', error);
+        setCurrentAudio(audio);
+
+        // Wait for this chunk to finish before starting the next one
+        await new Promise<void>((resolve, reject) => {
+          // Check if TTS was disabled before starting playback
+          if (!voiceStateRef.current.isTTSEnabled) {
+            console.log('🛑 TTS disabled before chunk playback, skipping');
+            URL.revokeObjectURL(audioUrl);
+            resolve();
+            return;
+          }
+          
+          audio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            resolve();
+          };
+
+          audio.onerror = () => {
+            URL.revokeObjectURL(audioUrl);
+            console.error('Audio playback error for chunk', i + 1);
+            reject(new Error('Audio playback failed'));
+          };
+
+          // Improved audio play with proper error handling
+          audio.play().catch(playError => {
+            // Check if this was an intentional interruption
+            if (playError.name === 'AbortError' && audio.dataset.intentionallyStopped) {
+              console.log('Audio playback intentionally stopped for chunk', i + 1);
+              URL.revokeObjectURL(audioUrl);
+              resolve(); // Don't treat as error
+            } else if (playError.name === 'AbortError') {
+              // Handle unintentional abort (browser interruption, etc.)
+              console.log('TTS interrupted (this is normal when starting new speech)');
+              URL.revokeObjectURL(audioUrl);
+              resolve(); // Don't treat as error
+            } else {
+              console.error('Audio playback error:', playError);
+              URL.revokeObjectURL(audioUrl);
+              reject(playError);
+            }
+          });
+        });
+
+        // Small pause between chunks
+        if (i < textChunks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      // All chunks completed successfully
       setVoiceState(prev => ({ ...prev, isTTSActive: false }));
       setCurrentAudio(null);
       
+      // Re-enable language detection if it was enabled before TTS
+      if (originalDetectionEnabled) {
+        setVoiceState(prev => ({ ...prev, isAutoDetecting: true }));
+        console.log('🔓 Language detection re-enabled after TTS completion');
+      }
+      
+      // Re-enable STT if it was enabled before TTS started
+      if (sttWasEnabledRef.current) {
+        console.log('🎤 Restarting STT after successful TTS completion');
+        try {
+          // Add a small delay to ensure TTS cleanup is complete
+          await new Promise(resolve => setTimeout(resolve, 500));
+          await startSTTRef.current();
+        } catch (error) {
+          console.error('Failed to restart STT after TTS:', error);
+          // Don't propagate this error, TTS was successful
+        }
+      }
+
+    } catch (error) {
+      // Enhanced error logging with context
+      const textChunks = chunkTextForTTS(text, 800); // Get chunks for context
+      const errorContext = {
+        chunkIndex: 0, // Error occurred during setup or processing
+        totalChunks: textChunks?.length || 0,
+        textLength: text.length,
+        isSTTEnabled: sttWasEnabledRef.current,
+        currentLanguage: voiceStateRef.current.detectedLanguage || languageCodeRef.current || 'en',
+        errorType: (error as Error)?.name || 'Unknown'
+      };
+      
+      console.error('TTS error with context:', error, errorContext);
+      
+      // Create more specific error messages for debugging
+      let errorMessage = "TTS playback failed";
+      if ((error as Error)?.name === 'AbortError') {
+        errorMessage = "TTS interrupted (this is normal when starting new speech)";
+        console.log(errorMessage); // Log as info, not error
+      } else if ((error as Error)?.message?.includes('STT connection') || (error as Error)?.message?.includes('connection')) {
+        errorMessage = "TTS interrupted due to microphone connection issue";
+      } else if ((error as Error)?.message?.includes('long output')) {
+        errorMessage = "Long TTS output was interrupted";
+      }
+      
+      setVoiceState(prev => ({ ...prev, isTTSActive: false }));
+      setCurrentAudio(null);
+      
+      // Re-enable language detection even on error
+      if (originalDetectionEnabled) {
+        setVoiceState(prev => ({ ...prev, isAutoDetecting: true }));
+        console.log('🔓 Language detection re-enabled after TTS error');
+      }
+      
       // Re-enable STT if it was enabled before TTS started (even on error)
       if (sttWasEnabledRef.current) {
+        console.log('🎤 Attempting to restart STT after TTS error');
         try {
-          await startSTT();
+          // Add a small delay to ensure cleanup is complete
+          await new Promise(resolve => setTimeout(resolve, 500));
+          await startSTTRef.current();
         } catch (sttError) {
           console.error('Failed to restart STT after TTS error:', sttError);
         }
@@ -510,7 +643,7 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
         variant: "destructive"
       });
     }
-  }, [voiceState.isTTSEnabled, currentAudio, token, toast, stopSTT, startSTT]);
+  }, [currentAudio, toast]); // Minimal dependencies - everything else uses refs
 
   // Stop speaking
   const stopSpeaking = useCallback(async () => {
@@ -522,13 +655,13 @@ export const useVoice = ({ conversationId, onTranscript, languageCode, onLanguag
       // Re-enable STT if it was enabled before TTS started
       if (sttWasEnabledRef.current) {
         try {
-          await startSTT();
+          await startSTTRef.current();
         } catch (error) {
           console.error('Failed to restart STT after stopping TTS:', error);
         }
       }
     }
-  }, [currentAudio, startSTT]);
+  }, [currentAudio]); // Use ref for startSTT
 
   // Cleanup on unmount
   useEffect(() => {

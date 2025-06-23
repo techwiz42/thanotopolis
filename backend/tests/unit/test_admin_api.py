@@ -22,8 +22,7 @@ from app.schemas.schemas import (
 class TestAdminDashboard:
     """Test admin dashboard endpoint"""
     
-    @pytest.mark.asyncio
-    async def test_get_admin_dashboard_success(self, test_client, admin_user, mock_db):
+    def test_get_admin_dashboard_success(self, test_client, admin_user, mock_db):
         """Test getting admin dashboard data successfully"""
         # Mock database queries
         mock_db.scalar.side_effect = [10, 25]  # total_users, total_conversations

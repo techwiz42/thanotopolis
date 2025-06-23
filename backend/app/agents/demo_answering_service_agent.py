@@ -34,6 +34,9 @@ class DemoAnsweringServiceAgent(BaseAgent):
     # Proprietary to demo organization only
     OWNER_DOMAINS = ["demo"]
     
+    # Mark as telephony-only agent
+    TELEPHONY_ONLY = True
+    
     def __init__(self, name="DEMO_ANSWERING_SERVICE"):
         # Brief, conversational instructions optimized for voice interaction
         answering_instructions = """You are Barney, a friendly AI telephone receptionist working for Cyberiad.ai, the agentic framework organization. You're currently helping with the Demo organization's calls. Keep responses BRIEF and conversational for phone calls.
@@ -50,6 +53,10 @@ class DemoAnsweringServiceAgent(BaseAgent):
 - Speak naturally, as if in a phone conversation
 - Keep responses under 2-3 sentences for low latency
 - Offer language switching early in the conversation
+
+## SPECIAL HANDLING
+- When you receive "CALL_START", immediately respond with your initial greeting
+- Initial greeting should be: "Hello! This is Barney from Cyberiad.ai. I'm helping with the Demo organization's calls today. How can I assist you?"
 
 ## KEY RESPONSIBILITIES
 1. **Initial Greeting**: "Hello! This is Barney from Cyberiad.ai. I'm helping with Demo's calls today. How can I assist you?"

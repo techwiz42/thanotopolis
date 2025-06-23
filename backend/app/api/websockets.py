@@ -1032,14 +1032,6 @@ async def websocket_notifications(
         except:
             pass
 
-@router.websocket("/ws/telephony/stream/{call_id}")
-async def telephony_stream_endpoint(
-    websocket: WebSocket,
-    call_id: UUID,
-    db: AsyncSession = Depends(get_db)
-):
-    """WebSocket endpoint for telephony streaming"""
-    await telephony_stream_handler.handle_connection(websocket, call_id, db)
 
 @router.get("/ws/stats")
 async def get_websocket_stats():

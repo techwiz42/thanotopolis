@@ -26,7 +26,8 @@ class TenantAwareAgentManager(AgentManager):
     async def get_available_agents_for_user(
         self,
         user: User,
-        db: AsyncSession
+        db: AsyncSession,
+        include_telephony_only: bool = False
     ) -> List[str]:
         """
         Get list of agent types available to a specific user based on their organization.
@@ -34,6 +35,7 @@ class TenantAwareAgentManager(AgentManager):
         Args:
             user: The user requesting agents
             db: Database session
+            include_telephony_only: Whether to include telephony-only agents (default: False)
             
         Returns:
             List of available agent type names
@@ -50,12 +52,26 @@ class TenantAwareAgentManager(AgentManager):
                     continue
                 
                 # Check if agent has ownership properties defined
-                owner_domains = []
+                owner_domains = None
+                is_telephony_only = False
                 
                 if isinstance(agent_instance, BaseAgent):
-                    # Get OWNER_DOMAINS - now expects a list of domains
-                    # If OWNER_DOMAINS is empty list [], it's a free agent
-                    owner_domains = getattr(agent_instance.__class__, 'OWNER_DOMAINS', [])
+                    # Check if OWNER_DOMAINS is explicitly defined
+                    if hasattr(agent_instance.__class__, 'OWNER_DOMAINS'):
+                        owner_domains = agent_instance.__class__.OWNER_DOMAINS
+                    # Check if agent is telephony-only
+                    is_telephony_only = getattr(agent_instance.__class__, 'TELEPHONY_ONLY', False)
+                
+                # Skip telephony-only agents if not requested
+                if is_telephony_only and not include_telephony_only:
+                    logger.info(f"Excluding telephony-only agent {agent_type} from chat context")
+                    continue
+                
+                # If OWNER_DOMAINS is not defined, treat as available to all domains
+                if owner_domains is None:
+                    logger.info(f"Agent {agent_type} has no OWNER_DOMAINS defined, making available to all domains")
+                    available_agents.append(agent_type)
+                    continue
                 
                 # If it's a free agent (empty list), it's available to everyone
                 if owner_domains == []:
@@ -74,9 +90,6 @@ class TenantAwareAgentManager(AgentManager):
                         logger.info(f"Proprietary agent {agent_type} is available to user from {user_subdomain} org (allowed orgs: {owner_domains})")
                     else:
                         logger.info(f"Proprietary agent {agent_type} (allowed orgs: {owner_domains}) not available to user from {user_subdomain}")
-                else:
-                    # If we can't determine ownership, treat as unavailable for safety
-                    logger.warning(f"Cannot determine ownership for agent {agent_type}, treating as unavailable")
             
             logger.info(f"User {user.email} from org {user_subdomain if 'user_subdomain' in locals() else 'unknown'} has access to agents: {available_agents}")
             return available_agents
@@ -92,10 +105,11 @@ class TenantAwareAgentManager(AgentManager):
         for agent_type in self.get_available_agents():
             agent_instance = self.get_agent(agent_type)
             if agent_instance:
-                # Check OWNER_DOMAINS - empty list means free agent
-                owner_domains = getattr(agent_instance.__class__, 'OWNER_DOMAINS', [])
-                if owner_domains == []:
-                    free_agents.append(agent_type)
+                # Check if OWNER_DOMAINS is explicitly defined and is empty list
+                if hasattr(agent_instance.__class__, 'OWNER_DOMAINS'):
+                    owner_domains = agent_instance.__class__.OWNER_DOMAINS
+                    if owner_domains == []:
+                        free_agents.append(agent_type)
         return free_agents
     
     async def _get_free_agents_only(self) -> List[str]:
@@ -104,10 +118,11 @@ class TenantAwareAgentManager(AgentManager):
         for agent_type in self.get_available_agents():
             agent_instance = self.get_agent(agent_type)
             if agent_instance:
-                # Check OWNER_DOMAINS - empty list means free agent
-                owner_domains = getattr(agent_instance.__class__, 'OWNER_DOMAINS', [])
-                if owner_domains == []:
-                    free_agents.append(agent_type)
+                # Check if OWNER_DOMAINS is explicitly defined and is empty list
+                if hasattr(agent_instance.__class__, 'OWNER_DOMAINS'):
+                    owner_domains = agent_instance.__class__.OWNER_DOMAINS
+                    if owner_domains == []:
+                        free_agents.append(agent_type)
         return free_agents
     
     async def process_conversation_with_tenant_context(
@@ -160,6 +175,50 @@ class TenantAwareAgentManager(AgentManager):
         finally:
             # Restore original agents
             self.discovered_agents = original_agents
+    
+    async def get_available_agents_for_telephony(
+        self,
+        tenant_id: UUID,
+        db: AsyncSession
+    ) -> List[str]:
+        """
+        Get list of agent types available for telephony for a specific tenant.
+        This includes telephony-only agents.
+        
+        Args:
+            tenant_id: The tenant ID
+            db: Database session
+            
+        Returns:
+            List of available agent type names
+        """
+        # Create a temporary user object for tenant context
+        from app.models.models import Tenant
+        
+        tenant_query = select(Tenant).where(Tenant.id == tenant_id)
+        tenant_result = await db.execute(tenant_query)
+        tenant = tenant_result.scalar_one_or_none()
+        
+        if not tenant:
+            logger.error(f"Tenant {tenant_id} not found")
+            return []
+        
+        # Create a minimal user object for filtering
+        class TelephonyUser:
+            def __init__(self, tenant_id, subdomain):
+                self.tenant_id = tenant_id
+                self.email = f"telephony@{subdomain}"
+                self.username = "telephony"
+                self.role = "telephony"
+        
+        telephony_user = TelephonyUser(tenant_id, tenant.subdomain)
+        
+        # Get agents including telephony-only ones
+        return await self.get_available_agents_for_user(
+            user=telephony_user,
+            db=db,
+            include_telephony_only=True
+        )
 
 
 # Create tenant-aware singleton instance

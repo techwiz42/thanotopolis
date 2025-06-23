@@ -277,6 +277,105 @@ class DeepgramService:
                 "paragraphs": []
             }
     
+    async def transcribe_stream(
+        self,
+        audio_data: bytes,
+        content_type: str = "audio/x-mulaw",
+        language: str = None,
+        model: str = None,
+        sample_rate: int = 8000,
+        channels: int = 1
+    ) -> str:
+        """
+        Transcribe audio stream data using Deepgram.
+        
+        This is a simplified method for transcribing audio chunks from streaming sources
+        like telephony. It returns just the transcript text.
+        
+        Args:
+            audio_data: Raw audio bytes from stream
+            content_type: MIME type of audio (defaults to mulaw for telephony)
+            language: Language code (optional)
+            model: Model to use (optional)
+            
+        Returns:
+            Transcript text string or empty string if no transcript
+        """
+        if not self.is_available():
+            raise RuntimeError("Deepgram service not available")
+        
+        try:
+            logger.info(f"📞 Deepgram transcribe_stream: {len(audio_data)} bytes, content_type: {content_type}, sample_rate: {sample_rate}, channels: {channels}")
+            
+            # Prepare audio source with proper telephony format
+            source = {
+                "buffer": audio_data,
+                "mimetype": content_type
+            }
+            
+            # Determine the model to use
+            requested_model = model or settings.DEEPGRAM_MODEL
+            
+            # Get mapped language first to check compatibility
+            mapped_language = None
+            if language:
+                mapped_language = map_language_code_to_deepgram(language)
+            else:
+                # For telephony, enable language detection
+                mapped_language = None
+            
+            # Get compatible model for the language
+            compatible_model = get_compatible_model_for_language(mapped_language, requested_model)
+            
+            # Configure options specifically for telephony audio (mulaw, 8kHz)
+            options = PrerecordedOptions(
+                model=compatible_model,
+                punctuate=True,
+                diarize=False,
+                smart_format=True,
+                utterances=True,
+                detect_language=True if not mapped_language else False
+            )
+            
+            # Set language if specified
+            if mapped_language:
+                options.language = mapped_language
+                logger.debug(f"Using language: {language} -> {mapped_language} with model: {compatible_model}")
+            else:
+                logger.debug(f"Using language auto-detection with model: {compatible_model}")
+            
+            # Send to Deepgram
+            logger.debug(f"📞 Sending to Deepgram with options: model={compatible_model}, language={mapped_language}, detect_language={not mapped_language}")
+            response = await self.client.listen.asyncrest.v("1").transcribe_file(
+                source, options
+            )
+            
+            # Extract transcription
+            result = response.to_dict()
+            logger.debug(f"📞 Deepgram response keys: {list(result.keys()) if result else 'None'}")
+            
+            # Extract transcript text
+            if (result.get("results") and 
+                result["results"].get("channels") and 
+                len(result["results"]["channels"]) > 0):
+                
+                channel = result["results"]["channels"][0]
+                
+                if channel.get("alternatives") and len(channel["alternatives"]) > 0:
+                    alternative = channel["alternatives"][0]
+                    transcript = alternative.get("transcript", "")
+                    
+                    if transcript and transcript.strip():
+                        logger.info(f"✅ Successfully transcribed stream: '{transcript}' ({len(transcript)} characters)")
+                        return transcript.strip()
+            
+            logger.warning("📞 Deepgram returned empty transcript - no speech detected or audio quality issue")
+            return ""
+                
+        except Exception as e:
+            logger.error(f"Error transcribing stream: {e}")
+            return ""
+    
     async def start_live_transcription(
         self,
         on_message: Callable[[Dict[str, Any]], None],

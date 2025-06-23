@@ -38,10 +38,26 @@ export const cleanTextForTTS = (text: string): string => {
     .replace(/\n+/g, '. ')
     // Remove URLs (they don't speak well)
     .replace(/https?:\/\/[^\s]+/g, '[link]')
+    // Handle temperature and degree symbols
+    .replace(/(\d+)\s*°C/g, '$1 degrees Celsius')
+    .replace(/(\d+)\s*°F/g, '$1 degrees Fahrenheit')
+    .replace(/(\d+)\s*°/g, '$1 degrees')
+    .replace(/°C/g, ' degrees Celsius')
+    .replace(/°F/g, ' degrees Fahrenheit')
+    .replace(/°/g, ' degrees')
     // Replace common symbols with speakable text
     .replace(/&/g, ' and ')
     .replace(/@/g, ' at ')
     .replace(/#/g, ' hashtag ')
+    .replace(/\$/g, ' dollars ')
+    .replace(/%/g, ' percent ')
+    .replace(/\+/g, ' plus ')
+    .replace(/=/g, ' equals ')
+    // Handle common abbreviations
+    .replace(/\bvs\b/gi, 'versus')
+    .replace(/\betc\b/gi, 'etcetera')
+    .replace(/\be\.g\.\b/gi, 'for example')
+    .replace(/\bi\.e\.\b/gi, 'that is')
     // Remove excessive whitespace
     .replace(/\s+/g, ' ')
     .trim();
@@ -61,6 +77,61 @@ export const estimateSpeakingTime = (text: string, wordsPerMinute: number = 150)
 export const isTextSuitableForTTS = (text: string, maxLength: number = 1000): boolean => {
   const cleaned = cleanTextForTTS(text);
   return cleaned.length > 0 && cleaned.length <= maxLength;
+};
+
+/**
+ * Split long text into chunks suitable for TTS while preserving sentence boundaries
+ */
+export const chunkTextForTTS = (text: string, maxChunkLength: number = 800): string[] => {
+  const cleaned = cleanTextForTTS(text);
+  
+  if (cleaned.length <= maxChunkLength) {
+    return [cleaned];
+  }
+
+  const chunks: string[] = [];
+  const sentences = cleaned.split(/(?<=[.!?])\s+/);
+  let currentChunk = '';
+
+  for (const sentence of sentences) {
+    // If adding this sentence would exceed the limit, save current chunk and start new one
+    if (currentChunk.length + sentence.length + 1 > maxChunkLength && currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+      currentChunk = sentence;
+    } else {
+      currentChunk += (currentChunk.length > 0 ? ' ' : '') + sentence;
+    }
+  }
+
+  // Add the last chunk if it has content
+  if (currentChunk.trim().length > 0) {
+    chunks.push(currentChunk.trim());
+  }
+
+  // If we still have chunks that are too long, split by words as fallback
+  const finalChunks: string[] = [];
+  for (const chunk of chunks) {
+    if (chunk.length <= maxChunkLength) {
+      finalChunks.push(chunk);
+    } else {
+      // Split long chunk by words
+      const words = chunk.split(' ');
+      let wordChunk = '';
+      for (const word of words) {
+        if (wordChunk.length + word.length + 1 > maxChunkLength && wordChunk.length > 0) {
+          finalChunks.push(wordChunk.trim());
+          wordChunk = word;
+        } else {
+          wordChunk += (wordChunk.length > 0 ? ' ' : '') + word;
+        }
+      }
+      if (wordChunk.trim().length > 0) {
+        finalChunks.push(wordChunk.trim());
+      }
+    }
+  }
+
+  return finalChunks.length > 0 ? finalChunks : [cleaned.substring(0, maxChunkLength)];
 };
 
 /**

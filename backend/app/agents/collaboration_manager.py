@@ -218,32 +218,59 @@ class CollaborationManager:
             The collaboration result, or None if not complete/timeout/error
         """
         if collab_id not in self.active_collaborations:
-            logger.error(f"Collaboration {collab_id} not found")
-            return None
+            raise KeyError(f"Collaboration {collab_id} not found")
             
         session = self.active_collaborations[collab_id]
         
+        # If already completed, clean up and return result
         if session.status == CollaborationStatus.COMPLETED and session.result:
-            return session.result
+            result = session.result
+            # Move to history and remove from active
+            self._cleanup_session(collab_id, session)
+            return result
             
         if not session.future:
             logger.error(f"Collaboration {collab_id} has no future")
+            self._cleanup_session(collab_id, session)
             return None
             
         try:
             # Wait for the future to complete with timeout
             actual_timeout = timeout or self.TOTAL_COLLABORATION_TIMEOUT
             result = await asyncio.wait_for(asyncio.shield(session.future), timeout=actual_timeout)
+            # Clean up after getting result
+            self._cleanup_session(collab_id, session)
             return result
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for collaboration {collab_id}")
             session.status = CollaborationStatus.TIMEOUT
-            return None
+            session.end_time = time.time()
+            # Clean up on timeout
+            self._cleanup_session(collab_id, session)
+            raise asyncio.TimeoutError(f"Collaboration {collab_id} timed out")
         except Exception as e:
             logger.error(f"Error waiting for collaboration {collab_id}: {e}")
             session.status = CollaborationStatus.FAILED
             session.error = str(e)
-            return None
+            session.end_time = time.time()
+            # Clean up on error
+            self._cleanup_session(collab_id, session)
+            raise e
+    
+    def _cleanup_session(self, collab_id: str, session: CollaborationSession) -> None:
+        """
+        Clean up a session by moving it from active collaborations to history.
+        
+        Args:
+            collab_id: The collaboration ID
+            session: The collaboration session to clean up
+        """
+        # Remove from active collaborations
+        self.active_collaborations.pop(collab_id, None)
+        
+        # Add to history if not already there
+        if session not in self.collaboration_history:
+            self.collaboration_history.append(session)
     
     async def _run_collaboration(
         self,
@@ -694,35 +721,41 @@ class CollaborationManager:
 
     def get_collaboration_stats(self) -> Dict[str, Any]:
         """Get statistics about collaborations."""
-        if not self.collaboration_history:
-            return {"total_collaborations": 0}
-            
         total = len(self.collaboration_history)
+        active = len(self.active_collaborations)
         completed = sum(1 for s in self.collaboration_history if s.status == CollaborationStatus.COMPLETED)
-        failed = sum(1 for s in self.collaboration_history if s.status in [CollaborationStatus.FAILED, CollaborationStatus.TIMEOUT])
+        failed = sum(1 for s in self.collaboration_history if s.status == CollaborationStatus.FAILED)
+        timeout = sum(1 for s in self.collaboration_history if s.status == CollaborationStatus.TIMEOUT)
         
-        avg_duration = sum(
-            (s.end_time or time.time()) - s.start_time 
-            for s in self.collaboration_history if s.start_time
-        ) / total if total > 0 else 0
+        # Calculate average duration for completed sessions
+        durations = []
+        for session in self.collaboration_history:
+            if session.start_time and session.end_time:
+                durations.append(session.end_time - session.start_time)
         
+        avg_duration = sum(durations) / len(durations) if durations else 0.0
+        
+        # Calculate agent participation - count only historical sessions
         agent_participation = {}
         for session in self.collaboration_history:
             # Count primary agent
-            agent_participation.setdefault(session.primary_agent_name, {"primary": 0, "supporting": 0})
-            agent_participation[session.primary_agent_name]["primary"] += 1
+            if session.primary_agent_name not in agent_participation:
+                agent_participation[session.primary_agent_name] = 0
+            agent_participation[session.primary_agent_name] += 1
             
-            # Count supporting agents
+            # Count collaborating agents
             for agent in session.collaborating_agents:
-                agent_participation.setdefault(agent, {"primary": 0, "supporting": 0})
-                agent_participation[agent]["supporting"] += 1
+                if agent not in agent_participation:
+                    agent_participation[agent] = 0
+                agent_participation[agent] += 1
         
         return {
             "total_collaborations": total,
-            "completed": completed,
-            "failed": failed,
-            "completion_rate": (completed / total) if total > 0 else 0,
-            "avg_duration_seconds": avg_duration,
+            "active_collaborations": active,
+            "completed_collaborations": completed,
+            "failed_collaborations": failed,
+            "timeout_collaborations": timeout,
+            "average_duration": avg_duration,
             "agent_participation": agent_participation
         }
 

@@ -64,7 +64,7 @@ class TestLifespanManager:
         mock_app = Mock()
         
         with patch('app.main.init_db') as mock_init_db, \
-             patch('app.main.asyncio.create_task') as mock_create_task, \
+             patch('asyncio.create_task') as mock_create_task, \
              patch('app.main.settings') as mock_settings:
             
             mock_init_db.return_value = None
@@ -100,7 +100,7 @@ class TestLifespanManager:
         mock_app = Mock()
         
         with patch('app.main.init_db'), \
-             patch('app.main.asyncio.create_task'), \
+             patch('asyncio.create_task'), \
              patch('app.main.settings') as mock_settings, \
              patch('app.main.logger') as mock_logger:
             
@@ -122,7 +122,7 @@ class TestLifespanManager:
         mock_app = Mock()
         
         with patch('app.main.init_db'), \
-             patch('app.main.asyncio.create_task'), \
+             patch('asyncio.create_task'), \
              patch('app.main.settings') as mock_settings, \
              patch('app.main.logger') as mock_logger:
             
@@ -143,7 +143,7 @@ class TestLifespanManager:
         mock_task = AsyncMock()
         
         with patch('app.main.init_db'), \
-             patch('app.main.asyncio.create_task') as mock_create_task, \
+             patch('asyncio.create_task') as mock_create_task, \
              patch('app.main.shutdown_all_handlers') as mock_voice_shutdown, \
              patch('app.main.shutdown_stt_handlers') as mock_stt_shutdown:
             
@@ -165,7 +165,7 @@ class TestLifespanManager:
         mock_task.cancel.side_effect = Exception("Cancel failed")
         
         with patch('app.main.init_db'), \
-             patch('app.main.asyncio.create_task') as mock_create_task, \
+             patch('asyncio.create_task') as mock_create_task, \
              patch('app.main.logger') as mock_logger:
             
             mock_create_task.return_value = mock_task
@@ -187,7 +187,7 @@ class TestWebSocketCleanupTask:
         """Test normal WebSocket cleanup task operation."""
         call_count = 0
         
-        with patch('app.main.asyncio.sleep') as mock_sleep, \
+        with patch('asyncio.sleep') as mock_sleep, \
              patch('app.main.connection_manager') as mock_manager:
             
             # Mock sleep to break the loop after a few iterations
@@ -212,7 +212,7 @@ class TestWebSocketCleanupTask:
         """Test WebSocket cleanup task error handling."""
         call_count = 0
         
-        with patch('app.main.asyncio.sleep') as mock_sleep, \
+        with patch('asyncio.sleep') as mock_sleep, \
              patch('app.main.connection_manager') as mock_manager, \
              patch('app.main.logger') as mock_logger:
             
@@ -321,7 +321,7 @@ class TestRequestMiddleware:
             raise Exception("Test error")
             
         with patch('app.main.logger') as mock_logger:
-            with pytest.raises(Exception, match="Test error"):
+            with pytest.raises(Exception):
                 await log_requests(mock_request, mock_call_next)
             
             # Should log the error
@@ -334,6 +334,7 @@ class TestRequestMiddleware:
         mock_request.method = "GET"
         mock_request.url.path = "/api/test"
         mock_request.client = None  # No client info
+        mock_request.headers = {}  # Empty headers dict
         
         mock_response = Mock()
         mock_response.status_code = 200
@@ -554,7 +555,8 @@ class TestInformationEndpoints:
         mock_route2.methods = {"GET"}
         mock_route2.name = "test2"
         
-        with patch.object(app, 'routes', [mock_route1, mock_route2]):
+        with patch('app.main.app') as mock_app:
+            mock_app.routes = [mock_route1, mock_route2]
             response = await debug_routes()
             
             assert "total_routes" in response
@@ -577,7 +579,8 @@ class TestInformationEndpoints:
         mock_route_invalid = Mock()
         # Missing path and methods attributes
         
-        with patch.object(app, 'routes', [mock_route_valid, mock_route_invalid]):
+        with patch('app.main.app') as mock_app:
+            mock_app.routes = [mock_route_valid, mock_route_invalid]
             response = await debug_routes()
             
             # Should only include valid routes

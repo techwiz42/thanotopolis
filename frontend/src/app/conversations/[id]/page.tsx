@@ -232,17 +232,19 @@ export default function ConversationPage() {
   // Use refs to avoid stale closure issues with TTS
   const currentTTSEnabledRef = useRef(isTTSEnabled);
   const currentSpeakTextRef = useRef(speakText);
+  const currentAudioRef = useRef(currentAudio);
 
   // Update refs when values change
   useEffect(() => {
     currentTTSEnabledRef.current = isTTSEnabled;
     currentSpeakTextRef.current = speakText;
+    currentAudioRef.current = currentAudio;
     
     // Clear completed messages when TTS is disabled to allow future auto-play
     if (!isTTSEnabled) {
       completedMessagesRef.current.clear();
     }
-  }, [isTTSEnabled, speakText]);
+  }, [isTTSEnabled, speakText, currentAudio]);
   
   // Auto-scroll when new streaming content arrives
   useEffect(() => {
@@ -365,11 +367,11 @@ export default function ConversationPage() {
             // Wait a moment for streaming to complete, then speak
             pendingTTSRef.current[message.id] = setTimeout(() => {
               // Double-check TTS is still enabled and we haven't already started playing
-              if (currentTTSEnabledRef.current && !currentAudio) {
+              if (currentTTSEnabledRef.current && !currentAudioRef.current) {
                 console.log('🎵 Speaking message:', message.id);
                 currentSpeakTextFn(message.content);
               } else {
-                console.log('🚫 TTS skipped:', { ttsEnabled: currentTTSEnabledRef.current, audioPlaying: !!currentAudio });
+                console.log('🚫 TTS skipped:', { ttsEnabled: currentTTSEnabledRef.current, audioPlaying: !!currentAudioRef.current });
               }
               // Clean up the timeout reference
               delete pendingTTSRef.current[message.id];

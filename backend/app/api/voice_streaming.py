@@ -389,8 +389,10 @@ async def synthesize_speech(
             logger.error(f"TTS synthesis failed for user {current_user.email}: {result['error']}")
             raise HTTPException(status_code=500, detail=result["error"])
         
-        # Log synthesis
-        logger.info(f"Successfully synthesized {len(text)} characters for user {current_user.email}")
+        # Log synthesis details
+        audio_size = len(result["audio_data"])
+        chunks_processed = result.get("chunks_processed", 1)
+        logger.info(f"Successfully synthesized {len(text)} characters for user {current_user.email}: {audio_size} bytes, {chunks_processed} chunks")
         
         # Track TTS usage
         word_count = count_words(text)
@@ -410,6 +412,8 @@ async def synthesize_speech(
             media_type=result["content_type"],
             headers={
                 "Content-Disposition": "attachment; filename=speech.mp3",
+                "Content-Length": str(len(result["audio_data"])),
+                "Accept-Ranges": "bytes",
                 "X-Text-Length": str(len(text)),
                 "X-Voice-ID": result["voice_id"],
                 "X-Model-ID": result["model_id"],

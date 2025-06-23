@@ -6,7 +6,7 @@ Telephony service for managing phone verification and call handling
 import asyncio
 import secrets
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from uuid import UUID
 
@@ -288,13 +288,17 @@ class TelephonyService:
         call.status = status.value
         
         # Update timestamps based on status
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if status == CallStatus.ANSWERED and not call.answer_time:
             call.answer_time = now
         elif status in [CallStatus.COMPLETED, CallStatus.FAILED, CallStatus.NO_ANSWER]:
             call.end_time = now
             if call.answer_time:
-                call.duration_seconds = int((now - call.answer_time).total_seconds())
+                # Ensure both timestamps are timezone-aware
+                answer_time = call.answer_time
+                if answer_time.tzinfo is None:
+                    answer_time = answer_time.replace(tzinfo=timezone.utc)
+                call.duration_seconds = int((now - answer_time).total_seconds())
         
         # Update metadata
         if additional_data:
@@ -524,13 +528,16 @@ FORWARDING SETUP INSTRUCTIONS:
             
             if config:
                 # Record call duration usage
+                duration_minutes = call.duration_seconds / 60.0  # Convert to minutes
+                cost_cents = int(duration_minutes * 1.5)  # $0.015 per minute = 1.5 cents per minute
+                
                 await usage_service.record_usage(
                     db=db,
                     tenant_id=config.tenant_id,
                     usage_type="telephony_minutes",
-                    amount=call.duration_seconds / 60.0,  # Convert to minutes
-                    cost_per_unit=0.015,  # $0.015 per minute
-                    metadata={"call_id": str(call.id), "call_sid": call.call_sid}
+                    amount=int(duration_minutes),  # Amount should be int for minutes
+                    cost_cents=cost_cents,
+                    additional_data={"call_id": str(call.id), "call_sid": call.call_sid}
                 )
                 
                 logger.info(f"💰 Usage recorded for call {call.call_sid}: {call.duration_seconds / 60.0:.2f} minutes")

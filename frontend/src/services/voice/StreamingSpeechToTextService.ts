@@ -633,8 +633,17 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
 
   // Stop listening - remove dependency on updateConnectionState to avoid loops
   const stopListening = useCallback(() => {
+    // Prevent multiple calls when already stopping or stopped
+    if (isStoppingRef.current || (!isListening && !isConnected)) {
+      console.log('stopListening skipped - already stopping or stopped:', { 
+        isListening, 
+        isConnected, 
+        isStopping: isStoppingRef.current 
+      });
+      return;
+    }
+    
     console.log('stopListening called, current state:', { isListening, isConnected });
-    console.log('Stack trace:', new Error().stack);
     isStoppingRef.current = true;
     
     // Clear reconnect timeout
@@ -685,6 +694,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
       opts.onConnectionChange(false);
     }
     isStartingRef.current = false;
+    isStoppingRef.current = false; // Reset stopping state
   }, [opts.onConnectionChange]);
 
   // Toggle listening

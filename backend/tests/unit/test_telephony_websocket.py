@@ -398,7 +398,7 @@ class TestTelephonyWebSocketHandlerUnit:
             "call": mock_call
         }
         
-        with patch('app.api.telephony_websocket.agent_manager') as mock_agent_mgr, \
+        with patch('app.api.telephony_websocket.tenant_aware_agent_manager') as mock_agent_mgr, \
              patch.object(handler, '_send_speech_response') as mock_send_speech:
             
             mock_agent_mgr.process_conversation.return_value = ("assistant", "Hello! How can I help you?")
@@ -421,7 +421,7 @@ class TestTelephonyWebSocketHandlerUnit:
         session_id = "test_session"
         handler.call_sessions[session_id] = {"agent_processing": True}
         
-        with patch('app.api.telephony_websocket.agent_manager') as mock_agent_mgr:
+        with patch('app.api.telephony_websocket.tenant_aware_agent_manager') as mock_agent_mgr:
             await handler._process_with_agents(session_id, "Hello", mock_db)
             
             # Should not process if already processing
@@ -441,7 +441,7 @@ class TestTelephonyWebSocketHandlerUnit:
             "call": mock_call
         }
         
-        with patch('app.api.telephony_websocket.agent_manager') as mock_agent_mgr, \
+        with patch('app.api.telephony_websocket.tenant_aware_agent_manager') as mock_agent_mgr, \
              patch.object(handler, '_send_speech_response') as mock_send_speech:
             
             mock_agent_mgr.process_conversation.side_effect = Exception("Agent error")
@@ -525,7 +525,12 @@ class TestTelephonyWebSocketHandlerUnit:
         session_id = "test_session"
         audio_data = b"fake audio data"
         
-        with patch.object(handler, '_send_message') as mock_send:
+        # Mock the audio conversion to return valid mulaw data
+        fake_mulaw_data = b"fake mulaw data"
+        
+        with patch.object(handler, '_send_message') as mock_send, \
+             patch.object(handler, '_convert_mp3_to_mulaw', return_value=fake_mulaw_data):
+            
             await handler._send_audio_to_caller(session_id, audio_data)
             
             mock_send.assert_called_once()

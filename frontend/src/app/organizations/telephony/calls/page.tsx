@@ -88,8 +88,6 @@ export default function CallManagementPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('all');
 
-  // Selected call for details
-  const [selectedCall, setSelectedCall] = useState<TelephonyPhoneCall | null>(null);
 
   // Load initial data
   useEffect(() => {
@@ -431,7 +429,7 @@ export default function CallManagementPage() {
                           <Button 
                             variant="ghost" 
                             size="sm"
-                            onClick={() => setSelectedCall(call)}
+                            onClick={() => router.push(`/organizations/telephony/calls/${call.id}`)}
                           >
                             View
                           </Button>

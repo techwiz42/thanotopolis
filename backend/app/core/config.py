@@ -94,8 +94,8 @@ class Settings(BaseSettings):
     DEEPGRAM_MODEL: str = os.getenv("DEEPGRAM_MODEL", "nova-2")  # Changed from nova-3 to nova-2 for better language support
     DEEPGRAM_LANGUAGE: str = os.getenv("DEEPGRAM_LANGUAGE", "en-US")
     ELEVENLABS_MODEL: str = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
-    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "TxGEqnHWrfWFTfGW9XjX")  # James voice
-    ELEVENLABS_OPTIMIZE_STREAMING_LATENCY: int = int(os.getenv("ELEVENLABS_OPTIMIZE_STREAMING_LATENCY", "3"))
+    ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "VSy05caiuOBJdp42Y45T")  # Petra voice
+    ELEVENLABS_OPTIMIZE_STREAMING_LATENCY: int = int(os.getenv("ELEVENLABS_OPTIMIZE_STREAMING_LATENCY", "1"))
     ELEVENLABS_OUTPUT_FORMAT: str = os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128")
 
 
@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "pete@cyberiad.ai"
     SMTP_FROM_NAME: str = "Cyberiad.ai"
 
+    # Telephony Settings
+    TELEPHONY_ENABLED: bool = os.getenv("TELEPHONY_ENABLED", "false").lower() == "true"
+    
     # Twilio Settings
     TWILIO_ACCOUNT_SID: Optional[str] = os.getenv("TWILIO_ACCOUNT_SID")
     TWILIO_AUTH_TOKEN: Optional[str] = os.getenv("TWILIO_AUTH_TOKEN")

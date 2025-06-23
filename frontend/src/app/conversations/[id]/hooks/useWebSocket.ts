@@ -1,5 +1,5 @@
 // src/app/conversations/[id]/hooks/useWebSocket.ts
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { websocketService } from '@/services/websocket';
 import { Message, MessageMetadata } from '../types/message.types';
 import { WebSocketMessage, TypingStatusMessage, TokenMessage } from '../types/websocket.types';
@@ -33,6 +33,7 @@ export const useWebSocket = ({
     const maxRetries = 3;
     const connectingRef = useRef(false);
     const connectedConversationRef = useRef<string | null>(null);
+    const lastParticipationStatusRef = useRef<string>('');
 
     const connect = useCallback(async () => {
         if (!mountedRef.current) return;
@@ -262,45 +263,53 @@ export const useWebSocket = ({
         };
     }, [conversationId]); // Remove connect from dependencies to prevent loops
 
-    // Enhanced participation check
-    const isAllowedToParticipate = useCallback(() => {
+    // Enhanced participation check - memoized to prevent excessive logging
+    const isAllowedToParticipate = useMemo(() => {
         // Check if we have valid authentication
         const hasValidAuth = !!token || !!participantStorage.getSession(conversationId);
         
         // Check if we have user identification
         const hasUserIdentification = !!userEmail || !!participantStorage.isParticipant(conversationId);
         
-        console.log('=== Participation Check ===');
-        console.log('WebSocket Connected:', wsConnected);
-        console.log('Has Valid Auth:', hasValidAuth);
-        console.log('Has User Identification:', hasUserIdentification);
-        console.log('Connection Error:', connectionError);
-        console.log('Final Result:', wsConnected && hasValidAuth && hasUserIdentification);
+        const result = wsConnected && hasValidAuth && hasUserIdentification;
         
-        return wsConnected && hasValidAuth && hasUserIdentification;
+        // Only log when participation status actually changes
+        const currentStatus = `${wsConnected}-${hasValidAuth}-${hasUserIdentification}`;
+        if (currentStatus !== lastParticipationStatusRef.current) {
+            console.log('=== Participation Status Changed ===');
+            console.log('WebSocket Connected:', wsConnected);
+            console.log('Has Valid Auth:', hasValidAuth);
+            console.log('Has User Identification:', hasUserIdentification);
+            console.log('Connection Error:', connectionError);
+            console.log('Can Participate:', result);
+            lastParticipationStatusRef.current = currentStatus;
+        }
+        
+        return result;
     }, [wsConnected, token, userEmail, conversationId, connectionError]);
 
-    // Debug logging
+    // Debug logging - only when connection state changes significantly
     useEffect(() => {
-        const debugInfo = {
-            wsConnected,
-            hasToken: !!token,
-            hasUserId: !!userId,
-            hasUserEmail: !!userEmail,
-            hasParticipantSession: !!participantStorage.getSession(conversationId),
-            participantSession: participantStorage.getSession(conversationId),
-            connectionError,
-            isAllowedToParticipate: isAllowedToParticipate(),
-            websocketServiceConnected: websocketService.isConnected
-        };
-        
-        console.log('=== WebSocket Hook Debug Info ===', debugInfo);
-    }, [wsConnected, token, userId, userEmail, conversationId, connectionError, isAllowedToParticipate]);
+        if (connectionError || !wsConnected) {
+            const debugInfo = {
+                wsConnected,
+                hasToken: !!token,
+                hasUserId: !!userId,
+                hasUserEmail: !!userEmail,
+                hasParticipantSession: !!participantStorage.getSession(conversationId),
+                connectionError,
+                canParticipate: isAllowedToParticipate,
+                websocketServiceConnected: websocketService.isConnected
+            };
+            
+            console.log('=== WebSocket Connection Debug ===', debugInfo);
+        }
+    }, [wsConnected, connectionError, isAllowedToParticipate, conversationId]);
 
     return {
         sendMessage,
         sendTypingStatus,
-        isConnected: isAllowedToParticipate(),
+        isConnected: isAllowedToParticipate,
         connectionError,
         wsConnected
     };

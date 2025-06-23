@@ -247,7 +247,7 @@ class TestElevenLabsService:
         
         # Create proper async context manager for response
         class MockResponse:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 self.status = 200
                 self.content = AsyncMock()
                 self.content.iter_chunked = mock_iter_chunked
@@ -260,7 +260,7 @@ class TestElevenLabsService:
         
         # Create proper async context manager for session
         class MockSession:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 pass
             
             def post(self, *args, **kwargs):
@@ -292,7 +292,7 @@ class TestElevenLabsService:
         
         # Create proper async context manager for response
         class MockResponse:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 self.status = 200
                 self.content = AsyncMock()
                 self.content.iter_chunked = mock_iter_chunked
@@ -305,7 +305,7 @@ class TestElevenLabsService:
         
         # Create proper async context manager for session
         class MockSession:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 pass
             
             def post(self, *args, **kwargs):
@@ -337,7 +337,7 @@ class TestElevenLabsService:
         """Test speech streaming with API error."""
         # Create proper async context manager for response
         class MockResponse:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 self.status = 429
                 
             async def text(self):
@@ -351,7 +351,7 @@ class TestElevenLabsService:
         
         # Create proper async context manager for session
         class MockSession:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 pass
             
             def post(self, *args, **kwargs):
@@ -604,7 +604,7 @@ class TestElevenLabsServiceIntegration:
         
         # Create proper async context manager for response
         class MockResponse:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 self.status = 200
                 self.content = AsyncMock()
                 self.content.iter_chunked = mock_iter_chunked
@@ -617,7 +617,7 @@ class TestElevenLabsServiceIntegration:
         
         # Create proper async context manager for session
         class MockSession:
-            def __init__(self):
+            def __init__(self, *args, **kwargs):
                 pass
             
             def post(self, *args, **kwargs):

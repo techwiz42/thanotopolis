@@ -26,7 +26,7 @@ from app.core.config import settings
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -44,10 +44,19 @@ async def lifespan(app: FastAPI):
         raise
     
     # Initialize telephony services if enabled
+    telephony_cleanup_task = None
     if getattr(settings, 'TELEPHONY_ENABLED', False):
         logger.info("📞 Telephony services enabled")
         if not getattr(settings, 'TWILIO_ACCOUNT_SID', None):
             logger.warning("⚠️  Twilio credentials not configured - running in mock mode")
+        
+        # Start telephony cleanup task
+        try:
+            from app.tasks.telephony_cleanup import start_cleanup_task
+            start_cleanup_task()
+            logger.info("✅ Telephony cleanup task started")
+        except Exception as e:
+            logger.error(f"⚠️  Failed to start telephony cleanup task: {e}")
     else:
         logger.info("📞 Telephony services disabled")
     
@@ -93,6 +102,14 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Telephony connections cleaned up")
     except Exception as e:
         logger.error(f"⚠️  Error cleaning up telephony connections: {e}")
+    
+    # Stop telephony cleanup task
+    try:
+        from app.tasks.telephony_cleanup import stop_cleanup_task
+        stop_cleanup_task()
+        logger.info("✅ Telephony cleanup task stopped")
+    except Exception as e:
+        logger.error(f"⚠️  Error stopping telephony cleanup task: {e}")
     
     logger.info("✅ Application shutdown complete")
 

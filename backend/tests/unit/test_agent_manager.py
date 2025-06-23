@@ -459,7 +459,7 @@ class TestAgentManager:
                     conversation_agents=[],
                     agents_config={},
                     thread_id="test-thread",
-                    streaming_callback=mock_callback
+                    response_callback=mock_callback
                 )
                 
                 # Verify streaming callback was called
@@ -482,13 +482,16 @@ class TestAgentManagerErrorHandling:
         """Test handling of input sanitization errors."""
         mock_sanitizer.sanitize_input.side_effect = Exception("Sanitization failed")
         
-        with pytest.raises(Exception, match="Sanitization failed"):
-            await self.manager.process_conversation(
-                message="Test message",
-                conversation_agents=[],
-                agents_config={},
-                thread_id="test-thread"
-            )
+        result = await self.manager.process_conversation(
+            message="Test message",
+            conversation_agents=[],
+            agents_config={},
+            thread_id="test-thread"
+        )
+        
+        # Should handle gracefully and return error response
+        assert result[0] == "SYSTEM"
+        assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
     @patch('app.agents.agent_manager.input_sanitizer')
@@ -498,13 +501,16 @@ class TestAgentManagerErrorHandling:
         mock_sanitizer.wrap_user_input.return_value = "<user_message>clean</user_message>"
         
         with patch.object(self.manager, '_prepare_context', side_effect=Exception("Context error")):
-            with pytest.raises(Exception, match="Context error"):
-                await self.manager.process_conversation(
-                    message="Test message",
-                    conversation_agents=[],
-                    agents_config={},
-                    thread_id="test-thread"
-                )
+            result = await self.manager.process_conversation(
+                message="Test message",
+                conversation_agents=[],
+                agents_config={},
+                thread_id="test-thread"
+            )
+            
+            # Should handle gracefully and return error response
+            assert result[0] == "SYSTEM"
+            assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
     @patch('app.agents.agent_manager.input_sanitizer')
@@ -516,13 +522,16 @@ class TestAgentManagerErrorHandling:
         with patch.object(self.manager, '_prepare_context', return_value="context"), \
              patch.object(self.manager, '_select_agent', side_effect=Exception("Selection error")):
             
-            with pytest.raises(Exception, match="Selection error"):
-                await self.manager.process_conversation(
-                    message="Test message",
-                    conversation_agents=[],
-                    agents_config={},
-                    thread_id="test-thread"
-                )
+            result = await self.manager.process_conversation(
+                message="Test message",
+                conversation_agents=[],
+                agents_config={},
+                thread_id="test-thread"
+            )
+            
+            # Should handle gracefully and return error response
+            assert result[0] == "SYSTEM"
+            assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
     @patch('app.agents.agent_manager.input_sanitizer')
@@ -534,60 +543,73 @@ class TestAgentManagerErrorHandling:
         with patch.object(self.manager, '_prepare_context', return_value="context"), \
              patch.object(self.manager, '_select_agent', return_value="NONEXISTENT_AGENT"):
             
-            with pytest.raises(Exception):
-                await self.manager.process_conversation(
-                    message="Test message",
-                    conversation_agents=[],
-                    agents_config={},
-                    thread_id="test-thread"
-                )
+            result = await self.manager.process_conversation(
+                message="Test message",
+                conversation_agents=[],
+                agents_config={},
+                thread_id="test-thread"
+            )
+            
+            # Should handle gracefully and return error response
+            assert result[0] == "SYSTEM"
+            assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
     async def test_prepare_context_buffer_manager_error(self):
         """Test context preparation when buffer manager fails."""
         with patch('app.agents.agent_manager.buffer_manager') as mock_buffer:
-            mock_buffer.get_buffer_context.side_effect = Exception("Buffer error")
+            mock_buffer.get_context.side_effect = Exception("Buffer error")
             
-            # Should fall back to database query
-            with patch('app.agents.agent_manager.get_db_context') as mock_db, \
-                 patch.object(self.manager, '_get_conversation_history_from_db', return_value="db history"):
-                mock_db.return_value.__aenter__ = AsyncMock()
-                mock_db.return_value.__aexit__ = AsyncMock()
-                
-                context = await self.manager._prepare_context("test-thread", {})
-                
-                # Should contain fallback content
-                assert "db history" in context
+            # Should fall back gracefully
+            context = await self.manager._prepare_context(
+                message="test message",
+                thread_id="test-thread", 
+                owner_id=None,
+                db=None
+            )
+            
+            # Should return a CommonAgentContext object
+            assert hasattr(context, 'thread_id')
+            assert context.thread_id == "test-thread"
     
     @pytest.mark.asyncio 
     async def test_prepare_context_database_error(self):
         """Test context preparation when both buffer and database fail."""
         with patch('app.agents.agent_manager.buffer_manager') as mock_buffer:
-            mock_buffer.get_buffer_context.side_effect = Exception("Buffer error")
+            mock_buffer.get_context.side_effect = Exception("Buffer error")
             
-            with patch('app.agents.agent_manager.get_db_context') as mock_db:
-                mock_db.side_effect = Exception("Database error")
-                
-                # Should handle gracefully and return minimal context
-                context = await self.manager._prepare_context("test-thread", {})
-                
-                assert isinstance(context, str)
-                assert len(context) > 0  # Should have some fallback content
+            # Should handle gracefully and return minimal context
+            context = await self.manager._prepare_context(
+                message="test message",
+                thread_id="test-thread",
+                owner_id=None,
+                db=None
+            )
+            
+            # Should return a CommonAgentContext object
+            assert hasattr(context, 'thread_id')
+            assert context.thread_id == "test-thread"
     
     @pytest.mark.asyncio
     async def test_prepare_context_rag_service_error(self):
         """Test context preparation when RAG service fails."""
         with patch('app.agents.agent_manager.buffer_manager') as mock_buffer:
-            mock_buffer.get_buffer_context.return_value = "buffer context"
+            mock_buffer.get_context.return_value = "buffer context"
             
             with patch('app.agents.agent_manager.pgvector_query_service') as mock_rag:
-                mock_rag.query_documents.side_effect = Exception("RAG error")
+                mock_rag.query_knowledge.side_effect = Exception("RAG error")
                 
                 # Should continue without RAG content
-                context = await self.manager._prepare_context("test-thread", {})
+                context = await self.manager._prepare_context(
+                    message="test message",
+                    thread_id="test-thread",
+                    owner_id=None,
+                    db=None
+                )
                 
-                assert "buffer context" in context
-                # Should not contain RAG content but should not fail
+                # Should return a CommonAgentContext object
+                assert hasattr(context, 'thread_id')
+                assert context.thread_id == "test-thread"
     
     @pytest.mark.asyncio
     async def test_select_agent_timeout(self):
@@ -647,14 +669,18 @@ class TestAgentManagerErrorHandling:
         with patch('app.agents.agent_manager.collaboration_manager') as mock_collab:
             mock_collab.initiate_collaboration.side_effect = Exception("Collaboration error")
             
-            # Should handle error gracefully
-            with pytest.raises(Exception, match="Collaboration error"):
-                await self.manager._handle_collaboration(
-                    message="test",
-                    selected_agent="TEST",
-                    context=mock_context,
-                    thread_id="test-thread"
-                )
+            # Should handle error gracefully and return fallback response
+            result = await self.manager._handle_collaboration(
+                message="test",
+                thread_id="test-thread",
+                primary_agent_type="TEST",
+                collaborators=["AGENT1"],
+                context=mock_context
+            )
+            
+            # Should return some kind of error response
+            assert isinstance(result, str)
+            assert "error" in result.lower() or "unable" in result.lower()
 
 
 class TestAgentManagerEdgeCases:
@@ -691,44 +717,53 @@ class TestAgentManagerEdgeCases:
     def test_resolve_agent_name_exact_match(self):
         """Test agent name resolution with exact match."""
         self.manager.discovered_agents["EXACT_MATCH"] = Mock()
+        available_agents = ["EXACT_MATCH", "OTHER_AGENT"]
         
-        result = self.manager._resolve_agent_name("EXACT_MATCH")
+        result = self.manager._resolve_agent_name("EXACT_MATCH", available_agents)
         
         assert result == "EXACT_MATCH"
     
     def test_resolve_agent_name_case_insensitive(self):
         """Test agent name resolution with case differences."""
         self.manager.discovered_agents["TEST_AGENT"] = Mock()
+        available_agents = ["TEST_AGENT", "OTHER_AGENT"]
         
-        result = self.manager._resolve_agent_name("test_agent")
+        result = self.manager._resolve_agent_name("test_agent", available_agents)
         
         assert result == "TEST_AGENT"
     
     def test_resolve_agent_name_partial_match(self):
         """Test agent name resolution with partial match."""
         self.manager.discovered_agents["LONG_AGENT_NAME"] = Mock()
+        available_agents = ["LONG_AGENT_NAME", "OTHER_AGENT"]
         
-        result = self.manager._resolve_agent_name("LONG")
+        result = self.manager._resolve_agent_name("LONG", available_agents)
         
         assert result == "LONG_AGENT_NAME"
     
     def test_resolve_agent_name_no_match(self):
         """Test agent name resolution with no match."""
-        result = self.manager._resolve_agent_name("NONEXISTENT")
+        available_agents = ["AGENT1", "AGENT2"]
+        result = self.manager._resolve_agent_name("NONEXISTENT", available_agents)
         
-        assert result is None
+        # Should return first agent as fallback
+        assert result == "AGENT1"
     
     def test_resolve_agent_name_empty_input(self):
         """Test agent name resolution with empty input."""
-        result = self.manager._resolve_agent_name("")
+        available_agents = ["AGENT1", "AGENT2"]
+        result = self.manager._resolve_agent_name("", available_agents)
         
-        assert result is None
+        # Should return first agent as fallback
+        assert result == "AGENT1"
     
     def test_resolve_agent_name_none_input(self):
         """Test agent name resolution with None input."""
-        result = self.manager._resolve_agent_name(None)
+        available_agents = ["AGENT1", "AGENT2"]
+        result = self.manager._resolve_agent_name(None, available_agents)
         
-        assert result is None
+        # Should return first agent as fallback
+        assert result == "AGENT1"
     
     @pytest.mark.asyncio
     async def test_process_conversation_empty_message(self):

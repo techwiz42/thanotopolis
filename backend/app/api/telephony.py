@@ -373,21 +373,32 @@ async def handle_incoming_call_webhook(
         config_result = await db.execute(config_query)
         config = config_result.scalar_one()
         
-        # Generate TwiML response with organization's welcome message
+        # Generate TwiML response that immediately starts the WebSocket stream
+        # The AI agent will handle the welcome message through ElevenLabs voice
+        host = request.headers.get('host', 'localhost')
+        websocket_url = f"wss://{host}/api/ws/telephony/stream/{phone_call.id}"
+        
+        logger.info(f"📞 Sending TwiML response with WebSocket URL: {websocket_url}")
+        
         twiml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="Polly.Joanna">{config.welcome_message}</Say>
     <Connect>
-        <Stream url="wss://{request.headers.get('host', 'localhost')}/api/ws/telephony/stream/{phone_call.id}" />
+        <Stream url="{websocket_url}" />
     </Connect>
 </Response>"""
         
+        logger.info(f"📞 TwiML Response: {twiml_response}")
         return Response(content=twiml_response, media_type="application/xml")
         
     except ValueError as e:
         return Response(content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, this service is not available.</Say><Hangup/></Response>', media_type="application/xml")
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"❌ Webhook Error: {e}")
+        print(f"❌ Traceback: {error_details}")
         logger.error(f"❌ Error handling incoming call: {e}")
+        logger.error(f"❌ Traceback: {error_details}")
         return Response(content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, there was an error. Please try again later.</Say><Hangup/></Response>', media_type="application/xml")
 
 @router.post("/webhook/call-status")

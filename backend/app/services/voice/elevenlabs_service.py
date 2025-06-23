@@ -46,7 +46,8 @@ class ElevenLabsService:
             raise RuntimeError("ElevenLabs service not available")
         
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=30)  # 30 seconds for API calls
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 headers = {
                     "xi-api-key": self.api_key
                 }
@@ -88,7 +89,8 @@ class ElevenLabsService:
             raise RuntimeError("ElevenLabs service not available")
         
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=30)  # 30 seconds for API calls
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 headers = {
                     "xi-api-key": self.api_key
                 }
@@ -115,6 +117,236 @@ class ElevenLabsService:
                 "error": str(e)
             }
     
+    def _split_text_smartly(self, text: str, max_chars: int) -> List[str]:
+        """
+        Split text into chunks at natural boundaries to prevent TTS cutoffs.
+        
+        Args:
+            text: Text to split
+            max_chars: Maximum characters per chunk
+            
+        Returns:
+            List of text chunks
+        """
+        if len(text) <= max_chars:
+            return [text]
+        
+        chunks = []
+        remaining_text = text.strip()
+        
+        while remaining_text:
+            if len(remaining_text) <= max_chars:
+                if remaining_text.strip():  # Only add non-empty chunks
+                    chunks.append(remaining_text.strip())
+                break
+            
+            # Find the best split point
+            chunk = remaining_text[:max_chars]
+            best_split = -1
+            
+            # Priority 1: Look for sentence endings with proper spacing
+            for i in range(len(chunk) - 1, max_chars // 3, -1):  # Don't split too early
+                if chunk[i] in '.!?':
+                    # Check for proper sentence ending (followed by space or end)
+                    if i == len(chunk) - 1 or chunk[i + 1] in ' \n\t':
+                        # Avoid common abbreviations
+                        if not self._is_abbreviation(chunk, i):
+                            best_split = i + 1
+                            break
+            
+            # Priority 2: Special handling for number sequences (avoid splitting mid-sequence)
+            if best_split == -1:
+                # Check if we're in a number sequence like "1, 2, 3, 4..."
+                import re
+                number_pattern = r'\b\d+\s*,\s*\d+\b'
+                if re.search(number_pattern, chunk):
+                    # For number sequences, prefer longer chunks to avoid voice degradation
+                    # Look for natural breaks after every 10-15 numbers
+                    for i in range(len(chunk) - 1, max_chars // 2, -1):  # Allow longer chunks for numbers
+                        if chunk[i] == ',' and i < len(chunk) - 1 and chunk[i + 1] == ' ':
+                            # Check if this comma is after a number ending in 0 or 5 (good break points)
+                            preceding_text = chunk[:i]
+                            if re.search(r'\b[0-9]*[05]\s*$', preceding_text):
+                                best_split = i + 1
+                                break
+                
+                # Priority 2b: Regular clause boundaries (comma with space)
+                if best_split == -1:
+                    for i in range(len(chunk) - 1, max_chars // 3, -1):
+                        if chunk[i] == ',' and i < len(chunk) - 1 and chunk[i + 1] == ' ':
+                            best_split = i + 1
+                            break
+            
+            # Priority 3: Look for paragraph breaks
+            if best_split == -1:
+                for i in range(len(chunk) - 1, max_chars // 3, -1):
+                    if chunk[i] == '\n':
+                        best_split = i + 1
+                        break
+            
+            # Priority 4: Look for word boundaries (spaces)
+            if best_split == -1:
+                for i in range(len(chunk) - 1, max_chars // 3, -1):
+                    if chunk[i] == ' ':
+                        best_split = i + 1
+                        break
+            
+            # Fallback: split at max_chars (should rarely happen)
+            if best_split == -1:
+                best_split = max_chars
+            
+            chunk_text = remaining_text[:best_split].strip()
+            if chunk_text:  # Only add non-empty chunks
+                chunks.append(chunk_text)
+            
+            remaining_text = remaining_text[best_split:].strip()
+        
+        return chunks
+    
+    def _is_abbreviation(self, text: str, period_index: int) -> bool:
+        """Check if a period is part of a common abbreviation."""
+        if period_index == 0:
+            return False
+        
+        # Get the word before the period
+        start = period_index - 1
+        while start >= 0 and text[start] != ' ':
+            start -= 1
+        start += 1
+        
+        word_before = text[start:period_index].lower()
+        
+        # Common abbreviations that shouldn't end sentences
+        abbreviations = {
+            'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr',
+            'vs', 'etc', 'inc', 'ltd', 'corp', 'co',
+            'st', 'ave', 'blvd', 'rd', 'dept', 'govt',
+            'min', 'max', 'no', 'vol', 'pg', 'pp',
+            'a.m', 'p.m', 'am', 'pm', 'est', 'pst'
+        }
+        
+        return word_before in abbreviations
+    
+    async def _synthesize_long_text(
+        self,
+        text: str,
+        voice_id: str = None,
+        model_id: str = None,
+        voice_settings: Optional[Dict[str, float]] = None,
+        output_format: str = None
+    ) -> Dict[str, Any]:
+        """
+        Synthesize long text by splitting it into chunks and concatenating audio properly.
+        
+        Args:
+            text: Long text to synthesize
+            voice_id: Voice ID to use
+            model_id: Model ID to use
+            voice_settings: Voice settings
+            output_format: Output audio format
+            
+        Returns:
+            Dictionary containing concatenated audio data and metadata
+        """
+        import io
+        import tempfile
+        import os
+        
+        # Split text into manageable chunks
+        chunks = self._split_text_smartly(text, 4000)
+        logger.info(f"Splitting long text ({len(text)} chars) into {len(chunks)} chunks")
+        
+        # Synthesize each chunk and save to temporary files for proper concatenation
+        temp_files = []
+        try:
+            for i, chunk in enumerate(chunks):
+                logger.info(f"Synthesizing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+                
+                # Synthesize this chunk (recursive call, but won't infinite loop due to size check)
+                result = await self.synthesize_speech(
+                    text=chunk,
+                    voice_id=voice_id,
+                    model_id=model_id,
+                    voice_settings=voice_settings,
+                    output_format=output_format
+                )
+                
+                if not result["success"]:
+                    logger.error(f"Failed to synthesize chunk {i+1}: {result['error']}")
+                    return result
+                
+                # Save chunk to temporary file
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                temp_file.write(result["audio_data"])
+                temp_file.close()
+                temp_files.append(temp_file.name)
+            
+            # Use ffmpeg to properly concatenate MP3 files
+            try:
+                import subprocess
+                output_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                output_file.close()
+                
+                # Create file list for ffmpeg
+                file_list = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+                for temp_file in temp_files:
+                    file_list.write(f"file '{temp_file}'\n")
+                file_list.close()
+                
+                # Concatenate using ffmpeg
+                cmd = [
+                    'ffmpeg', '-f', 'concat', '-safe', '0', '-i', file_list.name,
+                    '-c', 'copy', output_file.name, '-y'
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.warning(f"ffmpeg concatenation failed: {result.stderr}")
+                    # Fallback to simple byte concatenation (may have audio artifacts)
+                    concatenated_audio = b''
+                    for temp_file in temp_files:
+                        with open(temp_file, 'rb') as f:
+                            concatenated_audio += f.read()
+                else:
+                    # Read properly concatenated audio
+                    with open(output_file.name, 'rb') as f:
+                        concatenated_audio = f.read()
+                
+                # Clean up temporary files
+                os.unlink(file_list.name)
+                os.unlink(output_file.name)
+                
+            except (ImportError, FileNotFoundError):
+                logger.warning("ffmpeg not available, using basic concatenation (may have audio artifacts)")
+                # Fallback to simple byte concatenation
+                concatenated_audio = b''
+                for temp_file in temp_files:
+                    with open(temp_file, 'rb') as f:
+                        concatenated_audio += f.read()
+            
+            total_size = len(concatenated_audio)
+            logger.info(f"Successfully synthesized long text: {len(text)} chars -> {total_size} bytes")
+            
+            return {
+                "success": True,
+                "audio_data": concatenated_audio,
+                "content_type": "audio/mpeg",
+                "text": text,
+                "voice_id": voice_id or self.default_voice_id,
+                "model_id": model_id or self.default_model,
+                "output_format": output_format or self.default_output_format,
+                "size_bytes": total_size,
+                "chunks_processed": len(chunks)
+            }
+            
+        finally:
+            # Clean up temporary files
+            for temp_file in temp_files:
+                try:
+                    os.unlink(temp_file)
+                except OSError:
+                    pass
+    
     async def synthesize_speech(
         self,
         text: str,
@@ -139,23 +371,31 @@ class ElevenLabsService:
         if not self.is_available():
             raise RuntimeError("ElevenLabs service not available")
         
+        # ElevenLabs has a character limit per request (typically ~5000 chars)
+        # If text is too long, split it and concatenate the audio
+        MAX_CHARS_PER_REQUEST = 4000  # Conservative limit
+        
+        if len(text) > MAX_CHARS_PER_REQUEST:
+            return await self._synthesize_long_text(text, voice_id, model_id, voice_settings, output_format)
+        
         # Use defaults if not provided
         voice_id = voice_id or self.default_voice_id
         model_id = model_id or self.default_model
         output_format = output_format or self.default_output_format
         
-        # Default voice settings - James with lower stability
+        # Default voice settings - optimized for natural speech flow and number sequences
         if voice_settings is None:
             voice_settings = {
-                "stability": 0.25,  # Lower stability for more variation
-                "similarity_boost": 0.4,  # Lower to reduce nasal quality
-                "style": 0.1,  # Minimal emotional expression for cleaner sound
-                "use_speaker_boost": True,
-                "speed": 1.05  # 5% speed increase
+                "stability": 0.75,  # Reduced from 0.95 - allows more natural flow for number sequences
+                "similarity_boost": 0.75,  # Balanced for consistency without artifacts
+                "style": 0.15,  # Small amount of style for natural speech rhythm
+                "use_speaker_boost": False  # Disable speaker boost to prevent audio artifacts
             }
         
         try:
-            async with aiohttp.ClientSession() as session:
+            # Set a longer timeout for TTS requests (especially for long text)
+            timeout = aiohttp.ClientTimeout(total=120)  # 2 minutes
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 headers = {
                     "Accept": f"audio/{output_format.split('_')[0]}",
                     "Content-Type": "application/json",
@@ -247,18 +487,19 @@ class ElevenLabsService:
         model_id = model_id or self.default_model
         output_format = output_format or self.default_output_format
         
-        # Default voice settings - James with lower stability
+        # Default voice settings - optimized for natural speech flow and number sequences
         if voice_settings is None:
             voice_settings = {
-                "stability": 0.25,  # Lower stability for more variation
-                "similarity_boost": 0.4,  # Lower to reduce nasal quality
-                "style": 0.1,  # Minimal emotional expression for cleaner sound
-                "use_speaker_boost": True,
-                "speed": 1.05  # 5% speed increase
+                "stability": 0.75,  # Reduced from 0.95 - allows more natural flow for number sequences
+                "similarity_boost": 0.75,  # Balanced for consistency without artifacts
+                "style": 0.15,  # Small amount of style for natural speech rhythm
+                "use_speaker_boost": False  # Disable speaker boost to prevent audio artifacts
             }
         
         try:
-            async with aiohttp.ClientSession() as session:
+            # Set a longer timeout for TTS streaming requests
+            timeout = aiohttp.ClientTimeout(total=180)  # 3 minutes for streaming
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 headers = {
                     "Accept": f"audio/{output_format.split('_')[0]}",
                     "Content-Type": "application/json",
@@ -309,7 +550,8 @@ class ElevenLabsService:
             raise RuntimeError("ElevenLabs service not available")
         
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=30)  # 30 seconds for API calls
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 headers = {
                     "xi-api-key": self.api_key
                 }
@@ -347,7 +589,8 @@ class ElevenLabsService:
             raise RuntimeError("ElevenLabs service not available")
         
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=30)  # 30 seconds for API calls
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 headers = {
                     "xi-api-key": self.api_key
                 }
@@ -373,6 +616,47 @@ class ElevenLabsService:
                 "success": False,
                 "error": str(e)
             }
+    
+    async def generate_speech(
+        self,
+        text: str,
+        voice_id: str = None,
+        model_id: str = None,
+        voice_settings: Optional[Dict[str, float]] = None,
+        output_format: str = None
+    ) -> Optional[bytes]:
+        """
+        Generate speech from text and return audio data.
+        This method is used by the telephony WebSocket handler.
+        
+        Args:
+            text: Text to synthesize
+            voice_id: Voice ID to use (defaults to settings.ELEVENLABS_VOICE_ID)
+            model_id: Model ID to use (defaults to settings.ELEVENLABS_MODEL)
+            voice_settings: Voice settings (stability, similarity_boost, etc.)
+            output_format: Output audio format
+            
+        Returns:
+            Audio data as bytes, or None if failed
+        """
+        try:
+            result = await self.synthesize_speech(
+                text=text,
+                voice_id=voice_id,
+                model_id=model_id,
+                voice_settings=voice_settings,
+                output_format=output_format
+            )
+            
+            if result.get("success"):
+                return result.get("audio_data")
+            else:
+                logger.error(f"Failed to generate speech: {result.get('error')}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error in generate_speech: {e}")
+            return None
 
 
 # Singleton instance
