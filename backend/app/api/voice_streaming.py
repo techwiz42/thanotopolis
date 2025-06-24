@@ -613,6 +613,26 @@ async def get_tts_status():
     }
 
 
+@router.get("/voice/config")
+async def get_voice_config(
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get voice configuration for the current user."""
+    return {
+        "tts": {
+            "voice_id": settings.ELEVENLABS_VOICE_ID,
+            "model": settings.ELEVENLABS_MODEL,
+            "output_format": settings.ELEVENLABS_OUTPUT_FORMAT,
+            "optimize_streaming_latency": settings.ELEVENLABS_OPTIMIZE_STREAMING_LATENCY
+        },
+        "stt": {
+            "model": settings.DEEPGRAM_MODEL,
+            "language": settings.DEEPGRAM_LANGUAGE
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
 @router.get("/voice/status")
 async def get_voice_status():
     """Get overall voice service status."""

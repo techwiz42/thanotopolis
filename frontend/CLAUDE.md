@@ -21,6 +21,16 @@ const currentTTSEnabledRef = useRef(isTTSEnabled);
 const currentSpeakTextRef = useRef(speakText);
 ```
 
+### 2.1 TTS Chunk Skipping Issues
+**Problem**: TTS would skip paragraphs and not complete all chunks
+**Solution**: 
+- Added chunk progress tracking with completion status
+- Implemented retry logic (up to 2 retries per chunk)
+- Better error handling that continues with remaining chunks
+- Resume capability via `resumeTTS()` function
+- Progress tracking via `getTTSProgress()` function
+- Logs detailed progress: `📊 TTS Complete: X/Y chunks successfully played`
+
 ### 3. Admin Dashboard Security
 **Problem**: Regular admins could see all organizations' data
 **Solution**: Filter by user role/tenant:

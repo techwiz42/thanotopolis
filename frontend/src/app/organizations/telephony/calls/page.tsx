@@ -421,7 +421,7 @@ export default function CallManagementPage() {
                               <Play className="h-4 w-4" />
                             </Button>
                           )}
-                          {call.transcript && (
+                          {call.messages && call.messages.some(m => m.message_type === 'transcript') && (
                             <Button variant="ghost" size="sm">
                               <FileText className="h-4 w-4" />
                             </Button>

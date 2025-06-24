@@ -156,6 +156,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef<boolean>(false);
   const isStartingRef = useRef<boolean>(false);
+  const isPausedRef = useRef<boolean>(false);
   
   // Advanced language detection
   const audioBufferRef = useRef<Float32Array[]>([]);
@@ -185,6 +186,12 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
           break;
           
         case 'transcript':
+          // Skip processing if STT is paused during TTS playback
+          if (isPausedRef.current) {
+            console.log('🚫 Skipping transcript processing - STT is paused during TTS');
+            return;
+          }
+          
           if (data.transcript) {
             // Pass both is_final and speech_final flags
             const isFinal = data.is_final || false;
@@ -741,6 +748,18 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     };
   }, []);
 
+  // Pause transcription processing (for TTS playback)
+  const pauseTranscription = useCallback(() => {
+    console.log('⏸️ Pausing STT transcription during TTS');
+    isPausedRef.current = true;
+  }, []);
+
+  // Resume transcription processing
+  const resumeTranscription = useCallback(() => {
+    console.log('▶️ Resuming STT transcription after TTS');
+    isPausedRef.current = false;
+  }, []);
+
   return {
     // States
     isListening,
@@ -751,5 +770,7 @@ export const useStreamingSpeechToText = (options: StreamingSttOptions = {}) => {
     startListening,
     stopListening,
     toggleListening,
+    pauseTranscription,
+    resumeTranscription,
   };
 };
