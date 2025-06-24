@@ -30,8 +30,11 @@ import { useToast } from '@/components/ui/use-toast';
 
 import { 
   telephonyService, 
-  PhoneCall as TelephonyPhoneCall 
+  PhoneCall as TelephonyPhoneCall,
+  CallMessage 
 } from '@/services/telephony';
+import { useCallMessages } from '../hooks/useCallMessages';
+import { CallMessagesList } from '../components/CallMessagesList';
 
 interface CallDetailsPageProps {
   params: {
@@ -50,6 +53,18 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [isPlayingRecording, setIsPlayingRecording] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  
+  // Call messages hook
+  const {
+    messages,
+    isLoading: messagesLoading,
+    getSummary,
+    deleteMessage,
+    loadMessages
+  } = useCallMessages({ 
+    callId: params.id,
+    autoLoad: false // We'll load manually after call is loaded
+  });
 
   // Load call data
   useEffect(() => {
@@ -60,8 +75,12 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
         setIsLoading(true);
         setError(null);
         
+        // Load call data first, then messages
         const callData = await telephonyService.getCall(params.id, token);
         setCall(callData);
+        
+        // Load messages using the hook
+        await loadMessages();
         
       } catch (error: any) {
         console.error('Error loading call:', error);
@@ -77,7 +96,7 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
     };
 
     loadCall();
-  }, [token, params.id]);
+  }, [token, params.id, loadMessages]);
 
   // Cleanup audio on unmount
   useEffect(() => {
@@ -265,6 +284,25 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
             </CardContent>
           </Card>
 
+          {/* Call Summary */}
+          {(call.summary || getSummary()) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <FileText className="h-5 w-5 mr-2" />
+                  Call Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-muted p-4 rounded-lg">
+                  <p className="text-sm leading-relaxed">
+                    {getSummary() || call.summary}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Call Timeline */}
           <Card>
             <CardHeader>
@@ -320,75 +358,53 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
             </CardContent>
           </Card>
 
-          {/* Recording & Transcript */}
-          {(call.recording_url || call.transcript) && (
+          {/* Call Recording */}
+          {call.recording_url && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Volume2 className="h-5 w-5 mr-2" />
-                  Recording & Transcript
+                  Call Recording
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {call.recording_url && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Call Recording</label>
-                    <div className="flex items-center space-x-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={handlePlayRecording}
-                        disabled={!call.recording_url}
-                      >
-                        {isPlayingRecording ? (
-                          <Pause className="h-4 w-4 mr-2" />
-                        ) : (
-                          <Play className="h-4 w-4 mr-2" />
-                        )}
-                        {isPlayingRecording ? 'Pause' : 'Play'}
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={handleDownloadRecording}
-                      >
-                        <Download className="h-4 w-4 mr-2" />
-                        Download
-                      </Button>
-                    </div>
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={handlePlayRecording}
+                      disabled={!call.recording_url}
+                    >
+                      {isPlayingRecording ? (
+                        <Pause className="h-4 w-4 mr-2" />
+                      ) : (
+                        <Play className="h-4 w-4 mr-2" />
+                      )}
+                      {isPlayingRecording ? 'Pause' : 'Play'}
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={handleDownloadRecording}
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Download
+                    </Button>
                   </div>
-                )}
-
-                {call.transcript && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Call Transcript</label>
-                    <div className="bg-muted p-4 rounded-lg">
-                      <pre className="whitespace-pre-wrap text-sm font-mono">
-                        {call.transcript}
-                      </pre>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Call Summary */}
-          {call.summary && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <FileText className="h-5 w-5 mr-2" />
-                  Call Summary
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-muted p-4 rounded-lg">
-                  <p className="text-sm">{call.summary}</p>
                 </div>
               </CardContent>
             </Card>
           )}
+
+          {/* Call Messages */}
+          <CallMessagesList 
+            messages={messages}
+            onDeleteMessage={deleteMessage}
+            showActions={true}
+            showTabs={true}
+          />
+
         </div>
 
         {/* Sidebar */}

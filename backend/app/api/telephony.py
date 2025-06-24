@@ -13,8 +13,10 @@ from datetime import datetime
 
 from app.db.database import get_db
 from app.auth.auth import get_current_active_user, require_admin_user, get_current_user
-from app.models.models import User, TelephonyConfiguration, PhoneCall, CallStatus
+from app.models.models import User, TelephonyConfiguration, PhoneCall, CallStatus, CallMessage
 from app.services.telephony_service import telephony_service
+from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, desc, asc
 # Telephony schemas are defined in this file
 
 # Import Pydantic models for this module
@@ -95,9 +97,50 @@ class TelephonyUpdateRequest(BaseModel):
     business_hours: Optional[Dict[str, Any]] = None
     is_enabled: Optional[bool] = None
     max_concurrent_calls: Optional[int] = None
-    voice_id: Optional[str] = None
-    record_calls: Optional[bool] = None
-    transcript_calls: Optional[bool] = None
+
+# Call Message Models
+class CallMessageSender(BaseModel):
+    identifier: str
+    name: Optional[str] = None
+    type: str  # 'customer', 'agent', 'system', 'operator'
+    phone_number: Optional[str] = None
+
+class CallMessageMetadata(BaseModel):
+    audio_start_time: Optional[float] = None
+    audio_end_time: Optional[float] = None
+    confidence_score: Optional[float] = None
+    language: Optional[str] = None
+    recording_segment_url: Optional[str] = None
+    is_automated: Optional[bool] = None
+    system_event_type: Optional[str] = None
+
+class CallMessageCreate(BaseModel):
+    content: str = Field(..., min_length=1)
+    sender: CallMessageSender
+    timestamp: datetime
+    message_type: str = Field(..., pattern=r'^(transcript|system|summary|note)$')
+    metadata: Optional[CallMessageMetadata] = None
+
+class CallMessageUpdate(BaseModel):
+    content: Optional[str] = Field(None, min_length=1)
+    metadata: Optional[CallMessageMetadata] = None
+
+class CallMessageResponse(BaseModel):
+    id: UUID
+    call_id: UUID
+    content: str
+    sender: CallMessageSender
+    timestamp: datetime
+    message_type: str
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class CallMessagesListResponse(BaseModel):
+    messages: List[CallMessageResponse]
+    total: int
+    call_id: UUID
 
 async def require_org_admin_or_admin(current_user: User = Depends(get_current_user)) -> User:
     """Check if user is organization admin or higher"""
@@ -455,6 +498,406 @@ async def handle_call_status_webhook(
     except Exception as e:
         logger.error(f"❌ Error handling call status webhook: {e}")
         return {"status": "error", "message": str(e)}
+
+
+# Call Messages API Endpoints
+
+@router.get("/calls/{call_id}/messages", response_model=CallMessagesListResponse)
+async def get_call_messages(
+    call_id: UUID,
+    message_type: Optional[str] = None,
+    sender_type: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    order_by: str = "timestamp",
+    order_dir: str = "asc",
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all messages for a specific call."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Build messages query
+    query = select(CallMessage).where(CallMessage.call_id == call_id)
+    
+    # Apply filters
+    if message_type:
+        query = query.where(CallMessage.message_type == message_type)
+    
+    if sender_type:
+        query = query.where(CallMessage.sender['type'].astext == sender_type)
+    
+    # Apply ordering
+    if order_by == "timestamp":
+        order_column = CallMessage.timestamp
+    elif order_by == "created_at":
+        order_column = CallMessage.created_at
+    else:
+        order_column = CallMessage.timestamp
+    
+    if order_dir == "desc":
+        query = query.order_by(desc(order_column))
+    else:
+        query = query.order_by(asc(order_column))
+    
+    # Get total count
+    count_query = select(CallMessage).where(CallMessage.call_id == call_id)
+    if message_type:
+        count_query = count_query.where(CallMessage.message_type == message_type)
+    if sender_type:
+        count_query = count_query.where(CallMessage.sender['type'].astext == sender_type)
+    
+    total_result = await db.execute(count_query)
+    total = len(total_result.all())
+    
+    # Apply pagination
+    query = query.offset(offset).limit(limit)
+    
+    # Execute query
+    result = await db.execute(query)
+    messages = result.scalars().all()
+    
+    return CallMessagesListResponse(
+        messages=[
+            CallMessageResponse(
+                id=msg.id,
+                call_id=msg.call_id,
+                content=msg.content,
+                sender=CallMessageSender(**msg.sender),
+                timestamp=msg.timestamp,
+                message_type=msg.message_type,
+                metadata=msg.message_metadata,
+                created_at=msg.created_at,
+            )
+            for msg in messages
+        ],
+        total=total,
+        call_id=call_id,
+    )
+
+
+@router.post("/calls/{call_id}/messages", response_model=CallMessageResponse)
+async def create_call_message(
+    call_id: UUID,
+    message_data: CallMessageCreate,
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a new message to a call."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Create new message
+    new_message = CallMessage(
+        call_id=call_id,
+        content=message_data.content,
+        sender=message_data.sender.dict(),
+        timestamp=message_data.timestamp,
+        message_type=message_data.message_type,
+        message_metadata=message_data.metadata.dict() if message_data.metadata else None,
+    )
+    
+    db.add(new_message)
+    await db.commit()
+    await db.refresh(new_message)
+    
+    return CallMessageResponse(
+        id=new_message.id,
+        call_id=new_message.call_id,
+        content=new_message.content,
+        sender=CallMessageSender(**new_message.sender),
+        timestamp=new_message.timestamp,
+        message_type=new_message.message_type,
+        metadata=new_message.message_metadata,
+        created_at=new_message.created_at,
+    )
+
+
+@router.patch("/calls/{call_id}/messages/{message_id}", response_model=CallMessageResponse)
+async def update_call_message(
+    call_id: UUID,
+    message_id: UUID,
+    update_data: CallMessageUpdate,
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a call message."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Get message
+    message_query = select(CallMessage).where(
+        and_(
+            CallMessage.id == message_id,
+            CallMessage.call_id == call_id
+        )
+    )
+    result = await db.execute(message_query)
+    message = result.scalar_one_or_none()
+    
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Update fields
+    if update_data.content is not None:
+        message.content = update_data.content
+    
+    if update_data.metadata is not None:
+        message.message_metadata = update_data.metadata.dict()
+    
+    await db.commit()
+    await db.refresh(message)
+    
+    return CallMessageResponse(
+        id=message.id,
+        call_id=message.call_id,
+        content=message.content,
+        sender=CallMessageSender(**message.sender),
+        timestamp=message.timestamp,
+        message_type=message.message_type,
+        metadata=message.message_metadata,
+        created_at=message.created_at,
+    )
+
+
+@router.delete("/calls/{call_id}/messages/{message_id}")
+async def delete_call_message(
+    call_id: UUID,
+    message_id: UUID,
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a call message."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Get message
+    message_query = select(CallMessage).where(
+        and_(
+            CallMessage.id == message_id,
+            CallMessage.call_id == call_id
+        )
+    )
+    result = await db.execute(message_query)
+    message = result.scalar_one_or_none()
+    
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Delete message
+    await db.delete(message)
+    await db.commit()
+    
+    return {"detail": "Message deleted successfully"}
+
+
+@router.get("/calls/{call_id}/messages/transcript")
+async def get_call_transcript(
+    call_id: UUID,
+    format: str = "text",
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get formatted transcript for a call."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Get transcript messages
+    messages_query = (
+        select(CallMessage)
+        .where(
+            and_(
+                CallMessage.call_id == call_id,
+                CallMessage.message_type == 'transcript'
+            )
+        )
+        .order_by(asc(CallMessage.timestamp))
+    )
+    
+    result = await db.execute(messages_query)
+    messages = result.scalars().all()
+    
+    if format == "json":
+        return {
+            "call_id": str(call_id),
+            "format": "json",
+            "messages": [
+                {
+                    "timestamp": msg.timestamp.isoformat(),
+                    "sender": msg.sender,
+                    "content": msg.content,
+                    "metadata": msg.message_metadata,
+                }
+                for msg in messages
+            ]
+        }
+    else:
+        # Text format
+        transcript_lines = []
+        for msg in messages:
+            sender_name = msg.get_sender_name()
+            timestamp_str = msg.timestamp.strftime("%H:%M:%S")
+            transcript_lines.append(f"[{timestamp_str}] {sender_name}: {msg.content}")
+        
+        return {
+            "call_id": str(call_id),
+            "format": "text",
+            "transcript": "\n".join(transcript_lines)
+        }
+
+
+@router.get("/calls/{call_id}/messages/summary")
+async def get_call_summary(
+    call_id: UUID,
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get summary for a call."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Get summary message
+    summary_query = (
+        select(CallMessage)
+        .where(
+            and_(
+                CallMessage.call_id == call_id,
+                CallMessage.message_type == 'summary'
+            )
+        )
+        .order_by(desc(CallMessage.created_at))
+        .limit(1)
+    )
+    
+    result = await db.execute(summary_query)
+    summary_message = result.scalar_one_or_none()
+    
+    if not summary_message:
+        return {
+            "call_id": str(call_id),
+            "summary": None,
+            "message": "No summary available for this call"
+        }
+    
+    return {
+        "call_id": str(call_id),
+        "summary": summary_message.content,
+        "created_at": summary_message.created_at.isoformat(),
+        "metadata": summary_message.message_metadata,
+    }
+
+
+@router.post("/calls/{call_id}/messages/bulk")
+async def create_bulk_call_messages(
+    call_id: UUID,
+    messages_data: List[CallMessageCreate],
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create multiple messages at once (useful for STT processing)."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Create messages
+    new_messages = []
+    for message_data in messages_data:
+        new_message = CallMessage(
+            call_id=call_id,
+            content=message_data.content,
+            sender=message_data.sender.dict(),
+            timestamp=message_data.timestamp,
+            message_type=message_data.message_type,
+            message_metadata=message_data.metadata.dict() if message_data.metadata else None,
+        )
+        new_messages.append(new_message)
+        db.add(new_message)
+    
+    await db.commit()
+    
+    return {
+        "call_id": str(call_id),
+        "created_count": len(new_messages),
+        "message_ids": [str(msg.id) for msg in new_messages],
+    }
+
 
 import logging
 logger = logging.getLogger(__name__)

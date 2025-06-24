@@ -122,10 +122,16 @@ def test_client(admin_user, mock_db):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     
-    # Override dependencies
-    app.dependency_overrides[get_db] = lambda: mock_db
-    app.dependency_overrides[get_current_user] = lambda: admin_user.user
-    app.dependency_overrides[require_admin_user] = lambda: admin_user.user
+    # Override dependencies - use async functions for async dependencies
+    async def get_mock_db():
+        return mock_db
+    
+    async def get_mock_user():
+        return admin_user.user
+    
+    app.dependency_overrides[get_db] = get_mock_db
+    app.dependency_overrides[get_current_user] = get_mock_user
+    app.dependency_overrides[require_admin_user] = get_mock_user
     
     return TestClient(app)
 

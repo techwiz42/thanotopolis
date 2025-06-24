@@ -6,8 +6,8 @@ import json
 
 from app.services.telephony_service import TelephonyService
 from app.models.models import (
-    TelephonyConfiguration, PhoneVerificationAttempt, PhoneCall,
-    PhoneVerificationStatus, CallStatus, CallDirection
+    TelephonyConfiguration, PhoneVerificationAttempt, PhoneCall, CallMessage,
+    PhoneVerificationStatus, CallStatus, CallDirection, CallMessageType, CallMessageSenderType
 )
 
 

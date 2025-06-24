@@ -5,6 +5,7 @@ import uuid
 from uuid import UUID
 import time
 import traceback
+import importlib
 from datetime import datetime
 
 from openai import AsyncOpenAI

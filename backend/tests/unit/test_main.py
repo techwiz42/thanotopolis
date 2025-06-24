@@ -63,11 +63,9 @@ class TestLifespanManager:
         """Test successful application startup."""
         mock_app = Mock()
         
-        with patch('app.main.init_db') as mock_init_db, \
+        with patch('app.main.init_db', new_callable=AsyncMock) as mock_init_db, \
              patch('asyncio.create_task') as mock_create_task, \
              patch('app.main.settings') as mock_settings:
-            
-            mock_init_db.return_value = None
             mock_task = AsyncMock()
             mock_create_task.return_value = mock_task
             mock_settings.TELEPHONY_ENABLED = True

@@ -46,8 +46,6 @@ export default function TelephonySetupPage() {
     telephonyService.getDefaultBusinessHours()
   );
   const [maxConcurrentCalls, setMaxConcurrentCalls] = useState(5);
-  const [recordCalls, setRecordCalls] = useState(true);
-  const [transcriptCalls, setTranscriptCalls] = useState(true);
 
   // Verification state
   const [phoneNumberError, setPhoneNumberError] = useState('');
@@ -68,8 +66,6 @@ export default function TelephonySetupPage() {
         setWelcomeMessage(config.welcome_message || '');
         setBusinessHours(config.business_hours || telephonyService.getDefaultBusinessHours());
         setMaxConcurrentCalls(config.max_concurrent_calls);
-        setRecordCalls(config.record_calls);
-        setTranscriptCalls(config.transcript_calls);
         
         // Load forwarding instructions if setup is incomplete
         if (!telephonyService.isSetupComplete(config)) {
@@ -131,7 +127,9 @@ export default function TelephonySetupPage() {
         organization_phone_number: phoneNumber,
         welcome_message: welcomeMessage,
         business_hours: businessHours,
-        max_concurrent_calls: maxConcurrentCalls
+        max_concurrent_calls: maxConcurrentCalls,
+        record_calls: true,
+        transcript_calls: true
       };
 
       const config = await telephonyService.setupTelephony(setupData, token);
@@ -386,31 +384,12 @@ export default function TelephonySetupPage() {
               </p>
             </div>
 
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label>Record Calls</Label>
-                <p className="text-sm text-muted-foreground">
-                  Record all phone calls for quality assurance
-                </p>
-              </div>
-              <Switch
-                checked={recordCalls}
-                onCheckedChange={setRecordCalls}
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label>Transcript Calls</Label>
-                <p className="text-sm text-muted-foreground">
-                  Generate text transcripts of all calls
-                </p>
-              </div>
-              <Switch
-                checked={transcriptCalls}
-                onCheckedChange={setTranscriptCalls}
-              />
-            </div>
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <strong>Call Recording & Transcription:</strong> All calls are automatically recorded and transcribed for quality assurance and compliance purposes.
+              </AlertDescription>
+            </Alert>
           </CardContent>
         </Card>
 

@@ -186,7 +186,7 @@ class AgentManager:
         """Get an agent instance by type."""
         return self.discovered_agents.get(agent_type.upper())
 
-    def _resolve_agent_name(self, requested_name: str, available_agents: List[str]) -> str:
+    def _resolve_agent_name(self, requested_name: Optional[str], available_agents: List[str]) -> str:
         """
         Resolve a requested agent name to an available agent.
         
@@ -197,6 +197,15 @@ class AgentManager:
         Returns:
             Resolved agent name from available agents
         """
+        # Handle None input
+        if requested_name is None:
+            if "MODERATOR" in available_agents:
+                return "MODERATOR"
+            elif available_agents:
+                return available_agents[0]
+            else:
+                raise ValueError("No agents available")
+        
         # Log available agents and requested agent for debugging
         logger.debug(f"Attempting to resolve '{requested_name}' from: {available_agents}")
         

@@ -46,10 +46,39 @@ export interface PhoneCall {
   cost_cents: number;
   cost_currency: string;
   recording_url?: string;
-  transcript?: string;
-  summary?: string;
   call_metadata?: Record<string, any>;
   created_at: string;
+  messages?: CallMessage[];
+  summary?: string;
+}
+
+export interface CallMessage {
+  id: string;
+  call_id: string;
+  content: string;
+  sender: CallMessageSender;
+  timestamp: string;
+  message_type: 'transcript' | 'system' | 'summary' | 'note';
+  metadata?: CallMessageMetadata;
+  created_at: string;
+}
+
+export interface CallMessageSender {
+  identifier: string;
+  name?: string;
+  type: 'customer' | 'agent' | 'system' | 'operator';
+  phone_number?: string;
+}
+
+export interface CallMessageMetadata {
+  audio_start_time?: number;
+  audio_end_time?: number;
+  confidence_score?: number;
+  language?: string;
+  recording_segment_url?: string;
+  is_automated?: boolean;
+  system_event_type?: string;
+  [key: string]: unknown;
 }
 
 export interface CallsListResponse {
@@ -65,6 +94,8 @@ export interface TelephonySetupRequest {
   business_hours?: BusinessHours;
   voice_id?: string;
   max_concurrent_calls?: number;
+  record_calls?: boolean;
+  transcript_calls?: boolean;
 }
 
 export interface TelephonyUpdateRequest {
@@ -87,7 +118,14 @@ export const telephonyService = {
   // Setup telephony configuration
   async setupTelephony(data: TelephonySetupRequest, token: string): Promise<TelephonyConfig> {
     try {
-      const response = await api.post('/telephony/setup', data, {
+      // Always enforce transcript_calls and record_calls to be true
+      const setupData = {
+        ...data,
+        record_calls: true,
+        transcript_calls: true
+      };
+      
+      const response = await api.post('/telephony/setup', setupData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -120,7 +158,14 @@ export const telephonyService = {
   // Update telephony configuration
   async updateTelephonyConfig(data: TelephonyUpdateRequest, token: string): Promise<TelephonyConfig> {
     try {
-      const response = await api.patch('/telephony/config', data, {
+      // Always enforce transcript_calls and record_calls to be true
+      const updateData = {
+        ...data,
+        record_calls: true,
+        transcript_calls: true
+      };
+      
+      const response = await api.patch('/telephony/config', updateData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -232,6 +277,79 @@ export const telephonyService = {
     }
   },
 
+  // Get call messages
+  async getCallMessages(callId: string, token: string): Promise<CallMessage[]> {
+    try {
+      const response = await api.get(`/telephony/calls/${callId}/messages`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data as CallMessage[];
+    } catch (error) {
+      console.error('Error fetching call messages:', error);
+      throw error;
+    }
+  },
+
+  // Add message to call
+  async addCallMessage(
+    callId: string, 
+    message: Omit<CallMessage, 'id' | 'call_id' | 'created_at'>, 
+    token: string
+  ): Promise<CallMessage> {
+    try {
+      const response = await api.post(`/telephony/calls/${callId}/messages`, message, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data as CallMessage;
+    } catch (error) {
+      console.error('Error adding call message:', error);
+      throw error;
+    }
+  },
+
+  // Update call message
+  async updateCallMessage(
+    callId: string,
+    messageId: string,
+    updates: Partial<Pick<CallMessage, 'content' | 'metadata'>>,
+    token: string
+  ): Promise<CallMessage> {
+    try {
+      const response = await api.patch(`/telephony/calls/${callId}/messages/${messageId}`, updates, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data as CallMessage;
+    } catch (error) {
+      console.error('Error updating call message:', error);
+      throw error;
+    }
+  },
+
+  // Delete call message
+  async deleteCallMessage(callId: string, messageId: string, token: string): Promise<void> {
+    try {
+      await api.delete(`/telephony/calls/${callId}/messages/${messageId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+    } catch (error) {
+      console.error('Error deleting call message:', error);
+      throw error;
+    }
+  },
+
   // Utility functions
   formatPhoneNumber(phoneNumber: string): string {
     // Remove all non-digit characters
@@ -335,5 +453,88 @@ export const telephonyService = {
     if (config.verification_status !== 'verified') return 'Phone verification required';
     if (!config.call_forwarding_enabled) return 'Call forwarding setup required';
     return 'Setup complete';
+  },
+
+  // Call message utilities
+  getMessageSenderName(sender: CallMessageSender): string {
+    if (sender.name) return sender.name;
+    
+    switch (sender.type) {
+      case 'customer':
+        return sender.phone_number ? this.formatPhoneNumber(sender.phone_number) : 'Customer';
+      case 'agent':
+        return 'Agent';
+      case 'system':
+        return 'System';
+      case 'operator':
+        return 'Operator';
+      default:
+        return sender.identifier;
+    }
+  },
+
+  getMessageTypeColor(messageType: CallMessage['message_type']): string {
+    switch (messageType) {
+      case 'transcript':
+        return 'bg-blue-100 text-blue-800';
+      case 'system':
+        return 'bg-gray-100 text-gray-800';
+      case 'summary':
+        return 'bg-green-100 text-green-800';
+      case 'note':
+        return 'bg-yellow-100 text-yellow-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  },
+
+  getSenderTypeColor(senderType: CallMessageSender['type']): string {
+    switch (senderType) {
+      case 'customer':
+        return 'bg-purple-100 text-purple-800';
+      case 'agent':
+        return 'bg-blue-100 text-blue-800';
+      case 'system':
+        return 'bg-gray-100 text-gray-800';
+      case 'operator':
+        return 'bg-orange-100 text-orange-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  },
+
+  sortMessagesByTimestamp(messages: CallMessage[]): CallMessage[] {
+    return [...messages].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  },
+
+  groupMessagesByType(messages: CallMessage[]): Record<CallMessage['message_type'], CallMessage[]> {
+    return messages.reduce((groups, message) => {
+      const type = message.message_type;
+      if (!groups[type]) {
+        groups[type] = [];
+      }
+      groups[type].push(message);
+      return groups;
+    }, {} as Record<CallMessage['message_type'], CallMessage[]>);
+  },
+
+  getCallTranscript(messages: CallMessage[]): string {
+    return messages
+      .filter(msg => msg.message_type === 'transcript')
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .map(msg => {
+        const senderName = this.getMessageSenderName(msg.sender);
+        return `${senderName}: ${msg.content}`;
+      })
+      .join('\n');
+  },
+
+  getCallSummary(messages: CallMessage[]): string | null {
+    const summaryMessage = messages.find(msg => msg.message_type === 'summary');
+    return summaryMessage?.content || null;
+  },
+
+  hasAudioSegment(message: CallMessage): boolean {
+    return !!(message.metadata?.recording_segment_url || message.metadata?.audio_start_time !== undefined);
   }
 };

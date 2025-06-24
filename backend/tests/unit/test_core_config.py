@@ -223,5 +223,5 @@ class TestSettings:
                 assert settings.DEEPGRAM_LANGUAGE == "en-US"
                 assert settings.ELEVENLABS_MODEL == "eleven_turbo_v2_5"
                 assert settings.ELEVENLABS_VOICE_ID == "VSy05caiuOBJdp42Y45T"
-                assert settings.ELEVENLABS_OPTIMIZE_STREAMING_LATENCY == 3
+                assert settings.ELEVENLABS_OPTIMIZE_STREAMING_LATENCY == 1
                 assert settings.ELEVENLABS_OUTPUT_FORMAT == "mp3_44100_128"

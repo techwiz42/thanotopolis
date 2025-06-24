@@ -490,7 +490,7 @@ class TestAgentManagerErrorHandling:
         )
         
         # Should handle gracefully and return error response
-        assert result[0] == "SYSTEM"
+        assert result[0] == "MODERATOR"
         assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
@@ -509,7 +509,7 @@ class TestAgentManagerErrorHandling:
             )
             
             # Should handle gracefully and return error response
-            assert result[0] == "SYSTEM"
+            assert result[0] == "MODERATOR"
             assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
@@ -530,7 +530,7 @@ class TestAgentManagerErrorHandling:
             )
             
             # Should handle gracefully and return error response
-            assert result[0] == "SYSTEM"
+            assert result[0] == "MODERATOR"
             assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
@@ -551,7 +551,7 @@ class TestAgentManagerErrorHandling:
             )
             
             # Should handle gracefully and return error response
-            assert result[0] == "SYSTEM"
+            assert result[0] == "MODERATOR"
             assert "error" in result[1].lower()
     
     @pytest.mark.asyncio
@@ -762,7 +762,7 @@ class TestAgentManagerEdgeCases:
         available_agents = ["AGENT1", "AGENT2"]
         result = self.manager._resolve_agent_name(None, available_agents)
         
-        # Should return first agent as fallback
+        # Should return first agent as fallback (since MODERATOR not in list)
         assert result == "AGENT1"
     
     @pytest.mark.asyncio

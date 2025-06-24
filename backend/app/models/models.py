@@ -1,6 +1,6 @@
 # backend/app/models/models.py
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint, Text, Enum as SQLEnum, Numeric
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Index, text
 from sqlalchemy.orm import relationship, declarative_base
@@ -47,6 +47,18 @@ class CallStatus(str, enum.Enum):
     FAILED = "failed"
     NO_ANSWER = "no_answer"
     BUSY = "busy"
+
+class CallMessageType(str, enum.Enum):
+    TRANSCRIPT = "transcript"
+    SYSTEM = "system"
+    SUMMARY = "summary"
+    NOTE = "note"
+
+class CallMessageSenderType(str, enum.Enum):
+    CUSTOMER = "customer"
+    AGENT = "agent"
+    SYSTEM = "system"
+    OPERATOR = "operator"
 
 class CallDirection(str, enum.Enum):
     INBOUND = "inbound"
@@ -423,6 +435,298 @@ class PhoneCall(Base):
     telephony_config = relationship("TelephonyConfiguration", back_populates="calls")
     conversation = relationship("Conversation", back_populates="phone_calls")
     call_agents = relationship("CallAgent", back_populates="call", cascade="all, delete-orphan")
+    messages = relationship("CallMessage", back_populates="call", cascade="all, delete-orphan", order_by="CallMessage.timestamp")
+    
+    @property
+    def transcript_messages(self):
+        """Get all transcript messages for this call."""
+        return [msg for msg in self.messages if msg.message_type == CallMessageType.TRANSCRIPT.value]
+    
+    @property
+    def system_messages(self):
+        """Get all system messages for this call."""
+        return [msg for msg in self.messages if msg.message_type == CallMessageType.SYSTEM.value]
+    
+    @property
+    def summary_message(self):
+        """Get the summary message for this call."""
+        summary_messages = [msg for msg in self.messages if msg.message_type == CallMessageType.SUMMARY.value]
+        return summary_messages[0] if summary_messages else None
+    
+    @property
+    def note_messages(self):
+        """Get all note messages for this call."""
+        return [msg for msg in self.messages if msg.message_type == CallMessageType.NOTE.value]
+    
+    @property
+    def formatted_transcript(self):
+        """Get formatted transcript from messages."""
+        transcript_messages = sorted(self.transcript_messages, key=lambda x: x.timestamp)
+        
+        lines = []
+        for msg in transcript_messages:
+            sender_name = msg.get_sender_name()
+            lines.append(f"{sender_name}: {msg.content}")
+        
+        return '\n'.join(lines)
+    
+    @property
+    def summary_content(self):
+        """Get summary content."""
+        summary_msg = self.summary_message
+        return summary_msg.content if summary_msg else None
+
+class CallMessage(Base):
+    """
+    Individual messages within a phone call.
+    Replaces the monolithic transcript field with granular message-based structure.
+    """
+    __tablename__ = "call_messages"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Foreign key to phone call
+    call_id = Column(UUID(as_uuid=True), ForeignKey("phone_calls.id", ondelete="CASCADE"), nullable=False)
+    
+    # Message content and metadata
+    content = Column(Text, nullable=False)
+    sender = Column(JSON, nullable=False)  # CallMessageSender structure
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+    message_type = Column(String, nullable=False)
+    message_metadata = Column(JSONB, nullable=True)  # CallMessageMetadata structure
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    call = relationship("PhoneCall", back_populates="messages")
+    
+    def get_sender_name(self):
+        """Get display name for message sender."""
+        sender_data = self.sender or {}
+        
+        if sender_data.get('name'):
+            return sender_data['name']
+        
+        sender_type = sender_data.get('type', 'unknown')
+        
+        if sender_type == 'customer':
+            phone = sender_data.get('phone_number')
+            return self._format_phone_number(phone) if phone else 'Customer'
+        elif sender_type == 'agent':
+            return 'Agent'
+        elif sender_type == 'system':
+            return 'System'
+        elif sender_type == 'operator':
+            return 'Operator'
+        else:
+            return sender_data.get('identifier', 'Unknown')
+    
+    @property
+    def sender_type(self):
+        """Get sender type."""
+        return self.sender.get('type', 'unknown') if self.sender else 'unknown'
+    
+    @property
+    def has_audio_segment(self):
+        """Check if message has associated audio segment."""
+        if not self.message_metadata:
+            return False
+        return bool(
+            self.message_metadata.get('recording_segment_url') or 
+            self.message_metadata.get('audio_start_time') is not None
+        )
+    
+    @property
+    def confidence_score(self):
+        """Get speech-to-text confidence score."""
+        return self.message_metadata.get('confidence_score') if self.message_metadata else None
+    
+    @property
+    def language(self):
+        """Get detected language."""
+        return self.message_metadata.get('language') if self.message_metadata else None
+    
+    @property
+    def audio_duration(self):
+        """Calculate audio segment duration in seconds."""
+        if not self.message_metadata:
+            return None
+        
+        start_time = self.message_metadata.get('audio_start_time')
+        end_time = self.message_metadata.get('audio_end_time')
+        
+        if start_time is not None and end_time is not None:
+            return end_time - start_time
+        
+        return None
+    
+    def to_dict(self):
+        """Convert to dictionary for API responses."""
+        return {
+            'id': str(self.id),
+            'call_id': str(self.call_id),
+            'content': self.content,
+            'sender': self.sender,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'message_type': self.message_type,
+            'metadata': self.message_metadata,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'sender_name': self.get_sender_name(),
+            'sender_type': self.sender_type,
+            'has_audio_segment': self.has_audio_segment,
+            'confidence_score': self.confidence_score,
+            'language': self.language,
+            'audio_duration': self.audio_duration,
+        }
+    
+    @staticmethod
+    def _format_phone_number(phone_number):
+        """Format phone number for display."""
+        if not phone_number:
+            return phone_number
+        
+        # Remove non-digit characters
+        digits = ''.join(filter(str.isdigit, phone_number))
+        
+        # Format US numbers
+        if len(digits) == 10:
+            return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+        elif len(digits) == 11 and digits.startswith('1'):
+            return f"({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
+        
+        return phone_number
+    
+    @classmethod
+    def create_transcript_message(
+        cls,
+        call_id,
+        content,
+        sender_type='customer',
+        sender_name=None,
+        sender_phone=None,
+        timestamp=None,
+        confidence_score=None,
+        language=None,
+        audio_start_time=None,
+        audio_end_time=None,
+        recording_segment_url=None,
+    ):
+        """Create a transcript message."""
+        
+        sender = {
+            'identifier': sender_phone or f"{sender_type}_speaker",
+            'type': sender_type,
+        }
+        
+        if sender_name:
+            sender['name'] = sender_name
+        if sender_phone:
+            sender['phone_number'] = sender_phone
+        
+        metadata = {}
+        if confidence_score is not None:
+            metadata['confidence_score'] = confidence_score
+        if language:
+            metadata['language'] = language
+        if audio_start_time is not None:
+            metadata['audio_start_time'] = audio_start_time
+        if audio_end_time is not None:
+            metadata['audio_end_time'] = audio_end_time
+        if recording_segment_url:
+            metadata['recording_segment_url'] = recording_segment_url
+        
+        return cls(
+            call_id=call_id,
+            content=content,
+            sender=sender,
+            timestamp=timestamp or datetime.utcnow(),
+            message_type=CallMessageType.TRANSCRIPT.value,
+            message_metadata=metadata if metadata else None,
+        )
+    
+    @classmethod
+    def create_system_message(
+        cls,
+        call_id,
+        content,
+        timestamp=None,
+        system_event_type=None,
+        **metadata_kwargs
+    ):
+        """Create a system message."""
+        
+        sender = {
+            'identifier': 'call_system',
+            'type': 'system',
+            'name': 'Call System',
+        }
+        
+        metadata = {'system_event_type': system_event_type} if system_event_type else {}
+        metadata.update(metadata_kwargs)
+        
+        return cls(
+            call_id=call_id,
+            content=content,
+            sender=sender,
+            timestamp=timestamp or datetime.utcnow(),
+            message_type=CallMessageType.SYSTEM.value,
+            message_metadata=metadata if metadata else None,
+        )
+    
+    @classmethod
+    def create_summary_message(
+        cls,
+        call_id,
+        content,
+        timestamp=None,
+        is_automated=True,
+    ):
+        """Create a summary message."""
+        
+        sender = {
+            'identifier': 'ai_summarizer',
+            'type': 'system',
+            'name': 'AI Summarizer',
+        }
+        
+        metadata = {'is_automated': is_automated}
+        
+        return cls(
+            call_id=call_id,
+            content=content,
+            sender=sender,
+            timestamp=timestamp or datetime.utcnow(),
+            message_type=CallMessageType.SUMMARY.value,
+            message_metadata=metadata,
+        )
+    
+    @classmethod
+    def create_note_message(
+        cls,
+        call_id,
+        content,
+        user_id,
+        user_name=None,
+        timestamp=None,
+    ):
+        """Create a manual note message."""
+        
+        sender = {
+            'identifier': str(user_id),
+            'type': 'operator',
+            'name': user_name or 'Operator',
+        }
+        
+        return cls(
+            call_id=call_id,
+            content=content,
+            sender=sender,
+            timestamp=timestamp or datetime.utcnow(),
+            message_type=CallMessageType.NOTE.value,
+        )
 
 class CallAgent(Base):
     __tablename__ = "call_agents"
