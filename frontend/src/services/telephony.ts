@@ -264,12 +264,16 @@ export const telephonyService = {
   // Get specific call
   async getCall(callId: string, token: string): Promise<PhoneCall> {
     try {
+      console.log('Fetching call with ID:', callId);
+      console.log('Using token:', token ? 'Present' : 'Missing');
+      
       const response = await api.get(`/telephony/calls/${callId}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
       
+      console.log('Call fetch response:', response);
       return response.data as PhoneCall;
     } catch (error) {
       console.error('Error fetching call:', error);
@@ -504,10 +508,16 @@ export const telephonyService = {
   },
 
   sortMessagesByTimestamp(messages: CallMessage[]): CallMessage[] {
+    if (!Array.isArray(messages)) {
+      return [];
+    }
     return [...messages].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   },
 
   groupMessagesByType(messages: CallMessage[]): Record<CallMessage['message_type'], CallMessage[]> {
+    if (!Array.isArray(messages)) {
+      return {} as Record<CallMessage['message_type'], CallMessage[]>;
+    }
     return messages.reduce((groups, message) => {
       const type = message.message_type;
       if (!groups[type]) {
@@ -519,6 +529,9 @@ export const telephonyService = {
   },
 
   getCallTranscript(messages: CallMessage[]): string {
+    if (!Array.isArray(messages)) {
+      return '';
+    }
     return messages
       .filter(msg => msg.message_type === 'transcript')
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
@@ -530,6 +543,9 @@ export const telephonyService = {
   },
 
   getCallSummary(messages: CallMessage[]): string | null {
+    if (!Array.isArray(messages)) {
+      return null;
+    }
     const summaryMessage = messages.find(msg => msg.message_type === 'summary');
     return summaryMessage?.content || null;
   },

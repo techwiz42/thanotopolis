@@ -43,13 +43,19 @@ class ApiService {
 
     const finalHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...headers as Record<string, string>,
+      ...(headers as Record<string, string>),
     };
 
     // Add tenant header if available
     if (organization) {
       finalHeaders['X-Tenant-ID'] = organization;
     }
+
+    console.log('API Request:', {
+      url,
+      method: fetchOptions.method || 'GET',
+      headers: finalHeaders
+    });
 
     const response = await fetch(url, {
       ...fetchOptions,

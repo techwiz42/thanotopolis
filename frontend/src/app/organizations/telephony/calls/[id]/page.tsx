@@ -47,6 +47,9 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   const { token } = useAuth();
   const { toast } = useToast();
 
+  console.log('CallDetailsPage mounted with params:', params);
+  console.log('Token available:', !!token);
+
   // State
   const [isLoading, setIsLoading] = useState(true);
   const [call, setCall] = useState<TelephonyPhoneCall | null>(null);
@@ -79,15 +82,20 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
         const callData = await telephonyService.getCall(params.id, token);
         setCall(callData);
         
-        // Load messages using the hook
-        await loadMessages();
+        // Load messages manually
+        try {
+          await loadMessages();
+        } catch (msgError) {
+          console.warn('Failed to load messages:', msgError);
+          // Don't fail the entire call loading if messages fail
+        }
         
       } catch (error: any) {
         console.error('Error loading call:', error);
-        setError(error.response?.data?.detail || 'Failed to load call details');
+        setError(error.message || 'Failed to load call details');
         toast({
           title: "Error Loading Call",
-          description: "Failed to load call details. Please try again.",
+          description: error.message || "Failed to load call details. Please try again.",
           variant: "destructive"
         });
       } finally {
@@ -96,7 +104,7 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
     };
 
     loadCall();
-  }, [token, params.id, loadMessages]);
+  }, [token, params.id]);
 
   // Cleanup audio on unmount
   useEffect(() => {

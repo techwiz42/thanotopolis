@@ -350,8 +350,9 @@ const AdminMonitoringPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {dashboard.usage_by_organization
-                  .filter(org => user?.role === 'super_admin' || org.tenant_id === user?.tenant_id)
+                {(dashboard?.usage_by_organization && Array.isArray(dashboard.usage_by_organization) 
+                  ? dashboard.usage_by_organization.filter(org => user?.role === 'super_admin' || org.tenant_id === user?.tenant_id) 
+                  : [])
                   .map((org) => (
                     <tr key={org.tenant_id} className="border-b">
                       <td className="py-2">{org.tenant_name}</td>
@@ -385,8 +386,9 @@ const AdminMonitoringPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {dashboard.tenant_stats
-                  .filter(tenant => user?.role === 'super_admin' || tenant.tenant_id === user?.tenant_id)
+                {(dashboard?.tenant_stats && Array.isArray(dashboard.tenant_stats) 
+                  ? dashboard.tenant_stats.filter(tenant => user?.role === 'super_admin' || tenant.tenant_id === user?.tenant_id) 
+                  : [])
                   .map((tenant) => (
                     <tr key={tenant.tenant_id} className="border-b">
                       <td className="py-2">{tenant.name}</td>
@@ -406,7 +408,7 @@ const AdminMonitoringPage = () => {
         <Card className="p-6">
           <h2 className="text-xl font-bold mb-4">Recent System Metrics</h2>
           <div className="space-y-2">
-            {dashboard.system_metrics.slice(0, 10).map((metric) => (
+            {(dashboard?.system_metrics && Array.isArray(dashboard.system_metrics) ? dashboard.system_metrics : []).slice(0, 10).map((metric) => (
               <div key={metric.id} className="flex justify-between items-center py-2 border-b last:border-b-0">
                 <div>
                   <span className="font-medium">{metric.metric_type}</span>

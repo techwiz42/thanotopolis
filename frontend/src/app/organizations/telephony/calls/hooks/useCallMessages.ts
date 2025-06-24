@@ -29,11 +29,11 @@ export function useCallMessages({ callId, autoLoad = true }: UseCallMessagesProp
       
     } catch (error: any) {
       console.error('Error loading call messages:', error);
-      const errorMessage = error.response?.data?.detail || 'Failed to load call messages';
+      const errorMessage = error.message || 'Failed to load call messages';
       setError(errorMessage);
       
       // Only show toast if this isn't a "not found" error (API might not exist yet)
-      if (error.response?.status !== 404) {
+      if (!error.message?.includes('404')) {
         toast({
           title: "Error Loading Messages",
           description: errorMessage,
@@ -61,7 +61,7 @@ export function useCallMessages({ callId, autoLoad = true }: UseCallMessagesProp
       console.error('Error adding call message:', error);
       toast({
         title: "Error Adding Message",
-        description: error.response?.data?.detail || 'Failed to add message',
+        description: error.message || 'Failed to add message',
         variant: "destructive"
       });
       return null;
@@ -85,7 +85,7 @@ export function useCallMessages({ callId, autoLoad = true }: UseCallMessagesProp
       console.error('Error updating call message:', error);
       toast({
         title: "Error Updating Message",
-        description: error.response?.data?.detail || 'Failed to update message',
+        description: error.message || 'Failed to update message',
         variant: "destructive"
       });
       return null;
@@ -104,7 +104,7 @@ export function useCallMessages({ callId, autoLoad = true }: UseCallMessagesProp
       console.error('Error deleting call message:', error);
       toast({
         title: "Error Deleting Message",
-        description: error.response?.data?.detail || 'Failed to delete message',
+        description: error.message || 'Failed to delete message',
         variant: "destructive"
       });
       return false;
@@ -121,10 +121,10 @@ export function useCallMessages({ callId, autoLoad = true }: UseCallMessagesProp
   // Utility getters
   const sortedMessages = telephonyService.sortMessagesByTimestamp(messages);
   const messagesByType = telephonyService.groupMessagesByType(messages);
-  const transcriptMessages = messages.filter(msg => msg.message_type === 'transcript');
-  const systemMessages = messages.filter(msg => msg.message_type === 'system');
-  const summaryMessage = messages.find(msg => msg.message_type === 'summary');
-  const noteMessages = messages.filter(msg => msg.message_type === 'note');
+  const transcriptMessages = Array.isArray(messages) ? messages.filter(msg => msg.message_type === 'transcript') : [];
+  const systemMessages = Array.isArray(messages) ? messages.filter(msg => msg.message_type === 'system') : [];
+  const summaryMessage = Array.isArray(messages) ? messages.find(msg => msg.message_type === 'summary') : undefined;
+  const noteMessages = Array.isArray(messages) ? messages.filter(msg => msg.message_type === 'note') : [];
 
   return {
     // State
