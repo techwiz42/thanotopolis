@@ -2,6 +2,15 @@
 
 A comprehensive multi-agent AI platform built by **Cyberiad.ai** that provides intelligent telephone answering services, web-based conversations, and specialized AI agents for various industries and use cases.
 
+## 📢 What's New
+
+### Recent Updates (June 2025)
+- **17 New Cultural Agents**: Culturally-sensitive funeral and memorial service agents for diverse communities
+- **Enhanced Call Message System**: Granular message tracking replacing monolithic transcripts
+- **Improved Test Coverage**: From 63% to 72% with 98.4% test success rate
+- **TTS Enhancements**: Fixed text-to-speech issues for better voice delivery
+- **New API Endpoints**: Call message management APIs for better telephony integration
+
 ## 🌟 Overview
 
 Thanotopolis is an advanced agentic AI framework that enables organizations to deploy sophisticated AI assistants across multiple channels. The platform features a multi-agent system where specialized AI agents can collaborate to handle complex queries, with support for telephony integration, real-time conversations, and customizable agent ownership models.
@@ -107,6 +116,28 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8000
 - **Inventory**: Facilities and equipment management
 - **Web Search**: Real-time information retrieval
 
+### Cultural Agents
+
+Specialized agents providing culturally-sensitive funeral and memorial services:
+
+- **Mexican Cultural Agent**: Traditional Mexican funeral customs and Day of the Dead
+- **Salvadoran Cultural Agent**: Salvadoran memorial traditions
+- **Filipino Cultural Agent**: Filipino wake and burial customs
+- **Vietnamese Cultural Agent**: Vietnamese ancestor veneration practices
+- **Korean Cultural Agent**: Korean funeral rites and memorial services
+- **Jewish Cultural Agent**: Jewish burial and shiva traditions
+- **Persian Cultural Agent**: Persian/Iranian funeral customs
+- **Thai Cultural Agent**: Thai Buddhist funeral practices
+- **Cambodian Cultural Agent**: Cambodian memorial traditions
+- **Russian Cultural Agent**: Russian Orthodox funeral customs
+- **Ukrainian Cultural Agent**: Ukrainian memorial services
+- **Japanese Cultural Agent**: Japanese Buddhist and Shinto practices
+- **Somali Cultural Agent**: Somali Islamic funeral traditions
+- **Ethiopian Cultural Agent**: Ethiopian Orthodox customs
+- **Chinese Cultural Agent**: Chinese ancestor worship and funeral rites
+- **Polish Cultural Agent**: Polish Catholic traditions
+- **Armenian Cultural Agent**: Armenian Apostolic funeral customs
+
 ### Agent Ownership
 
 Agents can be **Free** (available to all) or **Proprietary** (organization-specific):
@@ -141,6 +172,16 @@ class MySharedAgent(BaseAgent):
 4. Real-time transcription and response generation
 5. Natural voice synthesis back to caller
 
+### Enhanced Call Message System
+- **Structured Messages**: Calls now use granular message tracking instead of monolithic transcripts
+- **Message Types**: 
+  - `transcript`: Voice-to-text conversions
+  - `system`: Platform notifications and status updates
+  - `summary`: AI-generated conversation summaries
+  - `note`: Manual annotations and observations
+- **Better Call Details**: Formatted call history with individual message timestamps
+- **Improved Analytics**: Track conversation flow and agent performance
+
 ## 🌐 API Endpoints
 
 ### Core APIs
@@ -150,6 +191,12 @@ class MySharedAgent(BaseAgent):
 - `/api/telephony/*` - Phone system integration
 - `/api/organizations/*` - Multi-tenant management
 - `/api/billing/*` - Usage tracking and payments
+
+### Call Message APIs
+- `GET /api/telephony/calls/{call_id}/messages` - Retrieve call messages with filtering
+- `POST /api/telephony/calls/{call_id}/messages` - Add new messages to calls
+- `PATCH /api/telephony/calls/{call_id}/messages/{message_id}` - Update existing messages
+- `DELETE /api/telephony/calls/{call_id}/messages/{message_id}` - Delete call messages
 
 ### WebSocket Endpoints
 - `/api/ws/conversation/{id}` - Real-time chat
@@ -171,7 +218,15 @@ pytest --cov=app
 # Run specific test categories
 pytest tests/unit/          # Unit tests
 pytest tests/integration/   # Integration tests
+
+# Generate coverage report
+pytest --cov=app --cov-report=html
 ```
+
+#### Test Coverage Stats
+- **Overall Coverage**: 72% (up from 63%)
+- **Test Success Rate**: 98.4% (1,360 of 1,382 tests passing)
+- **Test Organization**: Comprehensive unit and integration test suites
 
 ### Frontend Testing
 ```bash

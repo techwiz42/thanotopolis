@@ -1,0 +1,178 @@
+Name                                                     Stmts   Miss  Cover   Missing
+--------------------------------------------------------------------------------------
+app/__init__.py                                              0      0   100%
+app/agents/__init__.py                                       0      0   100%
+app/agents/agent_calculator_tool.py                        193     36    81%   60-62, 138-139, 178-179, 184, 192-197, 199, 205, 223-226, 230, 275-276, 311-318, 328, 330, 338-339, 341-342, 344-345
+app/agents/agent_interface.py                               58      0   100%
+app/agents/agent_manager.py                                424    154    64%   99-107, 113-116, 146-147, 203, 207, 244-245, 263, 280-284, 293-339, 351-353, 360-363, 389-390, 406-412, 417-419, 457-458, 461-462, 474-499, 550-551, 582-583, 615-636, 645-728, 783-785, 821-838, 853-866, 881-891, 902-904
+app/agents/armenian_cultural_agent.py                       40     10    75%   14-15, 180, 206, 232, 258, 284, 310, 336, 362
+app/agents/base_agent.py                                   177     30    83%   22-23, 141, 212, 216, 271-277, 297-329, 376-382, 395-397
+app/agents/cambodian_cultural_agent.py                      40     10    75%   14-15, 218, 244, 270, 296, 322, 348, 374, 400
+app/agents/chinese_cultural_agent.py                        40     10    75%   14-15, 163, 189, 215, 241, 267, 293, 319, 345
+app/agents/collaboration_manager.py                        315    107    66%   203-204, 234-236, 320-476, 579, 619-646, 699, 705-721
+app/agents/common_context.py                                17      0   100%
+app/agents/compliance_and_documentation_agent.py            35      8    77%   15-16, 126-128, 186, 242, 303, 366
+app/agents/demo_answering_service_agent.py                  67     38    43%   20-26, 94-95, 118-122, 138-172, 184-198, 202-214
+app/agents/emergency_and_crisis_agent.py                    35      8    77%   15-16, 139-141, 225, 309, 412, 489
+app/agents/ethiopian_cultural_agent.py                      40     10    75%   14-15, 236, 262, 288, 314, 340, 366, 392, 418
+app/agents/filipino_cultural_agent.py                       40     10    75%   14-15, 156, 182, 208, 234, 260, 286, 312, 338
+app/agents/financial_services_agent.py                      37      8    78%   16-17, 142-144, 217, 287, 358, 448
+app/agents/grief_support_agent.py                           35      8    77%   15-16, 139-141, 194, 269, 338, 402
+app/agents/inventory_and_facilities_agent.py                35      8    77%   15-16, 131-133, 213, 306, 393, 472
+app/agents/japanese_cultural_agent.py                       40     10    75%   14-15, 217, 243, 269, 295, 321, 347, 373, 399
+app/agents/jewish_cultural_agent.py                         40     10    75%   14-15, 187, 213, 239, 265, 291, 317, 343, 369
+app/agents/korean_cultural_agent.py                         40     10    75%   14-15, 179, 205, 231, 257, 283, 309, 335, 361
+app/agents/mexican_cultural_agent.py                        40     10    75%   14-15, 118, 144, 170, 196, 222, 248, 274, 300
+app/agents/moderator_agent.py                              263    164    38%   55, 65-69, 73-86, 113-117, 122-241, 263-403, 418-421, 544-548, 565-567, 575-576, 595-596, 601, 608-611
+app/agents/persian_cultural_agent.py                        40     10    75%   14-15, 198, 224, 250, 276, 302, 328, 354, 380
+app/agents/polish_cultural_agent.py                         40     10    75%   14-15, 241, 267, 293, 319, 345, 371, 397, 423
+app/agents/regulatory_agent.py                              68     38    44%   108-117, 120-122, 155-158, 189-217, 236-252, 273-309, 328-361, 384-417, 430-443
+app/agents/religious_agent.py                               35      8    77%   14-15, 148-150, 219, 286, 355, 434
+app/agents/russian_cultural_agent.py                        40     10    75%   14-15, 217, 243, 269, 295, 321, 347, 373, 399
+app/agents/salvadoran_cultural_agent.py                     40     10    75%   14-15, 144, 170, 196, 222, 248, 274, 300, 326
+app/agents/sensitive_chat_agent.py                          37     12    68%   19-20, 282-300, 326, 356
+app/agents/somali_cultural_agent.py                         40     10    75%   14-15, 235, 261, 287, 313, 339, 365, 391, 417
+app/agents/tenant_aware_agent_manager.py                    97     17    82%   72-73, 207-228
+app/agents/thai_cultural_agent.py                           40     10    75%   14-15, 210, 236, 262, 288, 314, 340, 366, 392
+app/agents/ukrainian_cultural_agent.py                      40     10    75%   14-15, 229, 255, 281, 307, 333, 359, 385, 411
+app/agents/vietnamese_cultural_agent.py                     40     10    75%   14-15, 172, 198, 224, 250, 276, 302, 328, 354
+app/agents/web_search_agent.py                              82      1    99%   202
+app/api/__init__.py                                          3      0   100%
+app/api/admin.py                                           177    144    19%   38-156, 181-205, 224-245, 260, 285-315, 333-339, 353-361, 375-437, 452-458, 478-520
+app/api/agents.py                                           97      7    93%   55-65
+app/api/auth.py                                            234    137    41%   91-112, 120-134, 145-156, 168-233, 243-262, 277-285, 293, 296-331, 349-407, 433-439, 448-458, 464-469, 474-481, 489-493, 503-524, 535-582, 592-624
+app/api/billing.py                                          48     19    60%   44, 86-133
+app/api/conversations.py                                   495    415    16%   69-122, 144-233, 259, 264-339, 354, 364-424, 436-451, 468-552, 583-694, 705, 707, 726-749, 759-780, 791-880, 904-928, 938-952, 970-1047, 1069-1110, 1132-1244
+app/api/organizations.py                                   131     20    85%   134, 145, 180, 196-221, 255, 306, 324, 343, 354
+app/api/rag.py                                              90     90     0%   4-276
+app/api/streaming_stt.py                                   187    119    36%   66-67, 89, 110-316, 331-392, 398, 415, 418-419
+app/api/telephony.py                                       407    252    38%   147-152, 165-188, 197-206, 215-231, 241-260, 269-278, 288-316, 328-354, 369-379, 389-445, 454-500, 520-572, 601-627, 650-685, 707-736, 749-798, 814-849, 867-895, 911-956
+app/api/telephony_websocket.py                             572    307    46%   48-66, 158-160, 197-200, 223-246, 266-267, 272-273, 290, 326-448, 452-516, 522, 528-549, 586-587, 599-600, 615-637, 670-727, 740-741, 760-761, 778-821, 834-861, 866, 898-899, 908-909, 922-924, 947, 951-952, 956-1006, 1016-1031, 1054-1055, 1061, 1110-1114, 1122-1128, 1185-1186
+app/api/voice_streaming.py                                 274    194    29%   26-28, 70-71, 93, 100-102, 112-274, 289-346, 363-428, 445-515, 523-539, 548-564, 572-588, 594, 606, 621, 640-649, 676, 679-680
+app/api/websockets.py                                      457    269    41%   69-126, 134-135, 140-141, 151-184, 187, 220-221, 280-281, 295-316, 320-324, 333, 340-355, 422-602, 617-618, 681-682, 687-851, 900-907, 913-927, 959-963, 974-976, 984-1033, 1039-1050
+app/auth/__init__.py                                         2      0   100%
+app/auth/auth.py                                            95      6    94%   196, 202-218
+app/core/__init__.py                                         2      0   100%
+app/core/buffer_manager.py                                 312     41    87%   66-67, 80, 91-92, 114, 210-212, 222-228, 272, 277-281, 405-407, 435-436, 460-462, 476-478, 508-510, 531-532, 554, 567-568, 583-585
+app/core/common_calculator.py                              727    176    76%   25-32, 99, 103, 118-120, 125, 140-142, 150, 163-164, 221, 257-259, 355-357, 379, 398-441, 447-636, 679, 766, 775, 792-795, 814, 853, 871, 889, 913, 918, 928, 933, 953, 977, 982, 1002, 1010, 1015, 1044-1046, 1065, 1073, 1076, 1081, 1097, 1112, 1120, 1150, 1153, 1156, 1175, 1178, 1198, 1221-1223, 1238, 1303, 1330, 1416, 1446, 1515, 1610, 1654, 1658, 1660, 1686, 1712, 1738
+app/core/config.py                                          84      4    95%   48-50, 128
+app/core/input_sanitizer.py                                 54      0   100%
+app/core/websocket_queue.py                                347    106    69%   48, 54-57, 72, 101, 164-166, 172-174, 178-185, 262-264, 282-287, 291-292, 308-321, 346-347, 374-377, 402-406, 415-419, 425-429, 433-443, 447-503, 517-518, 547-549
+app/db/__init__.py                                           0      0   100%
+app/db/database.py                                          32      0   100%
+app/main.py                                                237     34    86%   58-59, 86-87, 94-95, 103-104, 111-112, 365-366, 371-372, 377-378, 383-384, 389-390, 395-396, 401-402, 407-408, 413-414, 420-421, 426-427, 457-458
+app/models/__init__.py                                       2      0   100%
+app/models/models.py                                       444     75    83%   443, 448, 453-454, 459, 464-471, 476-477, 508-525, 530, 535-537, 545, 550, 555-564, 568, 588-600, 619-641, 661-670, 689-697, 717-723
+app/schemas/__init__.py                                      2      0   100%
+app/schemas/schemas.py                                     469      0   100%
+app/services/billing_automation.py                          54      0   100%
+app/services/context_manager.py                             37      0   100%
+app/services/memory/conversation_context_manager.py         70      0   100%
+app/services/monitoring_service.py                          88      0   100%
+app/services/rag/__init__.py                                 4      0   100%
+app/services/rag/ingestion_service.py                      105     77    27%   36-91, 101-143, 152-199, 208-220, 224-236, 240-247
+app/services/rag/pgvector_query_service.py                  21      2    90%   28, 43
+app/services/rag/pgvector_storage_service.py               102     49    52%   66-124, 157, 181-198, 206-215, 219-250
+app/services/telephony_service.py                          209    124    41%   109-147, 158-203, 216-268, 280-317, 329-339, 362, 374, 454-463, 485-516, 521-546
+app/services/usage_service.py                               90      0   100%
+app/services/voice/__init__.py                               3      0   100%
+app/services/voice/audio_converter.py                       54      0   100%
+app/services/voice/deepgram_service.py                     286     91    68%   190-192, 304-386, 432, 460-461, 523-530, 533-537, 559, 561, 581, 583, 605, 632-637, 642-643, 675-677, 682-685, 695-696, 700-708, 712-716, 720-724
+app/services/voice/elevenlabs_service.py                   275    133    52%   89, 113-115, 131-204, 208-228, 251-348, 379, 550, 574-576, 606-615, 642-659
+app/tasks/__init__.py                                        0      0   100%
+app/tasks/telephony_cleanup.py                              42     28    33%   21-64, 72-74, 80-82
+check_active_calls.py                                       62     62     0%   6-110
+check_twilio_setup.py                                       80     80     0%   6-135
+check_voice_services.py                                    119    119     0%   9-203
+create_admin_user.py                                       123    123     0%   7-206
+debug_audio_delivery.py                                    103    103     0%   11-192
+debug_twilio.py                                             64     64     0%   6-112
+debug_webhook_flow.py                                      105    105     0%   6-180
+fix_agent_discovery.py                                     143    143     0%   15-249
+fix_auth_tests.py                                           23     23     0%   3-41
+fix_telephony_issues.py                                     55     55     0%   9-171
+fix_tts_delivery.py                                         59     59     0%   12-114
+fixed_conversations.py                                     352    352     0%   2-949
+gunicorn_config.py                                          35     35     0%   4-69
+run.py                                                     187    187     0%   7-294
+telephony_status_report.py                                 130    130     0%   6-206
+test_agent_processing.py                                    39     39     0%   7-79
+test_already_verified.py                                    57     57     0%   6-111
+test_api_response.py                                        38     38     0%   6-63
+test_api_verification.py                                    69     69     0%   6-113
+test_call_simulation.py                                     92     92     0%   6-164
+test_deepgram_simple.py                                     32     32     0%   5-58
+test_greeting_issue.py                                      90     90     0%   7-134
+test_incoming_call_webhook.py                               62     62     0%   6-114
+test_soniox_migration.py                                    81     81     0%   7-142
+test_soniox_simple.py                                       60     60     0%   6-82
+test_stt_pipeline_fix.py                                   123    123     0%   11-258
+test_stt_websocket_debug.py                                 45     45     0%   5-81
+test_telephony_config.py                                    76     76     0%   6-115
+test_telephony_end_to_end.py                                74     74     0%   6-134
+test_verification_flow.py                                   47     47     0%   6-86
+test_webhook_debug.py                                       44     44     0%   3-83
+tests/__init__.py                                            0      0   100%
+tests/conftest.py                                          366    241    34%   21-36, 42-44, 50-55, 68, 75, 81, 106-107, 122, 185, 230-231, 246-247, 261-269, 274-282, 290, 293, 296, 302-311, 316-325, 370-376, 382-393, 399-410, 416-427, 433-444, 450, 459, 468, 477, 486-521, 527-538, 544-555, 561-572, 578-584, 590-601, 607, 630, 633-638, 644, 646-650, 656, 658-662, 674-679, 688-690, 694-695, 701-704
+tests/conftest_integration.py                               98     98     0%   2-234
+tests/conftest_integration_simple.py                       127      0   100%
+tests/conftest_voice.py                                    220    220     0%   6-735
+tests/integration/conftest.py                                1      0   100%
+tests/integration/test_auth_integration.py                 123      1    99%   31
+tests/integration/test_conversation_api_integration.py     189      0   100%
+tests/integration/test_database_integration.py              60      2    97%   86-87
+tests/integration/test_deepgram_service_integration.py     238      8    97%   291-299
+tests/integration/test_models_integration.py               141      0   100%
+tests/integration/test_services_integration.py             169     22    87%   154, 176, 194, 214, 229-232, 248-251, 276-279, 294-297, 318-321, 336, 340, 360
+tests/integration/test_services_integration_working.py      63      0   100%
+tests/integration/test_usage_service_integration.py        180      0   100%
+tests/integration/test_websockets.py                       187      5    97%   285-287, 301, 308
+tests/setup_test_database.py                                62     62     0%   6-115
+tests/test_agent_interface.py                              184      0   100%
+tests/test_collaboration_manager.py                        288      0   100%
+tests/test_common_context.py                               181      0   100%
+tests/test_context_manager.py                              229      0   100%
+tests/test_conversation_context_manager.py                 149      0   100%
+tests/test_tenant_aware_agent_manager.py                   209      0   100%
+tests/unit/test_admin_api.py                                87     13    85%   102-109, 130, 163-169, 175-181
+tests/unit/test_agent_calculator_tool.py                   275      1    99%   618
+tests/unit/test_agent_interface.py                         217      0   100%
+tests/unit/test_agent_manager.py                           589    103    83%   862-868, 876-921, 926-957, 962-1030, 1035-1056, 1061-1081, 1086-1098, 1102-1103, 1206
+tests/unit/test_agents_api.py                              489     85    83%   533-539, 544-550, 704-707, 712-756, 761-811, 815-863
+tests/unit/test_audio_converter.py                         252      0   100%
+tests/unit/test_auth_api.py                                180      0   100%
+tests/unit/test_auth_service.py                             80      0   100%
+tests/unit/test_base_agent.py                              256     18    93%   99, 152, 166, 181, 213, 224, 235, 245, 248, 259, 282, 301, 341, 378, 419, 455, 458, 469
+tests/unit/test_billing_api.py                             148      0   100%
+tests/unit/test_buffer_manager.py                          458      2    99%   631-632
+tests/unit/test_calculator_utility.py                      315      1    99%   490
+tests/unit/test_collaboration_manager.py                   318      0   100%
+tests/unit/test_common_context.py                          138      1    99%   225
+tests/unit/test_config.py                                   59      0   100%
+tests/unit/test_conversation_api.py                         34     12    65%   26-44
+tests/unit/test_core_buffer_manager.py                     375      0   100%
+tests/unit/test_core_common_calculator.py                  269      0   100%
+tests/unit/test_core_config.py                             125      0   100%
+tests/unit/test_core_input_sanitizer.py                    190      0   100%
+tests/unit/test_core_websocket_queue.py                    399      1    99%   547
+tests/unit/test_database.py                                311      4    99%   166-167, 442, 480
+tests/unit/test_input_sanitizer.py                         118      1    99%   182
+tests/unit/test_main.py                                    435     26    94%   77-81, 106, 125-129, 161-165, 196-200, 231-235
+tests/unit/test_moderator_agent.py                         285     17    94%   27-28, 299-300, 314-315, 431-432, 447-448, 467-468, 516-517, 529-530, 534
+tests/unit/test_monitoring_service.py                      343      0   100%
+tests/unit/test_organizations_api.py                       395      8    98%   51-58
+tests/unit/test_schemas.py                                 345      0   100%
+tests/unit/test_services_billing_automation.py             315     13    96%   21-24, 29, 256-257, 288-289, 330-331, 525-526
+tests/unit/test_services_deepgram.py                       420      1    99%   755
+tests/unit/test_services_elevenlabs.py                     358      7    98%   369, 376, 384, 536-542
+tests/unit/test_services_monitoring.py                     381      3    99%   456-457, 465
+tests/unit/test_services_usage_tracking.py                 308      0   100%
+tests/unit/test_telephony_service.py                       151     10    93%   25-28, 33-35, 305-307
+tests/unit/test_telephony_websocket.py                     451     92    80%   293-316, 405-432, 477-517, 572-580, 765-785, 832-857, 862-894, 899-916
+tests/unit/test_tenant_aware_agent_manager.py              275      0   100%
+tests/unit/test_voice_api_logic.py                         303      0   100%
+tests/unit/test_voice_audio_converter.py                   231      1    99%   429
+tests/unit/test_websearch_agent.py                         242      3    99%   301-302, 492
+update_platform_number.py                                   29     29     0%   1-46
+--------------------------------------------------------------------------------------
+TOTAL                                                    27193   7514    72%
