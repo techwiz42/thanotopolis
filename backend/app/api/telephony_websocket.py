@@ -130,9 +130,13 @@ class TelephonyStreamHandler:
                 "transcript_buffer": "",
                 "voice_id": config.voice_id or settings.ELEVENLABS_VOICE_ID,
                 "last_audio_time": time.time(),
-                "silence_threshold": 0.5,  # 500ms of silence before processing buffer
-                "min_buffer_size": 8000,   # ~500ms at 8000 Hz, 16-bit = 8000 bytes per 500ms
-                "max_buffer_size": 32000   # ~2 seconds max buffer
+                "silence_threshold": 0.3,  # 300ms of silence before processing buffer
+                "min_buffer_size": 12000,  # ~0.75 seconds at 8000 Hz, 16-bit = 16000 bytes per second  
+                "max_buffer_size": 32000,  # ~2 seconds max buffer
+                "greeting_sent": False,    # Track if initial greeting was sent
+                "last_process_time": time.time(),  # Track last audio processing time
+                "pending_response_task": None,  # Track delayed response task
+                "last_transcript_time": None    # Track when last transcript was received
             }
             
             logger.info(f"📞 Telephony WebSocket connected for call {call.call_sid}")
@@ -145,10 +149,8 @@ class TelephonyStreamHandler:
                 "conversation_id": str(conversation.id)
             })
             
-            # Send initial greeting from AI agent
-            logger.info(f"🎙️ About to send initial greeting for session {session_id}")
-            await self._send_initial_greeting(session_id, db)
-            logger.info(f"🎙️ Initial greeting method completed for session {session_id}")
+            # Don't send initial greeting here - wait for Twilio to send "start" event with streamSid
+            logger.info(f"🎙️ Waiting for Twilio stream to start before sending greeting...")
             
             # Start processing loop
             await self._process_call_session(websocket, session_id, db)
@@ -211,9 +213,39 @@ class TelephonyStreamHandler:
         message: Dict[str, Any],
         db: AsyncSession
     ):
-        """Handle messages from Twilio stream"""
+        """Handle messages from Twilio stream or frontend"""
         
         session = self.call_sessions[session_id]
+        
+        # Handle frontend message types first
+        frontend_type = message.get("type")
+        if frontend_type:
+            if frontend_type == "agent_message":
+                # Handle agent message from frontend for TTS
+                agent_text = message.get("message", "")
+                language = message.get("language", "en")
+                logger.info(f"📞 Received agent message from frontend: {agent_text[:50]}...")
+                
+                # Process with TTS and send to caller
+                await self._send_speech_response(session_id, agent_text, db)
+                return
+            
+            elif frontend_type == "init_telephony_stream":
+                # Frontend initialization - acknowledge
+                logger.info(f"📞 Frontend telephony stream initialized for call: {message.get('call_id')}")
+                await self._send_message(session_id, {
+                    "type": "telephony_connected",
+                    "call_id": session_id,
+                    "status": "ready"
+                })
+                return
+            
+            elif frontend_type == "ping":
+                # Heartbeat from frontend
+                await self._send_message(session_id, {"type": "pong"})
+                return
+        
+        # Handle Twilio message types
         message_type = message.get("event")
         
         if message_type == "connected":
@@ -225,15 +257,37 @@ class TelephonyStreamHandler:
             
         elif message_type == "start":
             # Stream started - capture streamSid for later use
-            stream_sid = message.get("start", {}).get("streamSid")
+            start_data = message.get("start", {})
+            stream_sid = start_data.get("streamSid")
+            logger.error(f"📻 DEBUG: Twilio start event received. Full message: {message}")
+            logger.error(f"📻 DEBUG: Start data: {start_data}")
+            
             if stream_sid:
                 session["stream_sid"] = stream_sid
-                logger.info(f"📻 Captured streamSid: {stream_sid}")
+                logger.error(f"📻 ✅ Captured streamSid: {stream_sid}")
+            else:
+                # Try alternative ways to get streamSid
+                stream_sid = message.get("streamSid")  # Direct from message
+                if stream_sid:
+                    session["stream_sid"] = stream_sid
+                    logger.error(f"📻 ✅ Captured streamSid from message root: {stream_sid}")
+                else:
+                    logger.error(f"❌ No streamSid found! Message keys: {list(message.keys())}")
+                    logger.error(f"❌ Start data keys: {list(start_data.keys())}")
+                    
             session["stt_active"] = True
             await self._send_message(session_id, {
                 "type": "stream_started",
                 "message": "Audio processing started"
             })
+            
+            # NOW send the initial greeting since we have the streamSid
+            if not session.get("greeting_sent", False):
+                logger.info(f"🎙️ Stream ready, sending initial greeting for session {session_id}")
+                await self._send_initial_greeting(session_id, db)
+                session["greeting_sent"] = True
+            else:
+                logger.info(f"🎙️ Initial greeting already sent for session {session_id}")
             
         elif message_type == "media":
             # Audio data received
@@ -259,33 +313,7 @@ class TelephonyStreamHandler:
         if not session["stt_active"]:
             return
         
-        # Add to audio buffer
-        session["audio_buffer"].append(audio_bytes)
-        
-        # Process audio in chunks
-        if len(session["audio_buffer"]) >= 10:  # Process every 10 chunks
-            combined_audio = b''.join(session["audio_buffer"])
-            session["audio_buffer"] = []
-            
-            # Convert mulaw to WAV and send to speech-to-text
-            try:
-                logger.debug(f"📢 Processing combined audio: {len(combined_audio)} bytes mulaw")
-                wav_data = convert_mulaw_to_wav(combined_audio)
-                logger.debug(f"📢 Converted combined audio to WAV: {len(wav_data)} bytes")
-                
-                transcript = await deepgram_service.transcribe_stream(
-                    audio_data=wav_data,
-                    content_type="audio/wav",
-                    sample_rate=8000,
-                    channels=1
-                )
-                if transcript:
-                    logger.info(f"📢 Binary transcript received: {transcript}")
-                    await self._handle_transcript(session_id, transcript, db)
-                else:
-                    logger.warning(f"📢 No binary transcript received from Deepgram (audio: {len(combined_audio)} bytes mulaw → {len(wav_data)} bytes WAV)")
-            except Exception as e:
-                logger.error(f"❌ STT error for session {session_id}: {e}")
+        # This is now handled by the main audio processing logic below
     
     async def _process_audio_chunk(
         self,
@@ -305,6 +333,18 @@ class TelephonyStreamHandler:
             # Convert mulaw to linear PCM
             pcm_data = audioop.ulaw2lin(mulaw_data, 2)  # Convert to 16-bit PCM
             
+            # Debug: Check if there's actual audio content
+            import struct
+            if len(pcm_data) >= 2:
+                samples = struct.unpack(f'<{len(pcm_data)//2}h', pcm_data)
+                max_amplitude = max(abs(s) for s in samples) if samples else 0
+                if max_amplitude > 100:
+                    logger.info(f"🔊 LIVE AUDIO detected in chunk: max_amplitude={max_amplitude}")
+                elif max_amplitude > 0:
+                    logger.debug(f"🔊 Quiet audio in chunk: max_amplitude={max_amplitude}")
+                else:
+                    logger.debug(f"🔊 Silent chunk: max_amplitude=0")
+            
             # Add to buffer
             session["audio_buffer"].extend(pcm_data)
             session["last_audio_time"] = time.time()
@@ -313,21 +353,74 @@ class TelephonyStreamHandler:
             current_time = time.time()
             buffer_size = len(session["audio_buffer"])
             
+            # Time since last processing
+            time_since_last = current_time - session.get("last_process_time", current_time)
+            
             should_process = (
                 # Buffer is at minimum size 
                 buffer_size >= session["min_buffer_size"] or
                 # Buffer is at maximum size (prevent memory issues)
-                buffer_size >= session["max_buffer_size"]
+                buffer_size >= session["max_buffer_size"] or
+                # Timeout - process after 0.5 second even if buffer is small
+                (buffer_size > 0 and time_since_last > 0.5)
             )
             
             if should_process and buffer_size > 0:
-                logger.debug(f"📢 Processing buffered audio: {buffer_size} bytes PCM")
+                logger.info(f"📢 Processing audio: {buffer_size} bytes PCM")
                 
                 # Convert buffered PCM to WAV
                 wav_data = self._pcm_to_wav(bytes(session["audio_buffer"]))
                 
-                # Clear the buffer
+                # Debug: Save WAV file and analyze audio properties  
+                import tempfile
+                import struct
+                pcm_samples = bytes(session["audio_buffer"])  # Save before clearing
+                max_amplitude = 0
+                
+                try:
+                    # Save WAV file for inspection
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, prefix='debug_') as f:
+                        f.write(wav_data)
+                        wav_filename = f.name
+                        logger.error(f"🔊 SAVED DEBUG WAV: {wav_filename} ({len(wav_data)} bytes) - CHECK THIS FILE!")
+                    
+                    # Also save raw PCM for comparison
+                    with tempfile.NamedTemporaryFile(suffix='.pcm', delete=False, prefix='debug_') as f:
+                        f.write(pcm_samples)
+                        pcm_filename = f.name
+                        logger.error(f"🔊 SAVED DEBUG PCM: {pcm_filename} ({len(pcm_samples)} bytes)")
+                    
+                    # Analyze PCM data for audio activity
+                    if len(pcm_samples) >= 2:
+                        # Convert to 16-bit integers and check for non-silence
+                        samples = struct.unpack(f'<{len(pcm_samples)//2}h', pcm_samples)
+                        max_amplitude = max(abs(s) for s in samples) if samples else 0
+                        avg_amplitude = sum(abs(s) for s in samples) / len(samples) if samples else 0
+                        
+                        # Count non-zero samples
+                        non_zero_samples = sum(1 for s in samples if abs(s) > 10)
+                        zero_samples = len(samples) - non_zero_samples
+                        
+                        logger.error(f"🔊 AUDIO ANALYSIS:")
+                        logger.error(f"🔊   Max amplitude: {max_amplitude}")
+                        logger.error(f"🔊   Avg amplitude: {avg_amplitude:.1f}")
+                        logger.error(f"🔊   Total samples: {len(samples)}")
+                        logger.error(f"🔊   Non-zero samples: {non_zero_samples}")
+                        logger.error(f"🔊   Zero samples: {zero_samples}")
+                        
+                        if max_amplitude < 100:
+                            logger.error(f"🔊 PROBLEM: Very quiet audio detected - may be silence or very low volume")
+                        elif max_amplitude > 1000:
+                            logger.error(f"🔊 GOOD: Decent audio levels detected - should contain speech")
+                        else:
+                            logger.error(f"🔊 MARGINAL: Low but detectable audio levels")
+                            
+                except Exception as e:
+                    logger.error(f"Failed audio analysis: {e}")
+                
+                # Clear the buffer and update process time
                 session["audio_buffer"] = bytearray()
+                session["last_process_time"] = current_time
                 
                 # Send to Deepgram for transcription
                 transcript = await deepgram_service.transcribe_stream(
@@ -337,26 +430,90 @@ class TelephonyStreamHandler:
                     channels=1
                 )
                 
-                if transcript:
-                    logger.info(f"📢 Transcript received: {transcript}")
+                if transcript and transcript.strip():
+                    logger.info(f"📢 ✅ TRANSCRIPT RECEIVED: {transcript}")
                     await self._handle_transcript(session_id, transcript, db)
                 else:
-                    logger.warning(f"📢 No transcript received from Deepgram (audio: {len(wav_data)} bytes WAV)")
+                    logger.debug(f"📢 No transcript (audio: {len(wav_data)} bytes WAV)")
+                    
+                    # Enhanced logging for debugging STT issues
+                    if max_amplitude > 10000:  # Strong audio signal detected but no transcript
+                        logger.warning(f"📢 ⚠️ STRONG AUDIO detected (amplitude: {max_amplitude}) but NO TRANSCRIPT - check if this is speech or noise")
+                    elif max_amplitude > 1000:  # Moderate audio signal
+                        logger.info(f"📢 💬 MODERATE AUDIO detected (amplitude: {max_amplitude}) but no transcript - may be background noise or very unclear speech")
+                    else:
+                        logger.debug(f"📢 🔇 Weak audio signal (amplitude: {max_amplitude}) - likely silence or very quiet noise")
                 
         except Exception as e:
             logger.error(f"❌ Error processing audio chunk: {e}")
     
     def _pcm_to_wav(self, pcm_data: bytes) -> bytes:
-        """Convert PCM audio data to WAV format"""
-        output = io.BytesIO()
+        """Convert PCM audio data to WAV format with volume normalization"""
+        import struct
+        import numpy as np
         
-        with wave.open(output, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(8000)  # 8kHz sample rate (Twilio standard)
-            wav_file.writeframes(pcm_data)
-        
-        return output.getvalue()
+        try:
+            # Convert PCM bytes to numpy array for processing
+            if len(pcm_data) < 2:
+                return b''
+            
+            samples = struct.unpack(f'<{len(pcm_data)//2}h', pcm_data)
+            audio_array = np.array(samples, dtype=np.float32)
+            
+            # Check if audio has any content
+            max_amplitude = np.max(np.abs(audio_array))
+            if max_amplitude == 0:
+                logger.debug("Silent audio detected - no normalization needed")
+                # Return original WAV for silent audio
+                output = io.BytesIO()
+                with wave.open(output, 'wb') as wav_file:
+                    wav_file.setnchannels(1)  # Mono
+                    wav_file.setsampwidth(2)  # 16-bit
+                    wav_file.setframerate(8000)  # 8kHz sample rate
+                    wav_file.writeframes(pcm_data)
+                return output.getvalue()
+            
+            # Normalize audio to use more of the dynamic range
+            # Target peak at around 80% of max value for better speech recognition
+            target_peak = 26214  # 80% of 32767 (max 16-bit value)
+            
+            # Calculate normalization factor
+            normalization_factor = target_peak / max_amplitude
+            
+            # Apply more aggressive normalization for telephony audio
+            normalization_factor = min(normalization_factor, 50.0)  # Max 50x amplification for very quiet audio
+            
+            normalized_audio = audio_array * normalization_factor
+            
+            # Clip to prevent overflow
+            normalized_audio = np.clip(normalized_audio, -32767, 32767)
+            
+            # Convert back to 16-bit integers
+            normalized_samples = normalized_audio.astype(np.int16)
+            normalized_pcm = normalized_samples.tobytes()
+            
+            logger.info(f"🔊 Audio normalized: max_amplitude {max_amplitude:.0f} -> {np.max(np.abs(normalized_samples)):.0f} (factor: {normalization_factor:.2f}x)")
+            
+            # Create WAV file with normalized audio
+            output = io.BytesIO()
+            with wave.open(output, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(8000)  # 8kHz sample rate
+                wav_file.writeframes(normalized_pcm)
+            
+            return output.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error normalizing audio: {e}")
+            # Fall back to original method
+            output = io.BytesIO()
+            with wave.open(output, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(8000)  # 8kHz sample rate
+                wav_file.writeframes(pcm_data)
+            return output.getvalue()
     
     async def _flush_audio_buffer(self, session_id: str, db: AsyncSession):
         """Flush any remaining audio in the buffer when call ends"""
@@ -403,6 +560,7 @@ class TelephonyStreamHandler:
         
         # Add to transcript buffer
         session["transcript_buffer"] += " " + transcript.strip()
+        logger.info(f"📝 Transcript buffer: '{session['transcript_buffer'].strip()}' (length: {len(session['transcript_buffer'].strip())})")
         
         # Check if we have a complete utterance (simple heuristic)
         if self._is_complete_utterance(session["transcript_buffer"]):
@@ -435,8 +593,48 @@ class TelephonyStreamHandler:
                 "is_final": True
             })
             
-            # Process with AI agents
-            await self._process_with_agents(session_id, complete_text, db)
+            # Cancel any pending response if caller is still speaking
+            session = self.call_sessions[session_id]
+            if session.get("pending_response_task") and not session["pending_response_task"].done():
+                session["pending_response_task"].cancel()
+                logger.info(f"📝 Cancelled previous response - caller still speaking")
+            
+            # Schedule delayed response - wait 5 seconds before agent responds
+            session["last_transcript_time"] = time.time()
+            session["pending_response_task"] = asyncio.create_task(
+                self._delayed_agent_response(session_id, complete_text, db)
+            )
+    
+    async def _delayed_agent_response(
+        self,
+        session_id: str,
+        user_message: str,
+        db: AsyncSession
+    ):
+        """Wait 5 seconds then process with agents, unless cancelled by new speech"""
+        try:
+            logger.info(f"📝 Waiting 5 seconds before agent response to: '{user_message}'")
+            await asyncio.sleep(5.0)
+            
+            # Check if we're still the most recent transcript
+            session = self.call_sessions[session_id]
+            current_time = time.time()
+            
+            # If more than 5 seconds have passed since last transcript, proceed with response
+            if (session.get("last_transcript_time") and 
+                current_time - session["last_transcript_time"] >= 4.9):  # Small buffer for timing
+                logger.info(f"📝 Proceeding with agent response after 5-second delay")
+                await self._process_with_agents(session_id, user_message, db)
+            else:
+                logger.info(f"📝 Skipping response - newer transcript received")
+                
+        except asyncio.CancelledError:
+            logger.info(f"📝 Agent response cancelled - caller continued speaking")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error in delayed agent response: {e}")
+            import traceback
+            logger.error(f"❌ Delayed response traceback: {traceback.format_exc()}")
     
     async def _process_with_agents(
         self,
@@ -492,26 +690,55 @@ class TelephonyStreamHandler:
                 tenant.subdomain if tenant else None
             )
             
-            # Get agent response using tenant-aware processing
-            agent_type, agent_response = await tenant_aware_agent_manager.process_conversation_with_tenant_context(
-                message=user_message,
-                user=telephony_user,  # Pass user context for tenant-aware filtering
-                db=db,
-                thread_id=str(conversation.id),
-                owner_id=config.tenant_id
-            )
+            # Force DEMO_ANSWERING_SERVICE selection by temporarily filtering discovered agents  
+            original_agents = tenant_aware_agent_manager.discovered_agents.copy()
+            try:
+                # Temporarily keep only DEMO_ANSWERING_SERVICE and MODERATOR
+                if "DEMO_ANSWERING_SERVICE" in original_agents:
+                    tenant_aware_agent_manager.discovered_agents = {
+                        "DEMO_ANSWERING_SERVICE": original_agents["DEMO_ANSWERING_SERVICE"],
+                        "MODERATOR": original_agents.get("MODERATOR", original_agents["DEMO_ANSWERING_SERVICE"])
+                    }
+                    logger.info(f"📞 Filtering agents to use DEMO_ANSWERING_SERVICE for telephony")
+                
+                # Process with filtered agents - MODERATOR should now select DEMO_ANSWERING_SERVICE
+                agent_type, agent_response = await tenant_aware_agent_manager.process_conversation(
+                    message=user_message,
+                    conversation_agents=[],  # Ignored
+                    agents_config={},       # Ignored  
+                    db=db,
+                    thread_id=str(conversation.id),
+                    owner_id=str(config.tenant_id)  # Ensure UUID is converted to string
+                )
+                
+                # Store the agent type in session for saving with response
+                session["last_agent_type"] = agent_type
+                
+            finally:
+                # Restore original discovered agents
+                tenant_aware_agent_manager.discovered_agents = original_agents
+            
+            # Ensure response is brief for telephony (safety measure)
+            truncated_response = self._truncate_for_telephony(agent_response)
             
             # Convert response to speech
-            await self._send_speech_response(session_id, agent_response, db)
+            logger.info(f"🎤 About to send speech response: {truncated_response[:50]}...")
+            await self._send_speech_response(session_id, truncated_response, db)
+            logger.info(f"✅ Speech response sent successfully")
             
         except Exception as e:
             logger.error(f"❌ Error processing with agents: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             # Send error response
-            await self._send_speech_response(
-                session_id,
-                "I'm sorry, I'm having trouble processing your request. Could you please try again?",
-                db
-            )
+            try:
+                await self._send_speech_response(
+                    session_id,
+                    "I'm sorry, I'm having trouble processing your request. Could you please try again?",
+                    db
+                )
+            except Exception as e2:
+                logger.error(f"❌ Error sending fallback response: {e2}")
         finally:
             session["agent_processing"] = False
     
@@ -523,6 +750,9 @@ class TelephonyStreamHandler:
     ):
         """Convert text response to speech and send to caller"""
         
+        logger.info(f"🎙️ _send_speech_response called for session {session_id}")
+        logger.info(f"🎙️ Text to convert: '{text_response[:100]}...'")
+        
         session = self.call_sessions[session_id]
         
         # Prevent duplicate responses by checking if TTS is already active
@@ -531,18 +761,22 @@ class TelephonyStreamHandler:
             return
             
         session["tts_active"] = True
+        logger.info(f"🎙️ TTS marked as active, proceeding with speech generation")
         
         try:
             # Clean up text response to prevent TTS issues
             clean_text = self._clean_text_for_tts(text_response)
+            logger.info(f"🎙️ Cleaned text for TTS: '{clean_text}'")
             
             # Generate speech (returns MP3 data)
+            logger.info(f"🎙️ Calling ElevenLabs TTS service...")
             audio_data = await elevenlabs_service.generate_speech(
                 text=clean_text,
                 voice_id=session["voice_id"]
             )
             
             if audio_data:
+                logger.info(f"🎙️ ✅ TTS generated {len(audio_data)} bytes of MP3 audio")
                 # Record TTS usage
                 word_count = count_words(clean_text)
                 if word_count > 0:
@@ -561,7 +795,9 @@ class TelephonyStreamHandler:
                         logger.error(f"❌ Failed to record TTS usage: {e}")
                 
                 # Send audio to Twilio stream
+                logger.info(f"🎙️ About to send audio to caller via Twilio stream...")
                 await self._send_audio_to_caller(session_id, audio_data)
+                logger.info(f"🎙️ ✅ Audio sending completed")
                 
                 # Save response message
                 conversation = session["conversation"]
@@ -569,7 +805,7 @@ class TelephonyStreamHandler:
                     conversation_id=conversation.id,
                     content=text_response,
                     message_type="text",
-                    agent_type="ASSISTANT",
+                    agent_type=session.get("last_agent_type", "ASSISTANT"),  # Use actual agent type
                     additional_data=json.dumps({
                         "sender_type": "agent",
                         "call_id": str(session["call"].id),
@@ -582,12 +818,47 @@ class TelephonyStreamHandler:
                 logger.info(f"🗣️ Speech response sent to caller: {text_response[:50]}...")
             else:
                 logger.error(f"❌ No audio data generated for text: {clean_text[:50]}...")
+                logger.error(f"❌ TTS service failed to generate audio")
             
         except Exception as e:
             logger.error(f"❌ Error generating speech response: {e}")
+            import traceback
+            logger.error(f"❌ TTS pipeline traceback: {traceback.format_exc()}")
         finally:
             # Always reset TTS flag to prevent getting stuck
             session["tts_active"] = False
+            logger.info(f"🎙️ TTS flag reset for session {session_id}")
+    
+    def _truncate_for_telephony(self, text: str) -> str:
+        """Truncate response to keep it brief for telephony conversations."""
+        if not text:
+            return ""
+        
+        # Split into sentences
+        import re
+        sentences = re.split(r'[.!?]+', text.strip())
+        
+        # For telephony, be VERY aggressive - only ONE sentence at a time
+        if len(sentences) > 1:
+            # Take only the first complete sentence
+            first_sentence = sentences[0].strip()
+            if first_sentence:
+                if not first_sentence.endswith(('.', '!', '?')):
+                    first_sentence += '.'
+                logger.info(f"📞 Truncated to first sentence: {first_sentence}")
+                return first_sentence
+        
+        # If only one sentence, still limit total length aggressively
+        if len(text) > 100:  # ~15-20 words max for telephony
+            words = text.split()
+            if len(words) > 20:
+                truncated = ' '.join(words[:20])
+                if not truncated.endswith(('.', '!', '?')):
+                    truncated += '.'
+                logger.info(f"📞 Truncated to 20 words: {truncated}")
+                return truncated
+        
+        return text
     
     def _clean_text_for_tts(self, text: str) -> str:
         """Clean text to prevent TTS issues and improve stability."""
@@ -645,13 +916,24 @@ class TelephonyStreamHandler:
             
             # Get the stored streamSid for this session
             session = self.call_sessions.get(session_id, {})
-            stream_sid = session.get("stream_sid", session_id)  # Fallback to session_id
+            stream_sid = session.get("stream_sid")
+            
+            if not stream_sid:
+                logger.error(f"❌ No streamSid found for session {session_id}! Available session keys: {list(session.keys())}")
+                logger.error(f"❌ Cannot send audio without proper streamSid")
+                return
+            
+            logger.error(f"📡 DEBUG: Sending audio with streamSid: {stream_sid}")
+            logger.error(f"📡 DEBUG: Session info: {list(session.keys())}")
+            logger.error(f"📡 DEBUG: Audio chunks: {len(audio_chunks)}")
+            logger.info(f"📡 Session info: {[k for k in session.keys()]}")
             
             # Send each chunk with a small delay to prevent overwhelming Twilio
             for i, chunk in enumerate(audio_chunks):
                 if chunk:  # Only send non-empty chunks
                     audio_base64 = base64.b64encode(chunk).decode('utf-8')
                     
+                    logger.error(f"📡 DEBUG: Sending WebSocket message to session {session_id}")
                     await self._send_message(session_id, {
                         "event": "media",
                         "streamSid": stream_sid,
@@ -749,23 +1031,33 @@ class TelephonyStreamHandler:
         return conversation
     
     def _is_complete_utterance(self, text: str) -> bool:
-        """Simple heuristic to detect complete utterances"""
+        """Simple heuristic to detect complete utterances - made more responsive for phone calls"""
         
-        if not text.strip():
+        cleaned_text = text.strip()
+        if not cleaned_text:
             return False
         
+        logger.debug(f"📝 Checking if complete utterance: '{cleaned_text}' (length: {len(cleaned_text)})")
+        
         # Check for sentence endings
-        if text.strip().endswith(('.', '!', '?')):
+        if cleaned_text.endswith(('.', '!', '?')):
+            logger.debug(f"📝 Complete utterance detected: ends with punctuation")
             return True
         
-        # Check for pauses (multiple spaces or length)
-        if len(text.strip()) > 100:
+        # Very short threshold for phone conversations (20 chars = ~3-4 words)
+        if len(cleaned_text) > 20:
+            logger.debug(f"📝 Complete utterance detected: length > 20 chars")
             return True
         
-        # Check for question words at the beginning
-        question_words = ['what', 'when', 'where', 'who', 'why', 'how', 'can', 'could', 'would', 'will']
-        first_word = text.strip().lower().split()[0] if text.strip() else ""
-        if first_word in question_words and len(text.strip()) > 20:
+        # Common conversation endings
+        if cleaned_text.lower().endswith(('please', 'thanks', 'yes', 'no', 'okay', 'help', 'hello', 'hi')):
+            logger.debug(f"📝 Complete utterance detected: ends with conversation word")
+            return True
+        
+        # Check for question words at the beginning with shorter threshold
+        question_words = ['what', 'when', 'where', 'who', 'why', 'how', 'can', 'could', 'would', 'will', 'is', 'are', 'do', 'does']
+        first_word = cleaned_text.lower().split()[0] if cleaned_text else ""
+        if first_word in question_words and len(text.strip()) > 10:
             return True
         
         return False
@@ -826,32 +1118,18 @@ class TelephonyStreamHandler:
                 tenant.subdomain if tenant else None
             )
             
-            # Get initial greeting from the agent
+            # Send a simple, brief greeting - don't invoke AI agent yet
             conversation = session["conversation"]
-            initial_message = "CALL_START"  # Special trigger for initial greeting
             
-            logger.info(f"🎙️ Processing CALL_START message with tenant-aware agent manager")
-            logger.info(f"🎙️ Telephony user: {telephony_user.email}, tenant: {telephony_user.tenant_id}")
+            # Use the actual AI agent for the initial greeting to be consistent
+            logger.info(f"📞 Using AI agent for initial greeting")
             
-            agent_type, agent_response = await tenant_aware_agent_manager.process_conversation_with_tenant_context(
-                message=initial_message,
-                user=telephony_user,
-                db=db,
-                thread_id=str(conversation.id),
-                owner_id=config.tenant_id
-            )
-            
-            logger.info(f"📞 Initial greeting from {agent_type}: {agent_response}")
-            
-            # Convert response to speech and send to caller
-            logger.info(f"🎙️ Converting greeting to speech and sending to caller")
-            await self._send_speech_response(session_id, agent_response, db)
+            # Process "CALL_START" trigger with the actual agent (no delay for initial greeting)
+            await self._process_with_agents(session_id, "CALL_START", db)
             
         except Exception as e:
             logger.error(f"❌ Error sending initial greeting: {e}")
-            # Send fallback greeting if agent fails
-            fallback_greeting = config.welcome_message or "Hello! Thank you for calling. How can I help you today?"
-            await self._send_speech_response(session_id, fallback_greeting, db)
+            # Log error but don't send fallback - let the agent handle it
     
     async def _send_message(self, session_id: str, message: Dict[str, Any]):
         """Send message to WebSocket client"""
@@ -879,6 +1157,7 @@ router = APIRouter(
 async def telephony_websocket_endpoint(
     websocket: WebSocket,
     call_id: UUID,
+    token: str = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -890,7 +1169,24 @@ async def telephony_websocket_endpoint(
     - Speech-to-text conversion
     - AI agent processing
     - Text-to-speech response generation
+    
+    Authentication via token query parameter is optional for now to support
+    both Twilio (no auth) and frontend (with auth) connections.
     """
-    logger.info(f"🔌 Telephony WebSocket connection attempt for call_id: {call_id}")
+    logger.info(f"🔌 Telephony WebSocket connection attempt for call_id: {call_id}, token: {'present' if token else 'none'}")
+    
+    # For now, accept connections with or without tokens
+    # In production, you might want to validate the token and ensure
+    # the user has access to this specific call
+    if token:
+        try:
+            # Optional: validate token and get user
+            from app.auth.auth import verify_token
+            user = await verify_token(token)
+            logger.info(f"🔐 Authenticated WebSocket connection for user: {user.email}")
+        except Exception as e:
+            logger.warning(f"⚠️ Token validation failed for WebSocket, but allowing connection: {e}")
+            # Allow connection anyway for testing
+    
     await telephony_stream_handler.handle_connection(websocket, call_id, db)
 

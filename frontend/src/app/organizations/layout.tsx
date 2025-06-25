@@ -3,6 +3,7 @@
 import React from 'react'
 import { usePathname } from 'next/navigation'
 import OrganizationNavigation from '@/components/navigation/OrganizationNavigation'
+import TelephonySystemInitializer from '@/components/telephony/TelephonySystemInitializer'
 
 interface OrganizationLayoutProps {
   children: React.ReactNode
@@ -18,6 +19,9 @@ export default function OrganizationLayout({ children }: OrganizationLayoutProps
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Initialize telephony system */}
+      <TelephonySystemInitializer />
+      
       <div className="flex">
         {/* Sidebar Navigation */}
         <aside className="w-64 min-h-screen bg-white shadow-sm border-r border-gray-200">

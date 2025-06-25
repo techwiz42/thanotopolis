@@ -552,5 +552,41 @@ export const telephonyService = {
 
   hasAudioSegment(message: CallMessage): boolean {
     return !!(message.metadata?.recording_segment_url || message.metadata?.audio_start_time !== undefined);
+  },
+
+  // Create test call for telephony testing
+  async createTestCall(customerNumber: string, token: string): Promise<{
+    success: boolean;
+    call_id: string;
+    call_sid: string;
+    customer_number: string;
+    organization_number: string;
+    platform_number: string;
+    websocket_url: string;
+    message: string;
+  }> {
+    try {
+      const params = new URLSearchParams({ customer_number: customerNumber });
+      const response = await api.post(`/telephony/test/simulate-call?${params}`, {}, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data as {
+        success: boolean;
+        call_id: string;
+        call_sid: string;
+        customer_number: string;
+        organization_number: string;
+        platform_number: string;
+        websocket_url: string;
+        message: string;
+      };
+    } catch (error) {
+      console.error('Error creating test call:', error);
+      throw error;
+    }
   }
 };

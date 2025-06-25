@@ -85,10 +85,10 @@ class TestTenantAwareAgentManager:
             self.demo_user, self.db
         )
         
-        # Demo user should have access to free agent and proprietary agent
+        # Demo user should have access to free agent, proprietary agent, and legacy free agents
         assert "FREE_AGENT" in available_agents
         assert "PROPRIETARY_AGENT" in available_agents
-        assert "UNKNOWN_AGENT" not in available_agents
+        assert "UNKNOWN_AGENT" in available_agents  # Legacy free agent (no OWNER_DOMAINS)
         
     @pytest.mark.asyncio
     async def test_get_available_agents_for_acme_user(self):
@@ -102,10 +102,10 @@ class TestTenantAwareAgentManager:
             self.acme_user, self.db
         )
         
-        # Acme user should only have access to free agent
+        # Acme user should have access to free agents and legacy free agents, but not proprietary agents
         assert "FREE_AGENT" in available_agents
-        assert "PROPRIETARY_AGENT" not in available_agents
-        assert "UNKNOWN_AGENT" not in available_agents
+        assert "PROPRIETARY_AGENT" not in available_agents  # Not available to acme org
+        assert "UNKNOWN_AGENT" in available_agents  # Legacy free agent (no OWNER_DOMAINS)
         
     @pytest.mark.asyncio
     async def test_get_available_agents_for_premium_user(self):
@@ -125,10 +125,10 @@ class TestTenantAwareAgentManager:
             premium_user, self.db
         )
         
-        # Premium user should have access to free agent and proprietary agent
+        # Premium user should have access to free agent, proprietary agent, and legacy free agents
         assert "FREE_AGENT" in available_agents
         assert "PROPRIETARY_AGENT" in available_agents
-        assert "UNKNOWN_AGENT" not in available_agents
+        assert "UNKNOWN_AGENT" in available_agents  # Legacy free agent (no OWNER_DOMAINS)
         
     @pytest.mark.asyncio
     async def test_get_available_agents_database_error(self):
@@ -141,10 +141,11 @@ class TestTenantAwareAgentManager:
                 self.demo_user, self.db
             )
             
-            # Should fall back to free agents only
+            # Should fall back to free agents only (including legacy free agents)
             assert "FREE_AGENT" in available_agents
             assert "PROPRIETARY_AGENT" not in available_agents
-            assert "UNKNOWN_AGENT" not in available_agents
+            # UNKNOWN_AGENT is treated as legacy free agent, so it SHOULD be included in error fallback
+            assert "UNKNOWN_AGENT" in available_agents
             
             # Should log the error
             mock_logger.error.assert_called_once()
@@ -210,7 +211,8 @@ class TestTenantAwareAgentManager:
         
         assert "FREE_AGENT" in free_agents
         assert "PROPRIETARY_AGENT" not in free_agents
-        assert "UNKNOWN_AGENT" not in free_agents
+        # UNKNOWN_AGENT is a legacy free agent (no OWNER_DOMAINS), so it should be included
+        assert "UNKNOWN_AGENT" in free_agents
         
     @pytest.mark.asyncio
     async def test_get_free_agents_only_async(self):
@@ -219,7 +221,8 @@ class TestTenantAwareAgentManager:
         
         assert "FREE_AGENT" in free_agents
         assert "PROPRIETARY_AGENT" not in free_agents
-        assert "UNKNOWN_AGENT" not in free_agents
+        # UNKNOWN_AGENT is a legacy free agent (no OWNER_DOMAINS), so it should be included
+        assert "UNKNOWN_AGENT" in free_agents
         
     def test_get_free_agents_only_no_agents(self):
         """Test getting free agents when no agents are available."""
@@ -385,10 +388,10 @@ class TestTenantAwareAgentManager:
             self.demo_user, self.db
         )
         
-        # Agents without proper OWNER_DOMAINS should default to empty list (free agents)
-        assert "NO_ATTR_AGENT" in available_agents
-        assert "NONE_ATTR_AGENT" in available_agents
-        assert "STRING_ATTR_AGENT" in available_agents
+        # Agents without proper OWNER_DOMAINS should be treated as legacy free agents (permissive default)
+        assert "NO_ATTR_AGENT" in available_agents  # No attribute = legacy free agent
+        assert "NONE_ATTR_AGENT" in available_agents  # None = legacy free agent
+        assert "STRING_ATTR_AGENT" in available_agents  # Invalid type = legacy free agent
         
     def test_singleton_instance(self):
         """Test that tenant_aware_agent_manager singleton exists."""

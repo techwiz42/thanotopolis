@@ -55,11 +55,16 @@ class TenantAwareAgentManager(AgentManager):
                 owner_domains = None
                 is_telephony_only = False
                 
+                # Check OWNER_DOMAINS for any agent (BaseAgent or not)
+                if hasattr(agent_instance.__class__, 'OWNER_DOMAINS'):
+                    owner_domains = agent_instance.__class__.OWNER_DOMAINS
+                    # Normalize invalid types to None (will be treated as legacy free agent)
+                    if not isinstance(owner_domains, (list, type(None))):
+                        logger.info(f"Agent {agent_type} has invalid OWNER_DOMAINS type {type(owner_domains)}, treating as legacy free agent")
+                        owner_domains = None
+                
+                # Check if agent is telephony-only (BaseAgent feature)
                 if isinstance(agent_instance, BaseAgent):
-                    # Check if OWNER_DOMAINS is explicitly defined
-                    if hasattr(agent_instance.__class__, 'OWNER_DOMAINS'):
-                        owner_domains = agent_instance.__class__.OWNER_DOMAINS
-                    # Check if agent is telephony-only
                     is_telephony_only = getattr(agent_instance.__class__, 'TELEPHONY_ONLY', False)
                 
                 # Skip telephony-only agents if not requested
@@ -67,14 +72,14 @@ class TenantAwareAgentManager(AgentManager):
                     logger.info(f"Excluding telephony-only agent {agent_type} from chat context")
                     continue
                 
-                # If OWNER_DOMAINS is not defined, treat as available to all domains
+                # If OWNER_DOMAINS is not defined, treat as legacy free agent and normalize to empty list
                 if owner_domains is None:
-                    logger.info(f"Agent {agent_type} has no OWNER_DOMAINS defined, making available to all domains")
-                    available_agents.append(agent_type)
-                    continue
+                    logger.info(f"Agent {agent_type} has no OWNER_DOMAINS defined, treating as legacy free agent")
+                    owner_domains = []  # Normalize legacy agents to empty list for consistency
                 
-                # If it's a free agent (empty list), it's available to everyone
+                # If it's a free agent (empty list or was None), it's available to everyone
                 if owner_domains == []:
+                    logger.info(f"Agent {agent_type} is a free agent (empty OWNER_DOMAINS), available to all organizations")
                     available_agents.append(agent_type)
                     continue
                 
@@ -105,11 +110,14 @@ class TenantAwareAgentManager(AgentManager):
         for agent_type in self.get_available_agents():
             agent_instance = self.get_agent(agent_type)
             if agent_instance:
-                # Check if OWNER_DOMAINS is explicitly defined and is empty list
+                # Check if OWNER_DOMAINS is undefined (legacy free agent) or empty list (explicit free agent)
                 if hasattr(agent_instance.__class__, 'OWNER_DOMAINS'):
                     owner_domains = agent_instance.__class__.OWNER_DOMAINS
-                    if owner_domains == []:
+                    if owner_domains == [] or owner_domains is None:
                         free_agents.append(agent_type)
+                else:
+                    # No OWNER_DOMAINS attribute = legacy free agent
+                    free_agents.append(agent_type)
         return free_agents
     
     async def _get_free_agents_only(self) -> List[str]:
@@ -118,11 +126,14 @@ class TenantAwareAgentManager(AgentManager):
         for agent_type in self.get_available_agents():
             agent_instance = self.get_agent(agent_type)
             if agent_instance:
-                # Check if OWNER_DOMAINS is explicitly defined and is empty list
+                # Check if OWNER_DOMAINS is undefined (legacy free agent) or empty list (explicit free agent)
                 if hasattr(agent_instance.__class__, 'OWNER_DOMAINS'):
                     owner_domains = agent_instance.__class__.OWNER_DOMAINS
-                    if owner_domains == []:
+                    if owner_domains == [] or owner_domains is None:
                         free_agents.append(agent_type)
+                else:
+                    # No OWNER_DOMAINS attribute = legacy free agent
+                    free_agents.append(agent_type)
         return free_agents
     
     async def process_conversation_with_tenant_context(

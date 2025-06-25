@@ -22,10 +22,11 @@ from app.schemas.schemas import (
 class TestAdminDashboard:
     """Test admin dashboard endpoint"""
     
-    def test_get_admin_dashboard_success(self, test_client, admin_user, mock_db):
+    @pytest.mark.asyncio
+    async def test_get_admin_dashboard_success(self, test_client, admin_user, mock_db):
         """Test getting admin dashboard data successfully"""
-        # Mock database queries
-        mock_db.scalar.side_effect = [10, 25]  # total_users, total_conversations
+        # Mock database queries with proper async behavior
+        mock_db.scalar = AsyncMock(side_effect=[10, 25])  # total_users, total_conversations
         
         # Mock usage service responses
         with patch('app.api.admin.usage_service') as mock_usage_service:
@@ -79,22 +80,24 @@ class TestAdminDashboard:
                     record_count=5
                 )
             ]
-            mock_db.execute.return_value = mock_result
+            mock_db.execute = AsyncMock(return_value=mock_result)
             
-            # Mock connection manager
+            # Mock connection manager with simple return values
             with patch('app.api.websockets.connection_manager') as mock_cm:
                 mock_cm.get_stats.return_value = {"total_connections": 3}
                 
-                with patch('app.api.websockets.active_connections', {uuid4(): [MagicMock()]}):
-                    with patch('app.api.websockets.connection_lock', AsyncMock()):
-                        with patch('app.db.database.engine') as mock_engine:
-                            mock_engine.pool.size.return_value = 5
-                            mock_engine.pool.overflow.return_value = 5
-                            
-                            response = test_client.get(
-                                "/api/admin/dashboard",
-                                headers={"Authorization": f"Bearer {admin_user.token}"}
-                            )
+                with patch('app.api.websockets.active_connections', {str(uuid4()): [MagicMock()]}):
+                    with patch('app.db.database.engine') as mock_engine:
+                        mock_pool = MagicMock()
+                        mock_pool.size = 5
+                        mock_pool.overflow = 5  
+                        mock_engine.pool = mock_pool
+                        
+                        # Use the test client normally - it handles async internally
+                        response = test_client.get(
+                            "/api/admin/dashboard",
+                            headers={"Authorization": f"Bearer {admin_user.token}"}
+                        )
         
         assert response.status_code == 200
         data = response.json()

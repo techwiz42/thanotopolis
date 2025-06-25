@@ -899,5 +899,62 @@ async def create_bulk_call_messages(
     }
 
 
+# Test endpoint for creating simulated calls
+@router.post("/test/simulate-call")
+async def simulate_test_call(
+    customer_number: str = "+1234567890",
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a test phone call for frontend testing"""
+    
+    try:
+        # Get user's telephony configuration
+        config_query = select(TelephonyConfiguration).where(
+            TelephonyConfiguration.tenant_id == current_user.tenant_id
+        )
+        config_result = await db.execute(config_query)
+        config = config_result.scalar_one_or_none()
+        
+        if not config:
+            raise HTTPException(
+                status_code=404, 
+                detail="No telephony configuration found. Please set up telephony first."
+            )
+        
+        # Generate test call data
+        import uuid
+        import time
+        call_sid = f"CA{uuid.uuid4().hex[:32]}"
+        
+        # Create test phone call record
+        test_call = await telephony_service.handle_incoming_call(
+            db=db,
+            call_sid=call_sid,
+            customer_number=customer_number,
+            platform_number=config.platform_phone_number,
+            call_metadata={
+                "is_test_call": True,
+                "created_by": str(current_user.id),
+                "created_for_testing": True
+            }
+        )
+        
+        return {
+            "success": True,
+            "call_id": str(test_call.id),
+            "call_sid": call_sid,
+            "customer_number": customer_number,
+            "organization_number": config.organization_phone_number,
+            "platform_number": config.platform_phone_number,
+            "websocket_url": f"ws://localhost:8000/api/ws/telephony/stream/{test_call.id}",
+            "message": "Test call created successfully. Connect to the WebSocket URL to start the telephony session."
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating test call: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create test call: {str(e)}")
+
+
 import logging
 logger = logging.getLogger(__name__)

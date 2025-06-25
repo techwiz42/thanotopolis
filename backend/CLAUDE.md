@@ -8,14 +8,25 @@
 - The admin page showed 0 WebSocket connections because of hardcoded mock values
 - This type of issue wastes debugging time and creates false confidence
 
-## CRITICAL: Verify Assumptions Before Making Breaking Changes
-**ALWAYS VERIFY BUSINESS LOGIC ASSUMPTIONS WITH THE USER BEFORE IMPLEMENTING**
-- DO NOT assume default behavior for security-critical features
-- ASK THE USER to clarify intended behavior when logic is ambiguous
-- Example: Agent filtering logic assumed agents without OWNER_DOMAINS should be unavailable
-- This broke the entire chat application when most agents lacked this property
-- VERIFY with user whether undefined properties should default to restrictive or permissive behavior
-- When in doubt about application-breaking changes, ASK FIRST
+## CRITICAL: Agent Ownership and Availability Logic
+**CLARIFIED: Agent filtering logic for organization access**
+
+### Agent Availability Rules:
+1. **Free Agents (Available to ALL organizations):**
+   - `OWNER_DOMAINS = []` (empty list) - Explicit free agents
+   - `OWNER_DOMAINS = None` or undefined - Legacy free agents (normalized to empty list)
+   - Invalid `OWNER_DOMAINS` types (e.g., string) - Treated as legacy free agents
+
+2. **Proprietary Agents (Available to SPECIFIC organizations only):**
+   - `OWNER_DOMAINS = ["demo", "premium"]` - Only available to listed organizations
+
+3. **Telephony-Only Agents:**
+   - Excluded from chat context unless explicitly requested via `include_telephony_only=True`
+
+### Implementation Notes:
+- Legacy agents without `OWNER_DOMAINS` are treated as free agents for backward compatibility
+- Invalid `OWNER_DOMAINS` types are normalized to `None` and treated as legacy free agents
+- The fallback behavior on database errors returns only free agents as a safe default
 
 ## 🚨 CRITICAL: ABSOLUTE GIT COMMIT PROHIBITION 🚨
 **CLAUDE CODE MUST NEVER, EVER, UNDER ANY CIRCUMSTANCES COMMIT CODE TO GIT**

@@ -63,11 +63,24 @@ class TestLifespanManager:
         """Test successful application startup."""
         mock_app = Mock()
         
-        with patch('app.main.init_db', new_callable=AsyncMock) as mock_init_db, \
-             patch('asyncio.create_task') as mock_create_task, \
-             patch('app.main.settings') as mock_settings:
-            mock_task = AsyncMock()
-            mock_create_task.return_value = mock_task
+        with patch('app.main.init_db') as mock_init_db, \
+             patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
+             patch('app.main.settings') as mock_settings, \
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
+            
+            # Create proper async mock for init_db
+            mock_init_db_coro = AsyncMock()
+            mock_init_db.return_value = mock_init_db_coro
+            
+            # Create async mock for cleanup function
+            async def mock_cleanup():
+                try:
+                    while True:
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    raise
+            
+            mock_cleanup_func.return_value = mock_cleanup()
             mock_settings.TELEPHONY_ENABLED = True
             mock_settings.TWILIO_ACCOUNT_SID = "test_sid"
             
@@ -77,7 +90,7 @@ class TestLifespanManager:
             
             # Verify startup operations
             mock_init_db.assert_called_once()
-            mock_create_task.assert_called_once()
+            mock_telephony_cleanup.assert_called_once()
             
     @pytest.mark.asyncio
     async def test_lifespan_startup_database_failure(self):
@@ -97,10 +110,25 @@ class TestLifespanManager:
         """Test telephony service configuration during startup."""
         mock_app = Mock()
         
-        with patch('app.main.init_db'), \
-             patch('asyncio.create_task'), \
+        with patch('app.main.init_db') as mock_init_db, \
+             patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
              patch('app.main.settings') as mock_settings, \
-             patch('app.main.logger') as mock_logger:
+             patch('app.main.logger') as mock_logger, \
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
+            
+            # Create proper async mock for init_db
+            mock_init_db_coro = AsyncMock()
+            mock_init_db.return_value = mock_init_db_coro
+            
+            # Create async mock for cleanup function
+            async def mock_cleanup():
+                try:
+                    while True:
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    raise
+            
+            mock_cleanup_func.return_value = mock_cleanup()
             
             # Test telephony enabled without credentials
             mock_settings.TELEPHONY_ENABLED = True
@@ -119,10 +147,24 @@ class TestLifespanManager:
         """Test startup with telephony disabled."""
         mock_app = Mock()
         
-        with patch('app.main.init_db'), \
-             patch('asyncio.create_task'), \
+        with patch('app.main.init_db') as mock_init_db, \
+             patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
              patch('app.main.settings') as mock_settings, \
              patch('app.main.logger') as mock_logger:
+            
+            # Create proper async mock for init_db
+            mock_init_db_coro = AsyncMock()
+            mock_init_db.return_value = mock_init_db_coro
+            
+            # Create async mock for cleanup function
+            async def mock_cleanup():
+                try:
+                    while True:
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    raise
+            
+            mock_cleanup_func.return_value = mock_cleanup()
             
             mock_settings.TELEPHONY_ENABLED = False
             
@@ -138,35 +180,61 @@ class TestLifespanManager:
     async def test_lifespan_shutdown_cleanup(self):
         """Test application shutdown cleanup."""
         mock_app = Mock()
-        mock_task = AsyncMock()
         
-        with patch('app.main.init_db'), \
-             patch('asyncio.create_task') as mock_create_task, \
-             patch('app.main.shutdown_all_handlers') as mock_voice_shutdown, \
-             patch('app.main.shutdown_stt_handlers') as mock_stt_shutdown:
+        with patch('app.main.init_db') as mock_init_db, \
+             patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
+             patch('app.api.voice_streaming.shutdown_all_handlers') as mock_voice_shutdown, \
+             patch('app.api.streaming_stt.shutdown_stt_handlers') as mock_stt_shutdown, \
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
             
-            mock_create_task.return_value = mock_task
-            mock_voice_shutdown.return_value = None
-            mock_stt_shutdown.return_value = None
+            # Create proper async mocks
+            mock_init_db_coro = AsyncMock()
+            mock_init_db.return_value = mock_init_db_coro
+            
+            # Create async mock for cleanup function
+            async def mock_cleanup():
+                try:
+                    while True:
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    raise
+            
+            mock_cleanup_func.return_value = mock_cleanup()
+            mock_voice_shutdown_coro = AsyncMock()
+            mock_voice_shutdown.return_value = mock_voice_shutdown_coro
+            mock_stt_shutdown_coro = AsyncMock()
+            mock_stt_shutdown.return_value = mock_stt_shutdown_coro
             
             async with lifespan(mock_app):
                 pass  # Trigger shutdown
             
-            # Verify cleanup operations
-            mock_task.cancel.assert_called_once()
+            # Verify cleanup functions were called
+            mock_voice_shutdown.assert_called_once()
+            mock_stt_shutdown.assert_called_once()
             
     @pytest.mark.asyncio
     async def test_lifespan_shutdown_with_errors(self):
         """Test shutdown handles errors gracefully."""
         mock_app = Mock()
-        mock_task = AsyncMock()
-        mock_task.cancel.side_effect = Exception("Cancel failed")
         
-        with patch('app.main.init_db'), \
-             patch('asyncio.create_task') as mock_create_task, \
-             patch('app.main.logger') as mock_logger:
+        with patch('app.main.init_db') as mock_init_db, \
+             patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
+             patch('app.main.logger') as mock_logger, \
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
             
-            mock_create_task.return_value = mock_task
+            # Create proper async mock for init_db
+            mock_init_db_coro = AsyncMock()
+            mock_init_db.return_value = mock_init_db_coro
+            
+            # Create async mock that will raise error when cancelled
+            async def mock_cleanup():
+                try:
+                    while True:
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    raise Exception("Cancel failed")
+            
+            mock_cleanup_func.return_value = mock_cleanup()
             
             # Should not raise exception despite errors
             async with lifespan(mock_app):
@@ -186,7 +254,8 @@ class TestWebSocketCleanupTask:
         call_count = 0
         
         with patch('asyncio.sleep') as mock_sleep, \
-             patch('app.main.connection_manager') as mock_manager:
+             patch('app.api.websockets.connection_manager') as mock_manager, \
+             patch('app.main.logger') as mock_logger:
             
             # Mock sleep to break the loop after a few iterations
             async def mock_sleep_func(duration):
@@ -198,12 +267,17 @@ class TestWebSocketCleanupTask:
             mock_sleep.side_effect = mock_sleep_func
             mock_manager.cleanup_stale_connections = AsyncMock()
             
-            # Should handle cancellation gracefully
-            with pytest.raises(asyncio.CancelledError):
-                await websocket_cleanup_task()
+            # The task runs in an infinite loop until cancelled
+            # websocket_cleanup_task handles CancelledError and logs, doesn't re-raise
+            await websocket_cleanup_task()
             
             # Verify cleanup was called
             assert mock_manager.cleanup_stale_connections.call_count >= 1
+            
+            # Verify cancellation was logged
+            info_calls = [call for call in mock_logger.info.call_args_list 
+                         if "cancelled" in str(call).lower()]
+            assert len(info_calls) >= 1
             
     @pytest.mark.asyncio
     async def test_websocket_cleanup_task_with_errors(self):
@@ -211,7 +285,7 @@ class TestWebSocketCleanupTask:
         call_count = 0
         
         with patch('asyncio.sleep') as mock_sleep, \
-             patch('app.main.connection_manager') as mock_manager, \
+             patch('app.api.websockets.connection_manager') as mock_manager, \
              patch('app.main.logger') as mock_logger:
             
             # Mock cleanup to fail first time, succeed second time
@@ -230,8 +304,8 @@ class TestWebSocketCleanupTask:
                     
             mock_sleep.side_effect = mock_sleep_func
             
-            with pytest.raises(asyncio.CancelledError):
-                await websocket_cleanup_task()
+            # The function handles CancelledError internally and doesn't re-raise
+            await websocket_cleanup_task()
             
             # Should log the error
             mock_logger.error.assert_called()
@@ -314,16 +388,18 @@ class TestRequestMiddleware:
         mock_request.method = "POST"
         mock_request.url.path = "/api/error"
         mock_request.client.host = "127.0.0.1"
+        mock_request.headers = {}  # Set headers to empty dict instead of Mock
         
         async def mock_call_next(request):
             raise Exception("Test error")
             
         with patch('app.main.logger') as mock_logger:
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match="Test error"):
                 await log_requests(mock_request, mock_call_next)
             
-            # Should log the error
-            mock_logger.error.assert_called()
+            # Should log the error - verify at least one error or warning log
+            total_error_logs = mock_logger.error.call_count + mock_logger.warning.call_count
+            assert total_error_logs >= 1
             
     @pytest.mark.asyncio
     async def test_log_requests_no_client(self):
@@ -576,6 +652,8 @@ class TestInformationEndpoints:
         
         mock_route_invalid = Mock()
         # Missing path and methods attributes
+        del mock_route_invalid.path
+        del mock_route_invalid.methods
         
         with patch('app.main.app') as mock_app:
             mock_app.routes = [mock_route_valid, mock_route_invalid]

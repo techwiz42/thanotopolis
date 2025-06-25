@@ -24,7 +24,12 @@ import {
   PhoneOutgoing,
   MapPin,
   Volume2,
-  AlertCircle
+  AlertCircle,
+  Mic,
+  MicOff,
+  MessageSquare,
+  Send,
+  Radio
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -35,6 +40,7 @@ import {
 } from '@/services/telephony';
 import { useCallMessages } from '../hooks/useCallMessages';
 import { CallMessagesList } from '../components/CallMessagesList';
+import { useActiveCall } from '@/hooks/useActiveCall';
 
 interface CallDetailsPageProps {
   params: {
@@ -56,6 +62,8 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [isPlayingRecording, setIsPlayingRecording] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [agentMessage, setAgentMessage] = useState('');
+  const [showLiveControls, setShowLiveControls] = useState(false);
   
   // Call messages hook
   const {
@@ -67,6 +75,29 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   } = useCallMessages({ 
     callId: params.id,
     autoLoad: false // We'll load manually after call is loaded
+  });
+
+  // Active call hook for real-time functionality
+  const activeCall = useActiveCall(params.id, {
+    autoStartStreaming: true,
+    onNewMessage: (message) => {
+      console.log('📞 New live message:', message);
+      toast({
+        title: "New Message",
+        description: `${message.sender.name}: ${message.content.substring(0, 50)}...`,
+        duration: 3000,
+      });
+    },
+    onCallStatusChange: (status, updatedCall) => {
+      console.log('📞 Call status changed:', status);
+      setCall(updatedCall);
+      
+      if (status === 'answered' || status === 'in_progress') {
+        setShowLiveControls(true);
+      } else if (status === 'completed' || status === 'failed') {
+        setShowLiveControls(false);
+      }
+    }
   });
 
   // Load call data
@@ -81,6 +112,11 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
         // Load call data first, then messages
         const callData = await telephonyService.getCall(params.id, token);
         setCall(callData);
+        
+        // Check if this is an active call
+        if (callData.status === 'answered' || callData.status === 'in_progress') {
+          setShowLiveControls(true);
+        }
         
         // Load messages manually
         try {
@@ -160,6 +196,36 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Send agent response
+  const handleSendAgentMessage = async () => {
+    if (!agentMessage.trim()) return;
+
+    try {
+      await activeCall.sendAgentResponse(agentMessage.trim());
+      setAgentMessage('');
+      
+      toast({
+        title: "Message Sent",
+        description: "Agent response sent to caller",
+      });
+    } catch (error: any) {
+      console.error('Error sending agent message:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send message",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Handle keyboard shortcuts
+  const handleAgentMessageKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSendAgentMessage();
+    }
   };
 
   // Format date/time
@@ -291,6 +357,112 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
               </div>
             </CardContent>
           </Card>
+
+          {/* Live Call Controls */}
+          {showLiveControls && (
+            <Card className="border-blue-200 bg-blue-50">
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Radio className="h-5 w-5 mr-2 text-blue-600" />
+                  Live Call Controls
+                  <Badge className="ml-2 bg-green-100 text-green-800">
+                    {activeCall.isStreamActive ? 'LIVE' : 'CONNECTING...'}
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  Real-time call monitoring and agent response
+                  {activeCall.currentLanguage && (
+                    <span className="ml-2 text-sm font-medium">
+                      Language: {activeCall.currentLanguage.toUpperCase()}
+                    </span>
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Stream Status */}
+                <div className="flex items-center space-x-4 p-3 bg-white rounded-lg border">
+                  <div className="flex items-center space-x-2">
+                    {activeCall.telephonyConnected ? (
+                      <Mic className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <MicOff className="h-4 w-4 text-red-600" />
+                    )}
+                    <span className="text-sm font-medium">
+                      Audio Stream: {activeCall.telephonyConnected ? 'Connected' : 'Disconnected'}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <MessageSquare className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-medium">
+                      Messages: {activeCall.messages.length}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Agent Response Input */}
+                <div className="p-4 bg-white rounded-lg border">
+                  <label className="block text-sm font-medium mb-2">
+                    Send Agent Response (TTS will be played to caller)
+                  </label>
+                  <div className="flex space-x-2">
+                    <textarea
+                      value={agentMessage}
+                      onChange={(e) => setAgentMessage(e.target.value)}
+                      onKeyDown={handleAgentMessageKeyDown}
+                      placeholder="Type your response here... (Ctrl+Enter to send)"
+                      className="flex-1 min-h-[80px] px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                      disabled={!activeCall.telephonyConnected}
+                    />
+                    <Button
+                      onClick={handleSendAgentMessage}
+                      disabled={!agentMessage.trim() || !activeCall.telephonyConnected}
+                      size="sm"
+                      className="self-end"
+                    >
+                      <Send className="h-4 w-4 mr-1" />
+                      Send
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Message will be converted to speech and played to the caller in real-time
+                  </p>
+                </div>
+
+                {/* Stream Controls */}
+                <div className="flex space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={activeCall.startStream}
+                    disabled={activeCall.telephonyConnected}
+                  >
+                    <Radio className="h-4 w-4 mr-2" />
+                    Start Stream
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={activeCall.stopStream}
+                    disabled={!activeCall.telephonyConnected}
+                  >
+                    <MicOff className="h-4 w-4 mr-2" />
+                    Stop Stream
+                  </Button>
+                </div>
+
+                {/* Error Display */}
+                {activeCall.error && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      {activeCall.error}
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Call Summary */}
           {(call.summary || getSummary()) && (

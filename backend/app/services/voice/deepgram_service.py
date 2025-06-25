@@ -316,33 +316,32 @@ class DeepgramService:
             # Determine the model to use
             requested_model = model or settings.DEEPGRAM_MODEL
             
-            # Get mapped language first to check compatibility
-            mapped_language = None
+            # For telephony, assume English to avoid auto-detection issues with small chunks
+            mapped_language = "en-US"  # Default to US English for telephony
             if language:
                 mapped_language = map_language_code_to_deepgram(language)
-            else:
-                # For telephony, enable language detection
-                mapped_language = None
             
-            # Get compatible model for the language
-            compatible_model = get_compatible_model_for_language(mapped_language, requested_model)
+            # For telephony, use nova-2 model which has better speech detection
+            compatible_model = "nova-2"  # nova-2 is more robust for telephony than base
+            if requested_model and requested_model not in ["nova-2", "base"]:
+                compatible_model = get_compatible_model_for_language(mapped_language, requested_model)
             
             # Configure options specifically for telephony audio (mulaw, 8kHz)
             options = PrerecordedOptions(
                 model=compatible_model,
+                language=mapped_language,  # Always specify language for telephony
                 punctuate=True,
                 diarize=False,
                 smart_format=True,
                 utterances=True,
-                detect_language=True if not mapped_language else False
+                detect_language=False,  # Disable auto-detection for better performance
+                # Telephony-specific options
+                numerals=True,
+                profanity_filter=False,
+                redact=False
             )
             
-            # Set language if specified
-            if mapped_language:
-                options.language = mapped_language
-                logger.debug(f"Using language: {language} -> {mapped_language} with model: {compatible_model}")
-            else:
-                logger.debug(f"Using language auto-detection with model: {compatible_model}")
+            logger.debug(f"Using telephony language: {mapped_language} with model: {compatible_model}")
             
             # Send to Deepgram
             logger.debug(f"📞 Sending to Deepgram with options: model={compatible_model}, language={mapped_language}, detect_language={not mapped_language}")
@@ -352,7 +351,6 @@ class DeepgramService:
             
             # Extract transcription
             result = response.to_dict()
-            logger.debug(f"📞 Deepgram response keys: {list(result.keys()) if result else 'None'}")
             
             # Extract transcript text
             if (result.get("results") and 
@@ -364,12 +362,23 @@ class DeepgramService:
                 if channel.get("alternatives") and len(channel["alternatives"]) > 0:
                     alternative = channel["alternatives"][0]
                     transcript = alternative.get("transcript", "")
+                    confidence = alternative.get("confidence", 0.0)
                     
                     if transcript and transcript.strip():
-                        logger.info(f"✅ Successfully transcribed stream: '{transcript}' ({len(transcript)} characters)")
+                        logger.info(f"✅ Transcribed: '{transcript}' (confidence: {confidence:.2f})")
                         return transcript.strip()
+                    else:
+                        # Even low confidence might be useful for telephony
+                        if confidence > 0.0:
+                            logger.info(f"📞 Low confidence transcript: '{transcript}' (confidence: {confidence:.2f})")
+                        else:
+                            logger.debug(f"📞 Empty transcript, confidence: {confidence:.2f}")
+                else:
+                    logger.debug(f"📞 No alternatives in channel")
+            else:
+                logger.debug(f"📞 No results or channels in response")
             
-            logger.warning("📞 Deepgram returned empty transcript - no speech detected or audio quality issue")
+            logger.debug("📞 Deepgram returned empty transcript")
             return ""
                 
         except Exception as e:

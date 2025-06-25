@@ -17,10 +17,14 @@ import {
   BarChart3,
   PhoneCall,
   PhoneIncoming,
-  Headphones
+  Headphones,
+  Radio,
+  Activity,
+  TestTube
 } from 'lucide-react';
 
 import { telephonyService, TelephonyConfig } from '@/services/telephony';
+import { telephonyCallManager } from '@/services/telephony/TelephonyCallManager';
 
 interface NavigationItem {
   name: string;
@@ -36,6 +40,7 @@ export default function OrganizationNavigation() {
   const { user, token } = useAuth();
   const [telephonyConfig, setTelephonyConfig] = useState<TelephonyConfig | null>(null);
   const [telephonyLoading, setTelephonyLoading] = useState(true);
+  const [activeCallsCount, setActiveCallsCount] = useState(0);
 
   // Check telephony status
   useEffect(() => {
@@ -58,6 +63,46 @@ export default function OrganizationNavigation() {
 
     checkTelephonyStatus();
   }, [token]);
+
+  // Monitor active calls count
+  useEffect(() => {
+    if (!telephonyConfig || !telephonyService.isSetupComplete(telephonyConfig)) {
+      return;
+    }
+
+    const updateActiveCallsCount = () => {
+      const activeCalls = telephonyCallManager.getActiveCalls();
+      const count = activeCalls.filter(call => 
+        call.status === 'incoming' || 
+        call.status === 'ringing' || 
+        call.status === 'answered' || 
+        call.status === 'in_progress'
+      ).length;
+      setActiveCallsCount(count);
+    };
+
+    // Initial count
+    updateActiveCallsCount();
+
+    // Listen for call events
+    const handleCallEvent = () => updateActiveCallsCount();
+    
+    telephonyCallManager.on('call_incoming', handleCallEvent);
+    telephonyCallManager.on('call_answered', handleCallEvent);
+    telephonyCallManager.on('call_ended', handleCallEvent);
+    telephonyCallManager.on('call_status_update', handleCallEvent);
+
+    // Update every 10 seconds as backup
+    const interval = setInterval(updateActiveCallsCount, 10000);
+
+    return () => {
+      telephonyCallManager.off('call_incoming', handleCallEvent);
+      telephonyCallManager.off('call_answered', handleCallEvent);
+      telephonyCallManager.off('call_ended', handleCallEvent);
+      telephonyCallManager.off('call_status_update', handleCallEvent);
+      clearInterval(interval);
+    };
+  }, [telephonyConfig]);
 
   // Base navigation items
   const navigationItems: NavigationItem[] = [
@@ -93,11 +138,19 @@ export default function OrganizationNavigation() {
       description: 'Configure AI-powered phone support'
     },
     {
-      name: 'Call Management',
+      name: 'Active Calls',
+      href: '/organizations/telephony/active-calls',
+      icon: Radio,
+      badge: activeCallsCount > 0 ? activeCallsCount.toString() : undefined,
+      disabled: !telephonyConfig || !telephonyService.isSetupComplete(telephonyConfig),
+      description: 'Monitor live phone calls and agent responses'
+    },
+    {
+      name: 'Call History',
       href: '/organizations/telephony/calls',
       icon: PhoneCall,
       disabled: !telephonyConfig || !telephonyService.isSetupComplete(telephonyConfig),
-      description: 'Monitor and manage phone calls'
+      description: 'View completed calls and transcripts'
     },
     {
       name: 'Voice Analytics',
@@ -107,6 +160,18 @@ export default function OrganizationNavigation() {
       description: 'Call analytics and insights'
     }
   ];
+
+  // Add test panel for admin users
+  if (user?.role === 'admin' || user?.role === 'org_admin' || user?.role === 'super_admin') {
+    telephonyItems.push({
+      name: 'System Tests',
+      href: '/organizations/telephony/test',
+      icon: TestTube,
+      badge: 'Admin',
+      disabled: !telephonyConfig,
+      description: 'Test and validate telephony components'
+    });
+  }
 
   // Admin navigation items
   const adminItems: NavigationItem[] = [
@@ -126,6 +191,14 @@ export default function OrganizationNavigation() {
   };
 
   const getBadgeVariant = (badge: string) => {
+    // Check if badge is a number (active calls count)
+    if (/^\d+$/.test(badge)) {
+      const count = parseInt(badge);
+      if (count > 5) return 'destructive'; // High priority for many calls
+      if (count > 2) return 'secondary'; // Medium priority
+      return 'default'; // Normal priority
+    }
+    
     switch (badge.toLowerCase()) {
       case 'active':
         return 'default';
@@ -230,16 +303,37 @@ export default function OrganizationNavigation() {
           
           {/* Quick Stats */}
           {telephonyConfig && telephonyService.isSetupComplete(telephonyConfig) && (
-            <div className="mt-4 p-3 bg-muted rounded-lg">
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center">
-                  <PhoneIncoming className="h-4 w-4 mr-2 text-green-600" />
-                  <span>AI Phone Support Active</span>
+            <div className="mt-4 space-y-2">
+              <div className="p-3 bg-muted rounded-lg">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center">
+                    <PhoneIncoming className="h-4 w-4 mr-2 text-green-600" />
+                    <span>AI Phone Support Active</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs">
+                    {telephonyService.getDisplayPhoneNumber(telephonyConfig)}
+                  </Badge>
                 </div>
-                <Badge variant="outline" className="text-xs">
-                  {telephonyService.getDisplayPhoneNumber(telephonyConfig)}
-                </Badge>
               </div>
+              
+              {/* Active Calls Alert */}
+              {activeCallsCount > 0 && (
+                <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center">
+                      <Activity className="h-4 w-4 mr-2 text-orange-600 animate-pulse" />
+                      <span className="text-orange-800 font-medium">
+                        {activeCallsCount} Active Call{activeCallsCount > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <Link href="/organizations/telephony/active-calls">
+                      <Badge variant="default" className="text-xs cursor-pointer hover:bg-primary/80">
+                        View
+                      </Badge>
+                    </Link>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
