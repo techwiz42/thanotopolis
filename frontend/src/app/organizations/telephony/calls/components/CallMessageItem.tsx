@@ -109,9 +109,11 @@ export function CallMessageItem({
           <Badge className={telephonyService.getSenderTypeColor(message.sender.type)}>
             {telephonyService.getMessageSenderName(message.sender)}
           </Badge>
-          <Badge variant="outline" className={telephonyService.getMessageTypeColor(message.message_type)}>
-            {message.message_type}
-          </Badge>
+          {message.message_type !== 'transcript' && (
+            <Badge variant="outline" className={telephonyService.getMessageTypeColor(message.message_type)}>
+              {message.message_type}
+            </Badge>
+          )}
           <span className="text-xs text-muted-foreground">
             {formatTimestamp(message.timestamp)}
           </span>

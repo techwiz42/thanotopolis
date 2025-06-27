@@ -290,6 +290,15 @@ export const telephonyService = {
         }
       });
       
+      // Backend returns {messages: [], total: number, call_id: string}
+      // Frontend expects just the messages array
+      if (response.data && typeof response.data === 'object' && 'messages' in response.data) {
+        const data = response.data as { messages: unknown };
+        console.log(`📞 Loaded ${Array.isArray(data.messages) ? data.messages.length : 0} call messages`);
+        return data.messages as CallMessage[];
+      }
+      
+      // Fallback for direct array response (legacy)
       return response.data as CallMessage[];
     } catch (error) {
       console.error('Error fetching call messages:', error);
@@ -461,19 +470,17 @@ export const telephonyService = {
 
   // Call message utilities
   getMessageSenderName(sender: CallMessageSender): string {
-    if (sender.name) return sender.name;
-    
     switch (sender.type) {
       case 'customer':
         return sender.phone_number ? this.formatPhoneNumber(sender.phone_number) : 'Customer';
       case 'agent':
-        return 'Agent';
+        return sender.name || 'AI Agent';
       case 'system':
         return 'System';
       case 'operator':
         return 'Operator';
       default:
-        return sender.identifier;
+        return sender.name || sender.identifier;
     }
   },
 
@@ -528,6 +535,39 @@ export const telephonyService = {
     }, {} as Record<CallMessage['message_type'], CallMessage[]>);
   },
 
+  groupConsecutiveMessagesBySender(messages: CallMessage[]): CallMessage[][] {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return [];
+    }
+
+    const sortedMessages = this.sortMessagesByTimestamp(messages);
+    const grouped: CallMessage[][] = [];
+    let currentGroup: CallMessage[] = [sortedMessages[0]];
+
+    for (let i = 1; i < sortedMessages.length; i++) {
+      const currentMessage = sortedMessages[i];
+      const previousMessage = sortedMessages[i - 1];
+
+      const isSameSender = 
+        currentMessage.sender.type === previousMessage.sender.type &&
+        currentMessage.sender.identifier === previousMessage.sender.identifier;
+
+      const areBothTranscripts = 
+        currentMessage.message_type === 'transcript' && 
+        previousMessage.message_type === 'transcript';
+
+      if (isSameSender && areBothTranscripts && (currentMessage.sender.type === 'customer' || currentMessage.sender.type === 'agent')) {
+        currentGroup.push(currentMessage);
+      } else {
+        grouped.push(currentGroup);
+        currentGroup = [currentMessage];
+      }
+    }
+
+    grouped.push(currentGroup);
+    return grouped;
+  },
+
   getCallTranscript(messages: CallMessage[]): string {
     if (!Array.isArray(messages)) {
       return '';
@@ -552,6 +592,34 @@ export const telephonyService = {
 
   hasAudioSegment(message: CallMessage): boolean {
     return !!(message.metadata?.recording_segment_url || message.metadata?.audio_start_time !== undefined);
+  },
+
+  // Generate summary for a call
+  async generateCallSummary(callId: string, token: string): Promise<{
+    success: boolean;
+    call_id: string;
+    summary: string;
+    message_id: string;
+    created_at: string;
+  }> {
+    try {
+      const response = await api.post<{
+        success: boolean;
+        call_id: string;
+        summary: string;
+        message_id: string;
+        created_at: string;
+      }>(`/telephony/calls/${callId}/generate-summary`, {}, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error generating call summary:', error);
+      throw error;
+    }
   },
 
   // Create test call for telephony testing

@@ -10,7 +10,7 @@ from uuid import UUID
 
 from app.db.database import get_db
 from app.auth.auth import get_current_user, require_admin_user
-from app.models.models import User, Tenant, UsageRecord, SystemMetrics, Conversation
+from app.models.models import User, Tenant, UsageRecord, SystemMetrics, Conversation, PhoneCall
 from app.schemas.schemas import (
     UserResponse, 
     UsageRecordResponse, 
@@ -36,6 +36,7 @@ async def get_admin_dashboard(
     # Get basic counts
     total_users = await db.scalar(select(func.count(User.id)))
     total_conversations = await db.scalar(select(func.count(Conversation.id)))
+    total_phone_calls = await db.scalar(select(func.count(PhoneCall.id)))
     
     # Get recent usage (last 50 records)
     recent_usage = await usage_service.get_recent_usage(db, limit=50)
@@ -86,7 +87,6 @@ async def get_admin_dashboard(
                 "tenant_id": tenant_id,
                 "tenant_name": row.tenant_name,
                 "subdomain": row.subdomain,
-                "total_tokens": 0,
                 "total_tts_words": 0,
                 "total_stt_words": 0,
                 "total_cost_cents": 0,
@@ -94,9 +94,7 @@ async def get_admin_dashboard(
             }
         
         if row.usage_type:  # Only process if there's actual usage
-            if row.usage_type == "tokens":
-                usage_by_organization[tenant_id]["total_tokens"] = row.total_amount or 0
-            elif row.usage_type == "tts_words":
+            if row.usage_type == "tts_words":
                 usage_by_organization[tenant_id]["total_tts_words"] = row.total_amount or 0
             elif row.usage_type == "stt_words":
                 usage_by_organization[tenant_id]["total_stt_words"] = row.total_amount or 0
@@ -104,16 +102,22 @@ async def get_admin_dashboard(
             usage_by_organization[tenant_id]["total_cost_cents"] += row.total_cost or 0
             usage_by_organization[tenant_id]["record_count"] += row.record_count or 0
     
-    # Get tenant stats
+    # Get tenant stats with phone calls
+    from app.models.models import TelephonyConfiguration
     tenant_stats_query = select(
         Tenant.id,
         Tenant.name,
         Tenant.subdomain,
-        func.count(User.id).label('user_count'),
-        func.count(Conversation.id).label('conversation_count')
+        func.count(User.id.distinct()).label('user_count'),
+        func.count(Conversation.id.distinct()).label('conversation_count'),
+        func.count(PhoneCall.id.distinct()).label('phone_call_count')
     ).select_from(
         Tenant
-    ).outerjoin(User).outerjoin(Conversation).group_by(
+    ).outerjoin(User, User.tenant_id == Tenant.id
+    ).outerjoin(Conversation, Conversation.tenant_id == Tenant.id
+    ).outerjoin(TelephonyConfiguration, TelephonyConfiguration.tenant_id == Tenant.id
+    ).outerjoin(PhoneCall, PhoneCall.telephony_config_id == TelephonyConfiguration.id
+    ).group_by(
         Tenant.id, Tenant.name, Tenant.subdomain
     )
     
@@ -124,7 +128,8 @@ async def get_admin_dashboard(
             "name": row.name,
             "subdomain": row.subdomain,
             "user_count": row.user_count or 0,
-            "conversation_count": row.conversation_count or 0
+            "conversation_count": row.conversation_count or 0,
+            "phone_call_count": row.phone_call_count or 0
         }
         for row in tenant_stats_result.all()
     ]
@@ -156,6 +161,7 @@ async def get_admin_dashboard(
     return AdminDashboardResponse(
         total_users=total_users or 0,
         total_conversations=total_conversations or 0,
+        total_phone_calls=total_phone_calls or 0,
         active_ws_connections=active_ws_connections,
         db_connection_pool_size=db_connection_pool_size,
         recent_usage=[UsageRecordResponse.model_validate(usage) for usage in recent_usage],

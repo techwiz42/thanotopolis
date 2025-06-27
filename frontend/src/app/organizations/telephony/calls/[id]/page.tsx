@@ -64,6 +64,8 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [agentMessage, setAgentMessage] = useState('');
   const [showLiveControls, setShowLiveControls] = useState(false);
+  const [showFullTranscript, setShowFullTranscript] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(false);
   
   // Call messages hook
   const {
@@ -465,22 +467,53 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
           )}
 
           {/* Call Summary */}
-          {(call.summary || getSummary()) && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <FileText className="h-5 w-5 mr-2" />
-                  Call Summary
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-muted p-4 rounded-lg">
-                  <p className="text-sm leading-relaxed">
-                    {getSummary() || call.summary}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <FileText className="h-5 w-5 mr-2" />
+                Call Summary
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="bg-muted p-4 rounded-lg">
+                {call.summary ? (
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                    {call.summary}
                   </p>
+                ) : call.status === 'completed' ? (
+                  <p className="text-sm text-muted-foreground italic">
+                    Summary is being generated for this completed call...
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">
+                    Summary will be available after the call is completed.
+                  </p>
+                )}
+              </div>
+              
+              {/* Show Full Transcript Button */}
+              {messages.length > 0 && (
+                <div className="mt-4 text-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowFullTranscript(!showFullTranscript)}
+                  >
+                    {showFullTranscript ? 'Hide' : 'Show'} Full Transcript
+                  </Button>
                 </div>
-              </CardContent>
-            </Card>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Full Transcript */}
+          {showFullTranscript && messages.length > 0 && (
+            <CallMessagesList 
+              messages={messages}
+              onDeleteMessage={deleteMessage}
+              showActions={true}
+              showTabs={true}
+            />
           )}
 
           {/* Call Timeline */}
@@ -577,14 +610,6 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
             </Card>
           )}
 
-          {/* Call Messages */}
-          <CallMessagesList 
-            messages={messages}
-            onDeleteMessage={deleteMessage}
-            showActions={true}
-            showTabs={true}
-          />
-
         </div>
 
         {/* Sidebar */}
@@ -636,22 +661,66 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
           {call.call_metadata && Object.keys(call.call_metadata).length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle>Additional Information</CardTitle>
+                <CardTitle className="flex items-center justify-between">
+                  <span>Additional Information</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowMetadata(!showMetadata)}
+                  >
+                    {showMetadata ? 'Hide' : 'Show'}
+                  </Button>
+                </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {Object.entries(call.call_metadata).map(([key, value]) => (
-                    <div key={key} className="flex justify-between">
-                      <span className="text-sm text-muted-foreground capitalize">
-                        {key.replace('_', ' ')}:
-                      </span>
-                      <span className="text-sm font-medium">
-                        {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
+              {showMetadata && (
+                <CardContent>
+                  <div className="space-y-3">
+                    {Object.entries(call.call_metadata).map(([key, value]) => {
+                      const formattedKey = key
+                        .split('_')
+                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                        .join(' ');
+                      
+                      let formattedValue: React.ReactNode = value;
+                      
+                      if (typeof value === 'object' && value !== null) {
+                        formattedValue = (
+                          <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
+                            {JSON.stringify(value, null, 2)}
+                          </pre>
+                        );
+                      } else if (typeof value === 'boolean') {
+                        formattedValue = (
+                          <Badge variant={value ? 'default' : 'secondary'}>
+                            {value ? 'Yes' : 'No'}
+                          </Badge>
+                        );
+                      } else if (typeof value === 'number') {
+                        formattedValue = (
+                          <span className="font-mono">
+                            {value.toLocaleString()}
+                          </span>
+                        );
+                      } else if (value === null || value === undefined) {
+                        formattedValue = (
+                          <span className="text-muted-foreground italic">N/A</span>
+                        );
+                      }
+                      
+                      return (
+                        <div key={key} className="border-b pb-2 last:border-0">
+                          <div className="text-sm font-medium text-muted-foreground mb-1">
+                            {formattedKey}
+                          </div>
+                          <div className="text-sm">
+                            {formattedValue}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              )}
             </Card>
           )}
 

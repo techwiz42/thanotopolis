@@ -206,6 +206,13 @@ class TelephonyStreamHandler:
                 call_sid=call.call_sid,
                 status=CallStatus.COMPLETED
             )
+            
+            # Auto-generate summary for completed call
+            try:
+                await self._generate_call_summary(call.id, db)
+            except Exception as e:
+                logger.error(f"❌ Error generating summary for call {call.id}: {e}")
+                # Don't fail the call completion if summary generation fails
     
     async def _handle_twilio_message(
         self,
@@ -328,22 +335,9 @@ class TelephonyStreamHandler:
             
             # Decode base64 audio
             mulaw_data = base64.b64decode(audio_payload)
-            logger.debug(f"📢 Processing audio chunk: {len(mulaw_data)} bytes mulaw")
             
             # Convert mulaw to linear PCM
             pcm_data = audioop.ulaw2lin(mulaw_data, 2)  # Convert to 16-bit PCM
-            
-            # Debug: Check if there's actual audio content
-            import struct
-            if len(pcm_data) >= 2:
-                samples = struct.unpack(f'<{len(pcm_data)//2}h', pcm_data)
-                max_amplitude = max(abs(s) for s in samples) if samples else 0
-                if max_amplitude > 100:
-                    logger.info(f"🔊 LIVE AUDIO detected in chunk: max_amplitude={max_amplitude}")
-                elif max_amplitude > 0:
-                    logger.debug(f"🔊 Quiet audio in chunk: max_amplitude={max_amplitude}")
-                else:
-                    logger.debug(f"🔊 Silent chunk: max_amplitude=0")
             
             # Add to buffer
             session["audio_buffer"].extend(pcm_data)
@@ -366,57 +360,8 @@ class TelephonyStreamHandler:
             )
             
             if should_process and buffer_size > 0:
-                logger.info(f"📢 Processing audio: {buffer_size} bytes PCM")
-                
                 # Convert buffered PCM to WAV
                 wav_data = self._pcm_to_wav(bytes(session["audio_buffer"]))
-                
-                # Debug: Save WAV file and analyze audio properties  
-                import tempfile
-                import struct
-                pcm_samples = bytes(session["audio_buffer"])  # Save before clearing
-                max_amplitude = 0
-                
-                try:
-                    # Save WAV file for inspection
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, prefix='debug_') as f:
-                        f.write(wav_data)
-                        wav_filename = f.name
-                        logger.error(f"🔊 SAVED DEBUG WAV: {wav_filename} ({len(wav_data)} bytes) - CHECK THIS FILE!")
-                    
-                    # Also save raw PCM for comparison
-                    with tempfile.NamedTemporaryFile(suffix='.pcm', delete=False, prefix='debug_') as f:
-                        f.write(pcm_samples)
-                        pcm_filename = f.name
-                        logger.error(f"🔊 SAVED DEBUG PCM: {pcm_filename} ({len(pcm_samples)} bytes)")
-                    
-                    # Analyze PCM data for audio activity
-                    if len(pcm_samples) >= 2:
-                        # Convert to 16-bit integers and check for non-silence
-                        samples = struct.unpack(f'<{len(pcm_samples)//2}h', pcm_samples)
-                        max_amplitude = max(abs(s) for s in samples) if samples else 0
-                        avg_amplitude = sum(abs(s) for s in samples) / len(samples) if samples else 0
-                        
-                        # Count non-zero samples
-                        non_zero_samples = sum(1 for s in samples if abs(s) > 10)
-                        zero_samples = len(samples) - non_zero_samples
-                        
-                        logger.error(f"🔊 AUDIO ANALYSIS:")
-                        logger.error(f"🔊   Max amplitude: {max_amplitude}")
-                        logger.error(f"🔊   Avg amplitude: {avg_amplitude:.1f}")
-                        logger.error(f"🔊   Total samples: {len(samples)}")
-                        logger.error(f"🔊   Non-zero samples: {non_zero_samples}")
-                        logger.error(f"🔊   Zero samples: {zero_samples}")
-                        
-                        if max_amplitude < 100:
-                            logger.error(f"🔊 PROBLEM: Very quiet audio detected - may be silence or very low volume")
-                        elif max_amplitude > 1000:
-                            logger.error(f"🔊 GOOD: Decent audio levels detected - should contain speech")
-                        else:
-                            logger.error(f"🔊 MARGINAL: Low but detectable audio levels")
-                            
-                except Exception as e:
-                    logger.error(f"Failed audio analysis: {e}")
                 
                 # Clear the buffer and update process time
                 session["audio_buffer"] = bytearray()
@@ -431,18 +376,8 @@ class TelephonyStreamHandler:
                 )
                 
                 if transcript and transcript.strip():
-                    logger.info(f"📢 ✅ TRANSCRIPT RECEIVED: {transcript}")
+                    logger.info(f"📢 ✅ TRANSCRIPT: {transcript}")
                     await self._handle_transcript(session_id, transcript, db)
-                else:
-                    logger.debug(f"📢 No transcript (audio: {len(wav_data)} bytes WAV)")
-                    
-                    # Enhanced logging for debugging STT issues
-                    if max_amplitude > 10000:  # Strong audio signal detected but no transcript
-                        logger.warning(f"📢 ⚠️ STRONG AUDIO detected (amplitude: {max_amplitude}) but NO TRANSCRIPT - check if this is speech or noise")
-                    elif max_amplitude > 1000:  # Moderate audio signal
-                        logger.info(f"📢 💬 MODERATE AUDIO detected (amplitude: {max_amplitude}) but no transcript - may be background noise or very unclear speech")
-                    else:
-                        logger.debug(f"📢 🔇 Weak audio signal (amplitude: {max_amplitude}) - likely silence or very quiet noise")
                 
         except Exception as e:
             logger.error(f"❌ Error processing audio chunk: {e}")
@@ -463,7 +398,6 @@ class TelephonyStreamHandler:
             # Check if audio has any content
             max_amplitude = np.max(np.abs(audio_array))
             if max_amplitude == 0:
-                logger.debug("Silent audio detected - no normalization needed")
                 # Return original WAV for silent audio
                 output = io.BytesIO()
                 with wave.open(output, 'wb') as wav_file:
@@ -492,7 +426,6 @@ class TelephonyStreamHandler:
             normalized_samples = normalized_audio.astype(np.int16)
             normalized_pcm = normalized_samples.tobytes()
             
-            logger.info(f"🔊 Audio normalized: max_amplitude {max_amplitude:.0f} -> {np.max(np.abs(normalized_samples)):.0f} (factor: {normalization_factor:.2f}x)")
             
             # Create WAV file with normalized audio
             output = io.BytesIO()
@@ -525,7 +458,6 @@ class TelephonyStreamHandler:
             buffer_size = len(session["audio_buffer"])
             
             if buffer_size > 0:
-                logger.debug(f"📢 Flushing remaining audio buffer: {buffer_size} bytes PCM")
                 
                 # Convert buffered PCM to WAV
                 wav_data = self._pcm_to_wav(bytes(session["audio_buffer"]))
@@ -667,7 +599,29 @@ class TelephonyStreamHandler:
                     "phone_number": session["call"].customer_phone_number
                 })
             )
+            
+            # Create CallMessage record for call details page
+            from app.models.models import CallMessage
+            from datetime import datetime
+            call_message = CallMessage(
+                call_id=session["call"].id,
+                content=user_message,
+                sender={
+                    "identifier": session["call"].customer_phone_number,
+                    "type": "customer",
+                    "name": "Caller",
+                    "phone_number": session["call"].customer_phone_number
+                },
+                timestamp=datetime.utcnow(),
+                message_type="transcript",
+                message_metadata={
+                    "sender_type": "caller",
+                    "call_id": str(session["call"].id)
+                }
+            )
+            
             db.add(message)
+            db.add(call_message)
             await db.commit()
             
             # Create a user context for tenant-aware agent selection
@@ -812,7 +766,31 @@ class TelephonyStreamHandler:
                         "has_audio": True
                     })
                 )
+                
+                # Create CallMessage record for call details page
+                from app.models.models import CallMessage
+                from datetime import datetime
+                call_response_message = CallMessage(
+                    call_id=session["call"].id,
+                    content=text_response,
+                    sender={
+                        "identifier": "ai_agent",
+                        "type": "agent",
+                        "name": "AI Agent",
+                        "phone_number": None
+                    },
+                    timestamp=datetime.utcnow(),
+                    message_type="transcript",
+                    message_metadata={
+                        "sender_type": "agent",
+                        "call_id": str(session["call"].id),
+                        "has_audio": True,
+                        "agent_type": session.get("last_agent_type", "ASSISTANT")
+                    }
+                )
+                
                 db.add(response_message)
+                db.add(call_response_message)
                 await db.commit()
                 
                 logger.info(f"🗣️ Speech response sent to caller: {text_response[:50]}...")
@@ -1140,6 +1118,100 @@ class TelephonyStreamHandler:
                 await websocket.send_text(json.dumps(message))
             except Exception as e:
                 logger.error(f"❌ Error sending message to {session_id}: {e}")
+    
+    async def _generate_call_summary(self, call_id: UUID, db: AsyncSession):
+        """Generate summary for a completed call"""
+        
+        try:
+            from app.models.models import CallMessage
+            from datetime import datetime
+            
+            # Check if summary already exists
+            existing_summary_query = select(CallMessage).where(
+                CallMessage.call_id == call_id,
+                CallMessage.message_type == 'summary'
+            )
+            existing_result = await db.execute(existing_summary_query)
+            if existing_result.scalar_one_or_none():
+                logger.info(f"📝 Summary already exists for call {call_id}")
+                return
+            
+            # Get transcript messages
+            transcript_query = (
+                select(CallMessage)
+                .where(
+                    CallMessage.call_id == call_id,
+                    CallMessage.message_type == 'transcript'
+                )
+                .order_by(CallMessage.timestamp)
+            )
+            
+            result = await db.execute(transcript_query)
+            transcript_messages = result.scalars().all()
+            
+            if not transcript_messages:
+                logger.info(f"📝 No transcript messages found for call {call_id}")
+                return
+            
+            # Get call details
+            call_query = select(PhoneCall).where(PhoneCall.id == call_id)
+            call_result = await db.execute(call_query)
+            call = call_result.scalar_one_or_none()
+            
+            if not call:
+                logger.error(f"❌ Call {call_id} not found")
+                return
+            
+            # Generate basic summary
+            duration_info = ""
+            if call.duration_seconds:
+                minutes = call.duration_seconds // 60
+                seconds = call.duration_seconds % 60
+                duration_info = f" The call lasted {minutes} minutes and {seconds} seconds."
+            
+            message_count = len(transcript_messages)
+            customer_messages = [m for m in transcript_messages if m.sender.get('type') == 'customer']
+            agent_messages = [m for m in transcript_messages if m.sender.get('type') == 'agent']
+            
+            summary_content = (
+                f"Call between customer {call.customer_phone_number} and organization "
+                f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
+                f"The conversation included {message_count} messages "
+                f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
+                f"The customer initiated contact and the conversation was handled by the AI agent."
+            )
+            
+            # Create summary message
+            summary_message = CallMessage(
+                call_id=call_id,
+                content=summary_content,
+                sender={
+                    "identifier": "system",
+                    "name": "AI Summarizer",
+                    "type": "system"
+                },
+                timestamp=datetime.utcnow(),
+                message_type='summary',
+                message_metadata={
+                    "is_automated": True,
+                    "generation_method": "auto_generated",
+                    "message_count": message_count,
+                    "customer_message_count": len(customer_messages),
+                    "agent_message_count": len(agent_messages)
+                }
+            )
+            
+            db.add(summary_message)
+            
+            # Also update the phone_call summary field
+            call.summary = summary_content
+            
+            await db.commit()
+            logger.info(f"📝 ✅ Auto-generated summary for call {call_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating summary for call {call_id}: {e}")
+            # Don't re-raise - summary generation is optional
 
 # Create global handler instance
 telephony_stream_handler = TelephonyStreamHandler()

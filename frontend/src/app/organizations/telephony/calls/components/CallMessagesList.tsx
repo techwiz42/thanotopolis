@@ -18,6 +18,7 @@ import {
   Download
 } from 'lucide-react';
 import { CallMessageItem } from './CallMessageItem';
+import { CallMessageGroup } from './CallMessageGroup';
 import { telephonyService, CallMessage } from '@/services/telephony';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -87,19 +88,23 @@ export function CallMessagesList({
     );
   }
 
-  const renderMessagesList = (messagesToRender: CallMessage[]) => (
-    <div className="space-y-3">
-      {messagesToRender.map((message) => (
-        <CallMessageItem
-          key={message.id}
-          message={message}
-          onEdit={onEditMessage}
-          onDelete={onDeleteMessage}
-          showActions={showActions}
-        />
-      ))}
-    </div>
-  );
+  const renderMessagesList = (messagesToRender: CallMessage[]) => {
+    const groupedMessages = telephonyService.groupConsecutiveMessagesBySender(messagesToRender);
+    
+    return (
+      <div className="space-y-3">
+        {groupedMessages.map((messageGroup, index) => (
+          <CallMessageGroup
+            key={messageGroup[0].id}
+            messages={messageGroup}
+            onEdit={onEditMessage}
+            onDelete={onDeleteMessage}
+            showActions={showActions}
+          />
+        ))}
+      </div>
+    );
+  };
 
   return (
     <Card>

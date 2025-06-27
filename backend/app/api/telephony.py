@@ -15,6 +15,7 @@ from app.db.database import get_db
 from app.auth.auth import get_current_active_user, require_admin_user, get_current_user
 from app.models.models import User, TelephonyConfiguration, PhoneCall, CallStatus, CallMessage
 from app.services.telephony_service import telephony_service
+from app.core.config import settings
 from sqlalchemy.orm import selectinload
 from sqlalchemy import and_, desc, asc
 # Telephony schemas are defined in this file
@@ -419,14 +420,40 @@ async def handle_incoming_call_webhook(
         # Generate TwiML response that immediately starts the WebSocket stream
         # The AI agent will handle the welcome message through ElevenLabs voice
         host = request.headers.get('host', 'localhost')
-        websocket_url = f"wss://{host}/api/ws/telephony/stream/{phone_call.id}"
+        
+        # Choose WebSocket endpoint based on Voice Agent feature flag and rollout
+        use_voice_agent = False
+        if getattr(settings, 'USE_VOICE_AGENT', False):
+            # Check rollout percentage
+            rollout_percentage = getattr(settings, 'VOICE_AGENT_ROLLOUT_PERCENTAGE', 0)
+            if rollout_percentage >= 100:
+                use_voice_agent = True
+            elif rollout_percentage > 0:
+                # Random rollout based on call SID hash
+                import hashlib
+                hash_value = int(hashlib.md5(call_sid.encode()).hexdigest()[:8], 16)
+                use_voice_agent = (hash_value % 100) < rollout_percentage
+        
+        if use_voice_agent:
+            websocket_url = f"wss://{host}/api/ws/telephony/voice-agent/stream"
+            logger.info(f"📞 Using Voice Agent for call {call_sid}")
+        else:
+            websocket_url = f"wss://{host}/api/ws/telephony/stream/{phone_call.id}"
+            logger.info(f"📞 Using traditional TTS for call {call_sid}")
         
         logger.info(f"📞 Sending TwiML response with WebSocket URL: {websocket_url}")
         
+        # Pass additional parameters through custom parameters
         twiml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
-        <Stream url="{websocket_url}" />
+        <Stream url="{websocket_url}">
+            <Parameter name="call_sid" value="{call_sid}" />
+            <Parameter name="tenant_id" value="{str(config.tenant_id)}" />
+            <Parameter name="from" value="{customer_number}" />
+            <Parameter name="to" value="{platform_number}" />
+            <Parameter name="org_phone" value="{config.organization_phone_number}" />
+        </Stream>
     </Connect>
 </Response>"""
         
@@ -569,20 +596,45 @@ async def get_call_messages(
     result = await db.execute(query)
     messages = result.scalars().all()
     
-    return CallMessagesListResponse(
-        messages=[
-            CallMessageResponse(
+    # Process messages with error handling for legacy data
+    processed_messages = []
+    for msg in messages:
+        try:
+            # Ensure sender has required identifier field
+            sender_data = dict(msg.sender) if msg.sender else {}
+            if "identifier" not in sender_data:
+                # Add identifier based on message type and available data
+                if sender_data.get("type") == "agent":
+                    sender_data["identifier"] = "voice_agent"
+                elif sender_data.get("phone_number"):
+                    sender_data["identifier"] = sender_data["phone_number"]
+                else:
+                    sender_data["identifier"] = "unknown"
+            
+            # Ensure all required fields are present
+            if "type" not in sender_data:
+                sender_data["type"] = "agent" if "agent" in sender_data.get("name", "").lower() else "customer"
+            if "name" not in sender_data:
+                sender_data["name"] = "AI Agent" if sender_data["type"] == "agent" else "Caller"
+            
+            processed_messages.append(CallMessageResponse(
                 id=msg.id,
                 call_id=msg.call_id,
                 content=msg.content,
-                sender=CallMessageSender(**msg.sender),
+                sender=CallMessageSender(**sender_data),
                 timestamp=msg.timestamp,
                 message_type=msg.message_type,
                 metadata=msg.message_metadata,
                 created_at=msg.created_at,
-            )
-            for msg in messages
-        ],
+            ))
+        except Exception as e:
+            # Log the error but don't break the entire response
+            logger.error(f"Error processing message {msg.id}: {e}")
+            logger.error(f"Message sender data: {msg.sender}")
+            continue
+    
+    return CallMessagesListResponse(
+        messages=processed_messages,
         total=total,
         call_id=call_id,
     )
@@ -852,6 +904,135 @@ async def get_call_summary(
         "created_at": summary_message.created_at.isoformat(),
         "metadata": summary_message.message_metadata,
     }
+
+
+@router.post("/calls/{call_id}/generate-summary")
+async def generate_call_summary(
+    call_id: UUID,
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate a summary for a call based on its transcript messages."""
+    
+    # Verify call exists and user has access
+    call_query = select(PhoneCall).where(
+        and_(
+            PhoneCall.id == call_id,
+            PhoneCall.telephony_config.has(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+        )
+    )
+    result = await db.execute(call_query)
+    call = result.scalar_one_or_none()
+    
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Check if summary already exists
+    existing_summary_query = select(CallMessage).where(
+        and_(
+            CallMessage.call_id == call_id,
+            CallMessage.message_type == 'summary'
+        )
+    )
+    existing_result = await db.execute(existing_summary_query)
+    if existing_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Summary already exists for this call")
+    
+    # Get transcript messages
+    transcript_query = (
+        select(CallMessage)
+        .where(
+            and_(
+                CallMessage.call_id == call_id,
+                CallMessage.message_type == 'transcript'
+            )
+        )
+        .order_by(CallMessage.timestamp)
+    )
+    
+    result = await db.execute(transcript_query)
+    transcript_messages = result.scalars().all()
+    
+    if not transcript_messages:
+        raise HTTPException(status_code=400, detail="No transcript messages found for this call")
+    
+    # Build conversation text
+    conversation_lines = []
+    for msg in transcript_messages:
+        sender_name = msg.sender.get('name', 'Unknown')
+        if msg.sender.get('type') == 'customer':
+            sender_name = f"Customer ({msg.sender.get('phone_number', 'Unknown')})"
+        elif msg.sender.get('type') == 'agent':
+            sender_name = "AI Agent"
+        
+        conversation_lines.append(f"{sender_name}: {msg.content}")
+    
+    conversation_text = "\n".join(conversation_lines)
+    
+    # Generate summary using AI service
+    try:
+        # For now, create a basic summary without AI
+        # TODO: Integrate with AI service for better summaries
+        duration_info = ""
+        if call.duration_seconds:
+            minutes = call.duration_seconds // 60
+            seconds = call.duration_seconds % 60
+            duration_info = f" The call lasted {minutes} minutes and {seconds} seconds."
+        
+        message_count = len(transcript_messages)
+        customer_messages = [m for m in transcript_messages if m.sender.get('type') == 'customer']
+        agent_messages = [m for m in transcript_messages if m.sender.get('type') == 'agent']
+        
+        # Extract key topics from conversation
+        all_content = " ".join([msg.content for msg in transcript_messages])
+        
+        summary_content = (
+            f"Call between customer {call.customer_phone_number} and organization "
+            f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
+            f"The conversation included {message_count} messages "
+            f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
+            f"The customer initiated contact and the conversation was handled by the AI agent."
+        )
+        
+        # Create summary message
+        summary_message = CallMessage(
+            call_id=call_id,
+            content=summary_content,
+            sender={
+                "identifier": "system",
+                "name": "AI Summarizer",
+                "type": "system"
+            },
+            timestamp=datetime.utcnow(),
+            message_type='summary',
+            message_metadata={
+                "is_automated": True,
+                "generation_method": "basic",
+                "message_count": message_count,
+                "customer_message_count": len(customer_messages),
+                "agent_message_count": len(agent_messages)
+            }
+        )
+        
+        db.add(summary_message)
+        
+        # Also update the phone_call summary field
+        call.summary = summary_content
+        
+        await db.commit()
+        await db.refresh(summary_message)
+        
+        return {
+            "success": True,
+            "call_id": str(call_id),
+            "summary": summary_content,
+            "message_id": str(summary_message.id),
+            "created_at": summary_message.created_at.isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating summary for call {call_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate summary: {str(e)}")
 
 
 @router.post("/calls/{call_id}/messages/bulk")

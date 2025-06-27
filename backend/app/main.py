@@ -26,9 +26,19 @@ from app.core.config import settings
 
 # Set up logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Silence noisy third-party loggers
+logging.getLogger('multipart.multipart').setLevel(logging.WARNING)
+logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('websockets').setLevel(logging.WARNING)
+
+# Keep our app loggers at DEBUG for detailed debugging
+logging.getLogger('app').setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 # Lifespan context manager for startup/shutdown
@@ -421,8 +431,18 @@ except Exception as e:
     logger.error(f"❌ Failed to register telephony router: {e}")
 
 try:
-    app.include_router(telephony_ws_router, prefix="/api", tags=["Telephony WebSocket"])
-    logger.info("✅ Telephony WebSocket router registered")
+    # Register the appropriate telephony WebSocket router based on feature flag
+    if getattr(settings, 'USE_VOICE_AGENT', False):
+        from app.api.telephony_voice_agent import telephony_voice_agent_websocket
+        from fastapi import APIRouter
+        
+        voice_agent_router = APIRouter()
+        voice_agent_router.add_websocket_route("/ws/telephony/voice-agent/stream", telephony_voice_agent_websocket)
+        app.include_router(voice_agent_router, prefix="/api", tags=["Telephony Voice Agent"])
+        logger.info("✅ Telephony Voice Agent router registered")
+    else:
+        app.include_router(telephony_ws_router, prefix="/api", tags=["Telephony WebSocket"])
+        logger.info("✅ Telephony WebSocket router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register telephony WebSocket router: {e}")
 

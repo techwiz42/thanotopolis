@@ -199,16 +199,13 @@ class UsageTrackingService:
         stats = result.all()
         
         # Initialize totals
-        total_tokens = 0
         total_tts_words = 0
         total_stt_words = 0
         total_cost_cents = 0
         
         # Process stats
         for stat in stats:
-            if stat.usage_type == "tokens":
-                total_tokens = stat.total_amount or 0
-            elif stat.usage_type == "tts_words":
+            if stat.usage_type == "tts_words":
                 total_tts_words = stat.total_amount or 0
             elif stat.usage_type == "stt_words":
                 total_stt_words = stat.total_amount or 0
@@ -219,7 +216,6 @@ class UsageTrackingService:
             period=period,
             start_date=start_date,
             end_date=end_date,
-            total_tokens=total_tokens,
             total_tts_words=total_tts_words,
             total_stt_words=total_stt_words,
             total_cost_cents=total_cost_cents

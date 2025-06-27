@@ -10,7 +10,6 @@ interface UsageStats {
   period: string
   start_date: string
   end_date: string
-  total_tokens: number
   total_tts_words: number
   total_stt_words: number
   total_cost_cents: number
@@ -30,13 +29,13 @@ interface TenantStat {
   subdomain: string
   user_count: number
   conversation_count: number
+  phone_call_count: number
 }
 
 interface OrganizationUsage {
   tenant_id: string
   tenant_name: string
   subdomain: string
-  total_tokens: number
   total_tts_words: number
   total_stt_words: number
   total_cost_cents: number
@@ -46,6 +45,7 @@ interface OrganizationUsage {
 interface AdminDashboard {
   total_users: number
   total_conversations: number
+  total_phone_calls: number
   active_ws_connections: number
   db_connection_pool_size: number
   recent_usage: any[]
@@ -281,7 +281,7 @@ const AdminMonitoringPage = () => {
       )}
 
       {/* System Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <Card className="p-4">
           <h3 className="font-semibold text-sm text-gray-600 mb-2">Total Users</h3>
           <p className="text-2xl font-bold">{dashboard?.total_users || 0}</p>
@@ -290,6 +290,11 @@ const AdminMonitoringPage = () => {
         <Card className="p-4">
           <h3 className="font-semibold text-sm text-gray-600 mb-2">Total Conversations</h3>
           <p className="text-2xl font-bold">{dashboard?.total_conversations || 0}</p>
+        </Card>
+        
+        <Card className="p-4">
+          <h3 className="font-semibold text-sm text-gray-600 mb-2">Total Phone Calls</h3>
+          <p className="text-2xl font-bold">{dashboard?.total_phone_calls || 0}</p>
         </Card>
         
         <Card className="p-4">
@@ -307,12 +312,7 @@ const AdminMonitoringPage = () => {
       {usageStats && (
         <Card className="p-6">
           <h2 className="text-xl font-bold mb-4">Usage Statistics (Last Month)</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <h3 className="font-semibold text-sm text-gray-600 mb-1">Total Tokens</h3>
-              <p className="text-lg font-bold">{usageStats.total_tokens.toLocaleString()}</p>
-            </div>
-            
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <h3 className="font-semibold text-sm text-gray-600 mb-1">TTS Usage</h3>
               <p className="text-lg font-bold">{formatWords(usageStats.total_tts_words)}</p>
@@ -343,7 +343,6 @@ const AdminMonitoringPage = () => {
                 <tr className="border-b">
                   <th className="text-left py-2">Organization</th>
                   <th className="text-left py-2">Subdomain</th>
-                  <th className="text-right py-2">Tokens</th>
                   <th className="text-right py-2">TTS Words</th>
                   <th className="text-right py-2">STT Words</th>
                   <th className="text-right py-2">Cost</th>
@@ -357,7 +356,6 @@ const AdminMonitoringPage = () => {
                     <tr key={org.tenant_id} className="border-b">
                       <td className="py-2">{org.tenant_name}</td>
                       <td className="py-2 text-gray-600">{org.subdomain}</td>
-                      <td className="py-2 text-right">{org.total_tokens.toLocaleString()}</td>
                       <td className="py-2 text-right">{formatWords(org.total_tts_words)}</td>
                       <td className="py-2 text-right">{formatWords(org.total_stt_words)}</td>
                       <td className="py-2 text-right">{formatCost(org.total_cost_cents)}</td>
@@ -383,6 +381,7 @@ const AdminMonitoringPage = () => {
                   <th className="text-left py-2">Subdomain</th>
                   <th className="text-right py-2">Users</th>
                   <th className="text-right py-2">Conversations</th>
+                  <th className="text-right py-2">Phone Calls</th>
                 </tr>
               </thead>
               <tbody>
@@ -395,6 +394,7 @@ const AdminMonitoringPage = () => {
                       <td className="py-2 text-gray-600">{tenant.subdomain}</td>
                       <td className="py-2 text-right">{tenant.user_count}</td>
                       <td className="py-2 text-right">{tenant.conversation_count}</td>
+                      <td className="py-2 text-right">{tenant.phone_call_count || 0}</td>
                     </tr>
                   ))}
               </tbody>

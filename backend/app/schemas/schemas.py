@@ -347,7 +347,6 @@ class UsageStats(BaseModel):
     period: str  # 'day', 'week', 'month'
     start_date: datetime
     end_date: datetime
-    total_tokens: int
     total_tts_words: int
     total_stt_words: int
     total_cost_cents: int
@@ -367,6 +366,7 @@ class SystemMetricsResponse(BaseModel):
 class AdminDashboardResponse(BaseModel):
     total_users: int
     total_conversations: int
+    total_phone_calls: int
     active_ws_connections: int
     db_connection_pool_size: int
     recent_usage: List[UsageRecordResponse]
