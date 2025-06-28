@@ -7,6 +7,7 @@ from sqlalchemy import select, func, desc, and_
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
+import logging
 
 from app.db.database import get_db
 from app.auth.auth import get_current_user, require_admin_user
@@ -24,6 +25,7 @@ from app.schemas.schemas import (
 from app.services.usage_service import usage_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/dashboard", response_model=AdminDashboardResponse)
@@ -33,20 +35,36 @@ async def get_admin_dashboard(
 ):
     """Get admin dashboard data with system overview"""
     
-    # Get basic counts
-    total_users = await db.scalar(select(func.count(User.id)))
-    total_conversations = await db.scalar(select(func.count(Conversation.id)))
-    total_phone_calls = await db.scalar(select(func.count(PhoneCall.id)))
+    # Get basic counts - filtered by current user's tenant
+    total_users = await db.scalar(
+        select(func.count(User.id)).where(User.tenant_id == current_user.tenant_id)
+    )
+    total_conversations = await db.scalar(
+        select(func.count(Conversation.id)).where(Conversation.tenant_id == current_user.tenant_id)
+    )
     
-    # Get recent usage (last 50 records)
-    recent_usage = await usage_service.get_recent_usage(db, limit=50)
+    # For phone calls, need to join with telephony_configurations
+    phone_calls_query = select(func.count(PhoneCall.id)).select_from(PhoneCall).join(
+        TelephonyConfiguration,
+        PhoneCall.telephony_config_id == TelephonyConfiguration.id
+    ).where(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+    
+    total_phone_calls = await db.scalar(phone_calls_query)
+    
+    # Get recent usage (last 50 records) - filtered by current user's tenant
+    recent_usage = await usage_service.get_recent_usage(
+        db, 
+        tenant_id=current_user.tenant_id,
+        limit=50
+    )
     
     # Get system metrics from last 24 hours
     system_metrics = await usage_service.get_system_metrics(db, hours=24)
     
-    # Get overall usage stats for last 30 days
+    # Get overall usage stats for last 30 days - filtered by current user's tenant
     overall_usage_stats = await usage_service.get_usage_stats(
         db=db,
+        tenant_id=current_user.tenant_id,
         period="month"
     )
     
@@ -103,7 +121,6 @@ async def get_admin_dashboard(
             usage_by_organization[tenant_id]["record_count"] += row.record_count or 0
     
     # Get tenant stats with phone calls
-    from app.models.models import TelephonyConfiguration
     tenant_stats_query = select(
         Tenant.id,
         Tenant.name,

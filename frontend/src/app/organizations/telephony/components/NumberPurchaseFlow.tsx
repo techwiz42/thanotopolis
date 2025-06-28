@@ -74,11 +74,11 @@ export default function NumberPurchaseFlow({ onNumberSelected, onCancel, disable
 
     try {
       const response = await telephonyService.searchAvailableNumbers(
+        token,
         searchParams.areaCode,
         searchParams.numberType,
-        searchParams.country,
-        10,
-        token
+        'US',
+        10
       );
 
       setAvailableNumbers(response.numbers || []);

@@ -213,11 +213,26 @@ class TelephonyService:
         """Handle incoming phone call to our platform number"""
         
         # Find telephony configuration by platform phone number
+        # Handle case where multiple configs might exist for same number
         config_query = select(TelephonyConfiguration).where(
             TelephonyConfiguration.platform_phone_number == self._normalize_phone_number(platform_number)
-        )
+        ).order_by(TelephonyConfiguration.created_at.desc())
         config_result = await db.execute(config_query)
-        config = config_result.scalar_one_or_none()
+        configs = config_result.scalars().all()
+        
+        if not configs:
+            config = None
+        else:
+            # Use the most recently created verified config, or the most recent one
+            verified_configs = [c for c in configs if c.verification_status == PhoneVerificationStatus.VERIFIED.value]
+            config = verified_configs[0] if verified_configs else configs[0]
+            
+            # Log warning if duplicates exist
+            if len(configs) > 1:
+                self.logger.warning(
+                    f"Multiple telephony configurations found for platform number {platform_number}. "
+                    f"Using config {config.id} for tenant {config.tenant_id}"
+                )
         
         if not config:
             raise ValueError(f"No organization found for platform number {platform_number}")

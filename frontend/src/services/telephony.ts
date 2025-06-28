@@ -660,11 +660,11 @@ export const telephonyService = {
 
   // Search for available phone numbers
   async searchAvailableNumbers(
+    token: string,
     areaCode?: string,
     numberType: 'local' | 'toll-free' = 'local',
     country: string = 'US',
-    limit: number = 10,
-    token: string
+    limit: number = 10
   ): Promise<{
     success: boolean;
     numbers: Array<{
@@ -702,7 +702,26 @@ export const telephonyService = {
         }
       });
       
-      return response.data;
+      return response.data as {
+        success: boolean;
+        numbers: Array<{
+          phoneNumber: string;
+          friendlyName: string;
+          locality: string;
+          region: string;
+          postalCode: string;
+          isoCountry: string;
+          phoneNumberType: 'local' | 'toll-free';
+          capabilities: string[];
+          monthlyFee: number;
+        }>;
+        total: number;
+        searchParams: {
+          areaCode?: string;
+          numberType: string;
+          country: string;
+        };
+      };
     } catch (error) {
       console.error('Error searching available numbers:', error);
       throw error;
@@ -735,7 +754,16 @@ export const telephonyService = {
         }
       });
       
-      return response.data;
+      return response.data as {
+        success: boolean;
+        phoneNumber: string;
+        twilioSid: string;
+        numberType: string;
+        configurationId: string;
+        verificationStatus: string;
+        callForwardingEnabled: boolean;
+        message: string;
+      };
     } catch (error) {
       console.error('Error purchasing phone number:', error);
       throw error;
@@ -767,7 +795,23 @@ export const telephonyService = {
         }
       });
       
-      return response.data;
+      return response.data as {
+        success: boolean;
+        numbers: Array<{
+          sid: string;
+          phoneNumber: string;
+          friendlyName: string;
+          voiceUrl: string;
+          statusCallbackUrl: string;
+          dateCreated: string | null;
+          capabilities: {
+            voice: boolean;
+            sms: boolean;
+            mms: boolean;
+          };
+        }>;
+        total: number;
+      };
     } catch (error) {
       console.error('Error fetching owned numbers:', error);
       throw error;
