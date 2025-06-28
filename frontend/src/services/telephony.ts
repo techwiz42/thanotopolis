@@ -656,5 +656,121 @@ export const telephonyService = {
       console.error('Error creating test call:', error);
       throw error;
     }
+  },
+
+  // Search for available phone numbers
+  async searchAvailableNumbers(
+    areaCode?: string,
+    numberType: 'local' | 'toll-free' = 'local',
+    country: string = 'US',
+    limit: number = 10,
+    token: string
+  ): Promise<{
+    success: boolean;
+    numbers: Array<{
+      phoneNumber: string;
+      friendlyName: string;
+      locality: string;
+      region: string;
+      postalCode: string;
+      isoCountry: string;
+      phoneNumberType: 'local' | 'toll-free';
+      capabilities: string[];
+      monthlyFee: number;
+    }>;
+    total: number;
+    searchParams: {
+      areaCode?: string;
+      numberType: string;
+      country: string;
+    };
+  }> {
+    try {
+      const params = new URLSearchParams({
+        number_type: numberType,
+        country: country,
+        limit: limit.toString()
+      });
+      
+      if (areaCode) {
+        params.append('area_code', areaCode);
+      }
+
+      const response = await api.get(`/telephony/numbers/search?${params}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error searching available numbers:', error);
+      throw error;
+    }
+  },
+
+  // Purchase a phone number
+  async purchasePhoneNumber(
+    phoneNumber: string,
+    numberType: 'local' | 'toll-free',
+    token: string
+  ): Promise<{
+    success: boolean;
+    phoneNumber: string;
+    twilioSid: string;
+    numberType: string;
+    configurationId: string;
+    verificationStatus: string;
+    callForwardingEnabled: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await api.post('/telephony/numbers/purchase', {
+        phoneNumber,
+        numberType
+      }, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error purchasing phone number:', error);
+      throw error;
+    }
+  },
+
+  // Get owned phone numbers
+  async getOwnedNumbers(token: string): Promise<{
+    success: boolean;
+    numbers: Array<{
+      sid: string;
+      phoneNumber: string;
+      friendlyName: string;
+      voiceUrl: string;
+      statusCallbackUrl: string;
+      dateCreated: string | null;
+      capabilities: {
+        voice: boolean;
+        sms: boolean;
+        mms: boolean;
+      };
+    }>;
+    total: number;
+  }> {
+    try {
+      const response = await api.get('/telephony/numbers/owned', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching owned numbers:', error);
+      throw error;
+    }
   }
 };

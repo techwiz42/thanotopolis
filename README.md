@@ -505,7 +505,6 @@ frontend/
 - **Python 3.11+** (Backend)
 - **Node.js 18+** (Frontend)
 - **PostgreSQL 14+** (Database with pgvector extension)
-- **Redis** (Caching & session management)
 - **Deepgram API Key** (Voice Agent)
 - **Twilio Account** (Telephony)
 
@@ -817,7 +816,6 @@ TWILIO_ACCOUNT_SID=your_production_sid
 
 ### **Infrastructure Requirements**
 - **Database**: PostgreSQL 14+ with pgvector extension
-- **Cache**: Redis for session management
 - **Web Server**: Nginx + Gunicorn for production
 - **WebSocket Support**: Load balancer with WebSocket support
 - **SSL Certificates**: TLS termination for secure communications

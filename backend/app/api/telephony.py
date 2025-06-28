@@ -1249,3 +1249,205 @@ async def simulate_test_call(
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+# Twilio Number Management Endpoints
+
+@router.get("/numbers/search")
+async def search_available_numbers(
+    area_code: Optional[str] = None,
+    number_type: str = "local",  # "local" or "toll-free" 
+    country: str = "US",
+    limit: int = 10,
+    current_user: User = Depends(require_org_admin_or_admin)
+):
+    """Search for available phone numbers to purchase from Twilio"""
+    
+    try:
+        from twilio.rest import Client
+        from app.core.config import settings
+        
+        # Initialize Twilio client
+        twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        
+        # Build search parameters
+        search_params = {
+            'country_code': country,
+            'limit': limit
+        }
+        
+        # Add area code for local numbers
+        if number_type == "local" and area_code:
+            search_params['area_code'] = area_code
+        
+        # Search for numbers based on type
+        if number_type == "toll-free":
+            # Search for toll-free numbers
+            available_numbers = twilio_client.available_phone_numbers(country).toll_free.list(**search_params)
+        else:
+            # Search for local numbers  
+            available_numbers = twilio_client.available_phone_numbers(country).local.list(**search_params)
+        
+        # Format response
+        formatted_numbers = []
+        for number in available_numbers:
+            formatted_numbers.append({
+                "phoneNumber": number.phone_number,
+                "friendlyName": number.friendly_name,
+                "locality": getattr(number, 'locality', ''),
+                "region": getattr(number, 'region', ''),
+                "postalCode": getattr(number, 'postal_code', ''),
+                "isoCountry": number.iso_country,
+                "phoneNumberType": number_type,
+                "capabilities": list(number.capabilities),
+                "monthlyFee": 1.0 if number_type == "local" else 15.0  # Approximate Twilio pricing
+            })
+        
+        logger.info(f"📞 Found {len(formatted_numbers)} available {number_type} numbers for area code {area_code}")
+        
+        return {
+            "success": True,
+            "numbers": formatted_numbers,
+            "total": len(formatted_numbers),
+            "searchParams": {
+                "areaCode": area_code,
+                "numberType": number_type,
+                "country": country
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error searching for available numbers: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to search for numbers: {str(e)}")
+
+
+@router.post("/numbers/purchase")
+async def purchase_phone_number(
+    request: dict,  # {"phoneNumber": "+1234567890", "numberType": "local"}
+    current_user: User = Depends(require_org_admin_or_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Purchase a phone number from Twilio and assign it to the organization"""
+    
+    try:
+        from twilio.rest import Client
+        from app.core.config import settings
+        
+        phone_number = request.get("phoneNumber")
+        number_type = request.get("numberType", "local")
+        
+        if not phone_number:
+            raise HTTPException(status_code=400, detail="Phone number is required")
+        
+        # Initialize Twilio client
+        twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        
+        # Purchase the number
+        purchased_number = twilio_client.incoming_phone_numbers.create(
+            phone_number=phone_number,
+            voice_url=f"{settings.API_URL}/api/telephony/webhook/incoming-call",
+            voice_method='POST',
+            status_callback=f"{settings.API_URL}/api/telephony/webhook/call-status",
+            status_callback_method='POST'
+        )
+        
+        # Update or create telephony configuration for this tenant
+        config_query = select(TelephonyConfiguration).where(
+            TelephonyConfiguration.tenant_id == current_user.tenant_id
+        )
+        config_result = await db.execute(config_query)
+        config = config_result.scalar_one_or_none()
+        
+        if config:
+            # Update existing configuration with purchased number
+            config.organization_phone_number = phone_number
+            config.platform_phone_number = phone_number  # Same number for purchased numbers
+            config.verification_status = VerificationStatus.verified  # Auto-verify purchased numbers
+            config.call_forwarding_enabled = True  # Auto-enable for purchased numbers
+        else:
+            # Create new configuration
+            config = TelephonyConfiguration(
+                tenant_id=current_user.tenant_id,
+                organization_phone_number=phone_number,
+                platform_phone_number=phone_number,
+                verification_status=VerificationStatus.verified,
+                call_forwarding_enabled=True,
+                welcome_message=f"Thank you for calling. How can I assist you today?",
+                business_hours={
+                    "monday": {"open": "09:00", "close": "17:00", "closed": False},
+                    "tuesday": {"open": "09:00", "close": "17:00", "closed": False},
+                    "wednesday": {"open": "09:00", "close": "17:00", "closed": False},
+                    "thursday": {"open": "09:00", "close": "17:00", "closed": False},
+                    "friday": {"open": "09:00", "close": "17:00", "closed": False},
+                    "saturday": {"open": "10:00", "close": "16:00", "closed": False},
+                    "sunday": {"open": "10:00", "close": "16:00", "closed": True}
+                },
+                timezone="America/New_York",
+                record_calls=True
+            )
+            db.add(config)
+        
+        await db.commit()
+        await db.refresh(config)
+        
+        logger.info(f"📞 Successfully purchased and configured number {phone_number} for tenant {current_user.tenant_id}")
+        
+        return {
+            "success": True,
+            "phoneNumber": phone_number,
+            "twilioSid": purchased_number.sid,
+            "numberType": number_type,
+            "configurationId": str(config.id),
+            "verificationStatus": "verified",
+            "callForwardingEnabled": True,
+            "message": f"Successfully purchased {phone_number}. Your telephony system is ready to use!"
+        }
+        
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ Error purchasing phone number: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to purchase number: {str(e)}")
+
+
+@router.get("/numbers/owned")
+async def get_owned_numbers(
+    current_user: User = Depends(require_org_admin_or_admin)
+):
+    """Get all phone numbers owned by the organization in Twilio"""
+    
+    try:
+        from twilio.rest import Client
+        from app.core.config import settings
+        
+        # Initialize Twilio client
+        twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        
+        # Get all incoming phone numbers
+        owned_numbers = twilio_client.incoming_phone_numbers.list()
+        
+        # Format response
+        formatted_numbers = []
+        for number in owned_numbers:
+            formatted_numbers.append({
+                "sid": number.sid,
+                "phoneNumber": number.phone_number,
+                "friendlyName": number.friendly_name,
+                "voiceUrl": number.voice_url,
+                "statusCallbackUrl": number.status_callback_url,
+                "dateCreated": number.date_created.isoformat() if number.date_created else None,
+                "capabilities": {
+                    "voice": getattr(number.capabilities, 'voice', False),
+                    "sms": getattr(number.capabilities, 'sms', False),
+                    "mms": getattr(number.capabilities, 'mms', False)
+                }
+            })
+        
+        return {
+            "success": True,
+            "numbers": formatted_numbers,
+            "total": len(formatted_numbers)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error fetching owned numbers: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch owned numbers: {str(e)}")

@@ -10,7 +10,7 @@ from uuid import UUID
 
 from app.db.database import get_db
 from app.auth.auth import get_current_user, require_admin_user
-from app.models.models import User, Tenant, UsageRecord, SystemMetrics, Conversation, PhoneCall
+from app.models.models import User, Tenant, UsageRecord, SystemMetrics, Conversation, PhoneCall, TelephonyConfiguration, PhoneVerificationStatus
 from app.schemas.schemas import (
     UserResponse, 
     UsageRecordResponse, 
@@ -527,3 +527,139 @@ async def get_admin_websocket_stats(
             status_code=500, 
             detail=f"Error getting WebSocket stats: {str(e)}"
         )
+
+
+@router.get("/telephony/configs")
+async def list_telephony_configs(
+    current_user: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all telephony configurations (admin only)"""
+    
+    query = select(TelephonyConfiguration).join(Tenant)
+    result = await db.execute(query)
+    configs = result.scalars().all()
+    
+    config_list = []
+    for config in configs:
+        # Get tenant info
+        tenant_query = select(Tenant).where(Tenant.id == config.tenant_id)
+        tenant_result = await db.execute(tenant_query)
+        tenant = tenant_result.scalar_one_or_none()
+        
+        config_list.append({
+            "id": str(config.id),
+            "tenant_id": str(config.tenant_id),
+            "tenant_name": tenant.name if tenant else "Unknown",
+            "organization_phone_number": config.organization_phone_number,
+            "formatted_phone_number": config.formatted_phone_number,
+            "platform_phone_number": config.platform_phone_number,
+            "verification_status": config.verification_status,
+            "call_forwarding_enabled": config.call_forwarding_enabled,
+            "is_enabled": config.is_enabled,
+            "created_at": config.created_at,
+            "updated_at": config.updated_at
+        })
+    
+    return {
+        "configs": config_list,
+        "total": len(config_list)
+    }
+
+
+@router.post("/telephony/manual-verify/{config_id}")
+async def manual_verify_phone(
+    config_id: UUID,
+    current_user: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Manually verify a phone number (admin only)"""
+    
+    # Only super admins can perform manual verification
+    if current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Super admin access required for manual verification"
+        )
+    
+    # Get telephony configuration
+    config_query = select(TelephonyConfiguration).where(
+        TelephonyConfiguration.id == config_id
+    )
+    config_result = await db.execute(config_query)
+    config = config_result.scalar_one_or_none()
+    
+    if not config:
+        raise HTTPException(status_code=404, detail="Telephony configuration not found")
+    
+    # Get tenant info for logging
+    tenant_query = select(Tenant).where(Tenant.id == config.tenant_id)
+    tenant_result = await db.execute(tenant_query)
+    tenant = tenant_result.scalar_one_or_none()
+    
+    # Update verification status
+    config.verification_status = PhoneVerificationStatus.VERIFIED.value
+    config.call_forwarding_enabled = True
+    
+    await db.commit()
+    await db.refresh(config)
+    
+    logger.info(f"🔧 Admin {current_user.email} manually verified phone {config.organization_phone_number} for tenant {tenant.name if tenant else config.tenant_id}")
+    
+    return {
+        "success": True,
+        "message": f"Phone number {config.organization_phone_number} manually verified",
+        "config_id": str(config.id),
+        "tenant_name": tenant.name if tenant else "Unknown",
+        "verification_status": config.verification_status,
+        "call_forwarding_enabled": config.call_forwarding_enabled
+    }
+
+
+@router.post("/telephony/manual-unverify/{config_id}")
+async def manual_unverify_phone(
+    config_id: UUID,
+    current_user: User = Depends(require_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Manually unverify a phone number (admin only)"""
+    
+    # Only super admins can perform manual unverification
+    if current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Super admin access required for manual unverification"
+        )
+    
+    # Get telephony configuration
+    config_query = select(TelephonyConfiguration).where(
+        TelephonyConfiguration.id == config_id
+    )
+    config_result = await db.execute(config_query)
+    config = config_result.scalar_one_or_none()
+    
+    if not config:
+        raise HTTPException(status_code=404, detail="Telephony configuration not found")
+    
+    # Get tenant info for logging
+    tenant_query = select(Tenant).where(Tenant.id == config.tenant_id)
+    tenant_result = await db.execute(tenant_query)
+    tenant = tenant_result.scalar_one_or_none()
+    
+    # Update verification status
+    config.verification_status = PhoneVerificationStatus.PENDING.value
+    config.call_forwarding_enabled = False
+    
+    await db.commit()
+    await db.refresh(config)
+    
+    logger.info(f"🔧 Admin {current_user.email} manually unverified phone {config.organization_phone_number} for tenant {tenant.name if tenant else config.tenant_id}")
+    
+    return {
+        "success": True,
+        "message": f"Phone number {config.organization_phone_number} manually unverified",
+        "config_id": str(config.id),
+        "tenant_name": tenant.name if tenant else "Unknown",
+        "verification_status": config.verification_status,
+        "call_forwarding_enabled": config.call_forwarding_enabled
+    }

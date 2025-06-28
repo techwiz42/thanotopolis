@@ -71,15 +71,19 @@ async def create_admin_user():
             existing_user = await db.execute(
                 select(User).where(User.email == email)
             )
-            if existing_user.scalar_one_or_none():
+            existing_user_obj = existing_user.scalars().first()
+            if existing_user_obj:
                 print(f"Error: User with email {email} already exists")
+                print(f"Existing user: {existing_user_obj.username} (ID: {existing_user_obj.id})")
                 return
             
             existing_username = await db.execute(
                 select(User).where(User.username == username)
             )
-            if existing_username.scalar_one_or_none():
+            existing_username_obj = existing_username.scalars().first()
+            if existing_username_obj:
                 print(f"Error: User with username {username} already exists")
+                print(f"Existing user: {existing_username_obj.email} (ID: {existing_username_obj.id})")
                 return
             
             # For super_admin, we need to get a tenant (or use the first one)
@@ -188,16 +192,102 @@ async def list_existing_admins():
                 print(f"Tenant: {tenant.name} ({tenant.subdomain})")
                 print(f"Active: {user.is_active}")
                 print(f"Verified: {user.is_verified}")
+                print(f"ID: {user.id}")
                 print("-" * 60)
                 
         except Exception as e:
             print(f"Error listing admin users: {e}")
 
 
+async def find_duplicates():
+    """Find and optionally clean up duplicate users"""
+    async with AsyncSessionLocal() as db:
+        try:
+            # Find duplicate emails
+            email_result = await db.execute(
+                select(User.email, User.id, User.username, User.is_active, User.created_at)
+                .order_by(User.email, User.created_at)
+            )
+            users = email_result.all()
+            
+            # Group by email
+            email_groups = {}
+            for user in users:
+                email = user.email
+                if email not in email_groups:
+                    email_groups[email] = []
+                email_groups[email].append(user)
+            
+            # Find duplicates
+            duplicates = {email: users for email, users in email_groups.items() if len(users) > 1}
+            
+            if not duplicates:
+                print("No duplicate users found.")
+                return
+            
+            print("Found duplicate users:")
+            print("=" * 80)
+            
+            for email, duplicate_users in duplicates.items():
+                print(f"\nEmail: {email}")
+                print("-" * 40)
+                for i, user in enumerate(duplicate_users, 1):
+                    print(f"  {i}. ID: {user.id} | Username: {user.username} | Active: {user.is_active} | Created: {user.created_at}")
+                
+                # Ask if user wants to clean up
+                print(f"\nFound {len(duplicate_users)} users with email {email}")
+                cleanup = input("Do you want to clean up duplicates? (y/N): ").strip().lower()
+                
+                if cleanup == 'y':
+                    # Keep the oldest active user, or oldest if none are active
+                    active_users = [u for u in duplicate_users if u.is_active]
+                    if active_users:
+                        keep_user = min(active_users, key=lambda x: x.created_at)
+                    else:
+                        keep_user = min(duplicate_users, key=lambda x: x.created_at)
+                    
+                    users_to_delete = [u for u in duplicate_users if u.id != keep_user.id]
+                    
+                    print(f"Keeping user: ID {keep_user.id} | Username: {keep_user.username}")
+                    print(f"Deleting {len(users_to_delete)} duplicate users...")
+                    
+                    for user_to_delete in users_to_delete:
+                        delete_result = await db.execute(
+                            select(User).where(User.id == user_to_delete.id)
+                        )
+                        user_obj = delete_result.scalar_one()
+                        await db.delete(user_obj)
+                        print(f"  Deleted: ID {user_to_delete.id} | Username: {user_to_delete.username}")
+                    
+                    await db.commit()
+                    print("Cleanup completed!")
+                else:
+                    print("Skipping cleanup for this email.")
+            
+        except Exception as e:
+            await db.rollback()
+            print(f"Error finding duplicates: {e}")
+            raise
+
+
 async def main():
     """Main function"""
-    if len(sys.argv) > 1 and sys.argv[1] == "--list":
-        await list_existing_admins()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--list":
+            await list_existing_admins()
+        elif sys.argv[1] == "--duplicates":
+            await find_duplicates()
+        elif sys.argv[1] == "--help":
+            print("Usage: python create_admin_user.py [OPTIONS]")
+            print()
+            print("Options:")
+            print("  (no args)     Create a new admin user")
+            print("  --list        List existing admin users")
+            print("  --duplicates  Find and clean up duplicate users")
+            print("  --help        Show this help message")
+        else:
+            print(f"Unknown option: {sys.argv[1]}")
+            print("Use --help for available options")
     else:
         await create_admin_user()
 

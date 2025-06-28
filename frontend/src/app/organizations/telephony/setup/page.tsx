@@ -25,6 +25,8 @@ import { telephonyService, TelephonyConfig, BusinessHours } from '@/services/tel
 import { BusinessHoursEditor } from '../components/BusinessHoursEditor';
 import { PhoneVerificationModal } from '../components/PhoneVerificationModal';
 import { ForwardingInstructionsModal } from '../components/ForwardingInstructionsModal';
+import NumberSourceSelector, { NumberSourceType } from '../components/NumberSourceSelector';
+import NumberPurchaseFlow, { AvailableNumber } from '../components/NumberPurchaseFlow';
 
 export default function TelephonySetupPage() {
   const router = useRouter();
@@ -36,6 +38,11 @@ export default function TelephonySetupPage() {
   const [isCheckingExisting, setIsCheckingExisting] = useState(true);
   const [existingConfig, setExistingConfig] = useState<TelephonyConfig | null>(null);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
+  
+  // Number source selection
+  const [numberSource, setNumberSource] = useState<NumberSourceType>('existing');
+  const [showPurchaseFlow, setShowPurchaseFlow] = useState(false);
+  const [isPurchasing, setIsPurchasing] = useState(false);
 
   // Form state
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -149,8 +156,8 @@ export default function TelephonySetupPage() {
         console.error('Error loading forwarding instructions:', error);
       }
       
-      // Show verification modal if not already verified
-      if (config.verification_status !== 'verified') {
+      // Show verification modal if not already verified and using existing number
+      if (config.verification_status !== 'verified' && numberSource === 'existing') {
         setShowVerificationModal(true);
       }
 
@@ -187,6 +194,67 @@ export default function TelephonySetupPage() {
           setExistingConfig(config);
         })
         .catch(console.error);
+    }
+  };
+
+  // Handle number purchase
+  const handleNumberPurchase = async (selectedNumber: AvailableNumber) => {
+    if (!token) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to purchase a phone number",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsPurchasing(true);
+
+    try {
+      const result = await telephonyService.purchasePhoneNumber(
+        selectedNumber.phoneNumber,
+        selectedNumber.phoneNumberType,
+        token
+      );
+
+      toast({
+        title: "Number Purchased Successfully!",
+        description: `${result.phoneNumber} is now ready to use. No verification needed!`,
+      });
+
+      // Refresh configuration to show the new setup
+      const config = await telephonyService.getTelephonyConfig(token);
+      setExistingConfig(config);
+      setShowPurchaseFlow(false);
+      
+      // Navigate to call dashboard since setup is complete
+      router.push('/organizations/telephony/calls');
+
+    } catch (error: any) {
+      console.error('Error purchasing number:', error);
+      
+      let errorMessage = 'Failed to purchase phone number';
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+
+      toast({
+        title: "Purchase Failed",
+        description: errorMessage,
+        variant: "destructive"
+      });
+    } finally {
+      setIsPurchasing(false);
+    }
+  };
+
+  // Handle number source change
+  const handleNumberSourceChange = (source: NumberSourceType) => {
+    setNumberSource(source);
+    if (source === 'purchase') {
+      setShowPurchaseFlow(true);
+    } else {
+      setShowPurchaseFlow(false);
     }
   };
 
@@ -262,7 +330,8 @@ export default function TelephonySetupPage() {
                   >
                     View Calls
                   </Button>
-                  {existingConfig.verification_status !== 'verified' && (
+                  {existingConfig.verification_status !== 'verified' && 
+                   existingConfig.organization_phone_number !== existingConfig.platform_phone_number && (
                     <Button
                       size="sm"
                       onClick={() => setShowVerificationModal(true)}
@@ -290,59 +359,107 @@ export default function TelephonySetupPage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Basic Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Business Phone Number</CardTitle>
-            <CardDescription>
-              Enter your organization's existing phone number that customers currently call
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="phoneNumber">Your Business Phone Number</Label>
-              <Input
-                id="phoneNumber"
-                type="tel"
-                placeholder="(555) 123-4567"
-                value={phoneNumber}
-                onChange={(e) => {
-                  setPhoneNumber(e.target.value);
-                  setPhoneNumberError('');
-                }}
-                className={phoneNumberError ? 'border-red-500' : ''}
+        {/* Number Source Selection - Only show if no existing config */}
+        {!existingConfig && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Phone Number Setup</CardTitle>
+              <CardDescription>
+                Choose how you want to set up phone calls for your organization
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <NumberSourceSelector
+                value={numberSource}
+                onChange={handleNumberSourceChange}
+                disabled={isLoading || isPurchasing}
               />
-              {phoneNumberError && (
-                <p className="text-sm text-red-500">{phoneNumberError}</p>
-              )}
-              <div className="p-3 bg-blue-50 rounded-lg">
-                <p className="text-sm text-blue-700">
-                  <strong>How it works:</strong>
-                </p>
-                <ul className="text-sm text-blue-600 mt-1 space-y-1">
-                  <li>• Keep your existing phone number</li>
-                  <li>• We'll verify you own this number</li>
-                  <li>• We'll provide a platform number for call forwarding</li>
-                  <li>• Customers still dial your familiar business number</li>
-                </ul>
-              </div>
-            </div>
+            </CardContent>
+          </Card>
+        )}
 
-            <div className="space-y-2">
-              <Label htmlFor="welcomeMessage">AI Welcome Message</Label>
-              <Textarea
-                id="welcomeMessage"
-                placeholder="Hello! Thank you for calling..."
-                value={welcomeMessage}
-                onChange={(e) => setWelcomeMessage(e.target.value)}
-                rows={3}
+        {/* Purchase Flow */}
+        {showPurchaseFlow && !existingConfig && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Purchase Twilio Number</CardTitle>
+              <CardDescription>
+                Select and purchase a phone number for your organization
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <NumberPurchaseFlow
+                onNumberSelected={handleNumberPurchase}
+                onCancel={() => {
+                  setShowPurchaseFlow(false);
+                  setNumberSource('existing');
+                }}
+                disabled={isPurchasing}
               />
-              <p className="text-sm text-muted-foreground">
-                This message will be spoken by the AI when customers call your number.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Existing Number Configuration - Only show if using existing number or have config */}
+        {(numberSource === 'existing' || existingConfig) && !showPurchaseFlow && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Business Phone Number</CardTitle>
+              <CardDescription>
+                {existingConfig ? 
+                  'Update your organization\'s phone number configuration' :
+                  'Enter your organization\'s existing phone number that customers currently call'
+                }
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="phoneNumber">Your Business Phone Number</Label>
+                <Input
+                  id="phoneNumber"
+                  type="tel"
+                  placeholder="(555) 123-4567"
+                  value={phoneNumber}
+                  onChange={(e) => {
+                    setPhoneNumber(e.target.value);
+                    setPhoneNumberError('');
+                  }}
+                  className={phoneNumberError ? 'border-red-500' : ''}
+                />
+                {phoneNumberError && (
+                  <p className="text-sm text-red-500">{phoneNumberError}</p>
+                )}
+                {!existingConfig && (
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm text-blue-700">
+                      <strong>How it works:</strong>
+                    </p>
+                    <ul className="text-sm text-blue-600 mt-1 space-y-1">
+                      <li>• Keep your existing phone number</li>
+                      <li>• We'll verify you own this number</li>
+                      <li>• We'll provide a platform number for call forwarding</li>
+                      <li>• Customers still dial your familiar business number</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="welcomeMessage">AI Welcome Message</Label>
+                <Textarea
+                  id="welcomeMessage"
+                  placeholder="Hello! Thank you for calling..."
+                  value={welcomeMessage}
+                  onChange={(e) => setWelcomeMessage(e.target.value)}
+                  rows={3}
+                />
+                <p className="text-sm text-muted-foreground">
+                  This message will be spoken by the AI when customers call your number.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Business Hours */}
         <Card>
@@ -468,17 +585,20 @@ export default function TelephonySetupPage() {
           </Card>
         )}
 
-        {/* Submit Button */}
-        <div className="flex justify-end">
-          <Button type="submit" disabled={isLoading}>
-            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {existingConfig ? 'Update Configuration' : 'Set Up Telephony'}
-          </Button>
-        </div>
+        {/* Submit Button - Only show for existing number flow */}
+        {(numberSource === 'existing' || existingConfig) && !showPurchaseFlow && (
+          <div className="flex justify-end">
+            <Button type="submit" disabled={isLoading || isPurchasing}>
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {existingConfig ? 'Update Configuration' : 'Set Up Telephony'}
+            </Button>
+          </div>
+        )}
       </form>
 
-      {/* Verification Modal */}
-      {showVerificationModal && existingConfig && (
+      {/* Verification Modal - Only for existing numbers that need verification */}
+      {showVerificationModal && existingConfig && 
+       existingConfig.organization_phone_number !== existingConfig.platform_phone_number && (
         <PhoneVerificationModal
           isOpen={showVerificationModal}
           onClose={() => setShowVerificationModal(false)}
