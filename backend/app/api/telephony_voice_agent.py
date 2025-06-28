@@ -281,6 +281,32 @@ class TelephonyVoiceAgentHandler:
         
         return voice_session
     
+    def _extract_agent_name(self, custom_prompt: str) -> Optional[str]:
+        """Extract agent name from custom instructions"""
+        if not custom_prompt:
+            return None
+        
+        import re
+        
+        # Look for common patterns that indicate an agent name
+        patterns = [
+            r"(?:I'm|I am|My name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "I'm Ada", "I am Ada", "My name is Ada"
+            r"(?:Your name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|\.|\n|$)",  # "Your name is Ada"
+            r"(?:This is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "This is Ada"
+            r"(?:Call me)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "Call me Ada"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, custom_prompt)
+            if match:
+                name = match.group(1)
+                # Validate the name isn't a common word that might be misidentified
+                common_words = ['AI', 'Assistant', 'Agent', 'Your', 'The', 'This']
+                if name not in common_words:
+                    return name
+        
+        return None
+
     async def _send_custom_greeting(self, voice_session: VoiceAgentSession, session_info: Dict[str, Any]):
         """Send a custom greeting message with the organization name"""
         try:
@@ -291,13 +317,21 @@ class TelephonyVoiceAgentHandler:
             if hasattr(config, 'tenant') and config.tenant:
                 org_name = config.tenant.name or "this organization"
             
+            # Extract agent name from tenant description (Additional instructions for agent)
+            agent_name = None
+            if hasattr(config, 'tenant') and config.tenant and config.tenant.description:
+                agent_name = self._extract_agent_name(config.tenant.description)
+            
             # Create the actual greeting message that will be spoken
-            greeting_message = f"Hello! Thank you for calling {org_name}. This is your AI assistant. How can I help you today?"
+            if agent_name:
+                greeting_message = f"Hello! Thank you for calling {org_name}. This is {agent_name}, your AI assistant. How can I help you today?"
+            else:
+                greeting_message = f"Hello! Thank you for calling {org_name}. This is your AI assistant. How can I help you today?"
             
             # Send the actual greeting message
             await voice_session.send_greeting_message(greeting_message)
             
-            logger.info(f"📞 Sent custom greeting message for {org_name}")
+            logger.info(f"📞 Sent custom greeting message for {org_name}" + (f" with agent name {agent_name}" if agent_name else ""))
             
         except Exception as e:
             logger.error(f"❌ Failed to send custom greeting: {e}")
@@ -317,6 +351,7 @@ class TelephonyVoiceAgentHandler:
         contact_info = ""
         additional_instructions = ""
         org_name = "this organization"  # Default fallback
+        agent_name = None  # Extract agent name from custom prompt
         
         if hasattr(config, 'tenant') and config.tenant:
             tenant = config.tenant
@@ -350,6 +385,16 @@ Contact Information: {', '.join(contact_parts)}
 Say something like: "I can transfer you to a human representative who can help you directly. Would you like me to connect you now?"
 """
         
+        # Extract agent name from tenant description (Additional instructions for agent)
+        if hasattr(config, 'tenant') and config.tenant and config.tenant.description:
+            agent_name = self._extract_agent_name(config.tenant.description)
+        
+        # Build greeting format based on whether agent name is available
+        if agent_name:
+            greeting_format = f"Hello! Thank you for calling {org_name}. This is {agent_name}, your AI assistant. How can I help you today?"
+        else:
+            greeting_format = f"Hello! Thank you for calling {org_name}. This is your AI assistant. How can I help you today?"
+        
         prompt = f"""You are an AI assistant answering a phone call for {org_name}.
 
 {org_info}
@@ -358,9 +403,16 @@ Caller's phone number: {from_number}
 
 CRITICAL: You must start the conversation immediately with a friendly, professional greeting that INCLUDES the organization name "{org_name}". Do not wait for the caller to speak first.
 
-REQUIRED greeting format: "Hello! Thank you for calling {org_name}. This is your AI assistant. How can I help you today?"
+REQUIRED greeting format: "{greeting_format}"
 
-You MUST say the organization name "{org_name}" in your very first greeting.
+You MUST say the organization name "{org_name}" in your very first greeting."""
+
+        # Add agent name instructions if available
+        if agent_name:
+            prompt += f"""
+You MUST introduce yourself by name as "{agent_name}" in your greeting and throughout the conversation when appropriate."""
+
+        prompt += f"""
 
 {additional_instructions}
 
@@ -380,9 +432,7 @@ Important:
 - Always greet the caller first when the call begins
 """
         
-        # Add any custom instructions from config
-        if hasattr(config, 'custom_prompt') and config.custom_prompt:
-            prompt += f"\n\nAdditional instructions:\n{config.custom_prompt}"
+        # Additional instructions are already included above in the ADDITIONAL INSTRUCTIONS section
         
         # Add welcome message if configured
         if config.welcome_message:
