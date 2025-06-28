@@ -1,14 +1,14 @@
-# Thanotopolis - Next-Generation AI Voice Agent Platform
+# Thanotopolis - Multi-Agent AI Platform
 
-A comprehensive multi-agent AI platform built by **Cyberiad.ai** that revolutionizes telephone answering services with **Deepgram Voice Agent** integration, advanced agent collaboration, and sophisticated multi-tenant architecture.
+A comprehensive AI platform built by **Cyberiad.ai** that provides intelligent telephone answering services and web-based chat applications. Features **Deepgram Voice Agent** integration, advanced multi-agent collaboration, and multi-tenant architecture for organizations requiring sophisticated AI assistance.
 
-## 🎙️ Revolutionary Voice Agent Technology
+## 🎙️ Voice Agent Technology
 
-### **Deepgram Voice Agent Integration** - The Future of Telephony AI
+### **Deepgram Voice Agent Integration**
 
-Thanotopolis has pioneered the integration of **Deepgram's Voice Agent API** - a breakthrough technology that replaces traditional STT → LLM → TTS pipelines with a unified, real-time conversational AI system.
+Thanotopolis integrates **Deepgram's Voice Agent API** - a unified technology that replaces traditional STT → LLM → TTS pipelines with a single, real-time conversational AI system.
 
-#### **Before vs After: Architectural Revolution**
+#### **Architectural Comparison**
 
 **Legacy Architecture** (Pre-Voice Agent):
 ```
@@ -22,7 +22,7 @@ Twilio ↔ Deepgram Voice Agent (STT + LLM + TTS unified) ↔ Twilio
 Latency: <500ms | Complexity: Single WebSocket | Format: Native mulaw
 ```
 
-#### **Performance Breakthrough**
+#### **Performance Improvements**
 - **🚀 90% Latency Reduction**: From 2-5 seconds to <500ms response time
 - **🎯 Native Audio**: Direct mulaw support eliminates conversion overhead
 - **💡 Unified Processing**: Single WebSocket replaces multiple API calls
@@ -30,7 +30,7 @@ Latency: <500ms | Complexity: Single WebSocket | Format: Native mulaw
 
 ### **Consent-Based Agent Collaboration**
 
-Revolutionary integration combining Voice Agent's real-time capabilities with our 20+ specialist agents:
+Integration combining Voice Agent's real-time capabilities with 20+ specialist agents:
 
 #### **How It Works**
 1. **Smart Detection**: AI analyzes query complexity in real-time
@@ -45,8 +45,8 @@ Revolutionary integration combining Voice Agent's real-time capabilities with ou
 
 ## 📢 What's New (June 2025)
 
-### **Revolutionary Updates**
-- **🎙️ Deepgram Voice Agent**: Complete telephony architecture overhaul with 90% latency reduction
+### **Recent Updates**
+- **🎙️ Deepgram Voice Agent**: Complete telephony architecture update with 90% latency reduction
 - **🤖 Voice-Agent Collaboration**: Consent-based specialist agent integration for complex queries
 - **📊 Advanced Call Analytics**: Message-based call tracking with granular transcript analysis
 - **🔄 A/B Testing Infrastructure**: Feature flag system for safe Voice Agent rollout
@@ -593,6 +593,68 @@ VOICE_AGENT_SPEAKING_MODEL=aura-2-thalia-en # TTS voice
 4. **Real-time conversation** with specialist agent collaboration
 5. **Call analytics** and transcript automatically generated
 
+## 💬 Web Chat Application
+
+### **Multi-Agent Chat Interface**
+A sophisticated web-based chat application that enables organizations to deploy AI-powered customer service through their websites. The platform supports real-time conversations with intelligent agent collaboration and multi-tenant architecture.
+
+### **Core Chat Features**
+- **Real-time Messaging**: WebSocket-based instant messaging with typing indicators
+- **Multi-Agent Collaboration**: Dynamic routing to specialist agents based on query complexity
+- **Voice Integration**: Browser-based voice recording and playback capabilities
+- **Language Support**: Multi-language conversation support with automatic detection
+- **Session Management**: Persistent conversation history and context preservation
+- **Mobile Responsive**: Optimized interface for desktop and mobile devices
+
+### **Agent Collaboration System**
+- **MODERATOR Agent**: Central orchestrator for intelligent query routing
+- **Parallel Processing**: Multiple specialist agents process complex queries simultaneously
+- **Response Synthesis**: AI-powered combination of multiple agent perspectives
+- **Timeout Management**: 30-second individual and 90-second total response timeouts
+- **Graceful Fallback**: Automatic fallback to primary agent when collaboration fails
+
+### **Specialist Agent Network**
+The web chat leverages the same 20+ specialist agents available to telephony:
+
+#### **Cultural Specialists (17 Agents)**
+- Mexican, Filipino, Vietnamese, Korean, Jewish, Persian, Thai, Cambodian
+- Russian, Ukrainian, Japanese, Somali, Ethiopian, Chinese, Polish, Armenian, Salvadoran
+- Each agent provides culturally-sensitive guidance for memorial and funeral services
+
+#### **Service Specialists**
+- **Financial Services**: Payment plans, billing assistance, cost estimation
+- **Compliance & Documentation**: Regulatory requirements, permit assistance
+- **Emergency & Crisis**: Urgent situation handling, crisis intervention
+- **Inventory & Facilities**: Equipment availability, venue management
+- **Grief Support**: Emotional support, counseling resources
+- **Regulatory**: Legal compliance, industry regulations
+- **Religious Services**: Interfaith religious coordination
+- **Web Search**: Real-time information retrieval and verification
+
+### **Technical Implementation**
+- **Frontend**: Next.js 14 with TypeScript and real-time WebSocket connections
+- **Backend**: FastAPI with async/await architecture for high concurrency
+- **Real-time Communication**: WebSocket endpoints for instant message delivery
+- **State Management**: React Context with custom hooks for conversation state
+- **Authentication**: JWT-based authentication with role-based access control
+- **Multi-tenant Support**: Organization-specific branding and agent configuration
+
+### **User Experience Features**
+- **Conversation Management**: Create, view, and manage multiple conversations
+- **Message History**: Persistent storage and retrieval of conversation history
+- **Typing Indicators**: Real-time indication when agents are responding
+- **File Attachments**: Support for document and image sharing (planned)
+- **Conversation Search**: Search across conversation history and messages
+- **Export Capabilities**: Download conversation transcripts and summaries
+
+### **How Web Chat Works**
+1. **User visits** organization's website with embedded chat widget
+2. **Chat initiates** with organization-specific greeting and branding
+3. **MODERATOR analyzes** user query complexity and intent
+4. **Specialist agents** collaborate when advanced expertise is needed
+5. **Unified response** delivered through natural conversation flow
+6. **Conversation history** preserved for follow-up and reference
+
 ## 🌐 API Architecture
 
 ### **Core API Endpoints**
@@ -808,10 +870,10 @@ This project is proprietary software owned by **Cyberiad.ai**. All rights reserv
 
 ## 🚀 About Cyberiad.ai
 
-**Cyberiad.ai** pioneers next-generation agentic AI frameworks that revolutionize how organizations deploy sophisticated AI assistants. Our platforms combine cutting-edge voice technology, multi-agent collaboration, and enterprise-grade scalability to deliver transformative customer experiences.
+**Cyberiad.ai** develops advanced agentic AI frameworks that enable organizations to deploy sophisticated AI assistants across telephony and web chat channels. Our platforms combine voice technology, multi-agent collaboration, and enterprise-grade scalability to deliver enhanced customer experiences.
 
-**Key Innovations:**
-- **Voice Agent Technology**: First-to-market Deepgram Voice Agent integration
+**Key Features:**
+- **Voice Agent Technology**: Deepgram Voice Agent integration
 - **Multi-Agent Collaboration**: Consent-based specialist agent collaboration
 - **Cultural Sensitivity**: 17 culturally-aware specialist agents
 - **Enterprise Architecture**: Multi-tenant, scalable, secure platform
@@ -820,4 +882,4 @@ This project is proprietary software owned by **Cyberiad.ai**. All rights reserv
 
 **Built with ❤️ by the Cyberiad.ai team**
 
-*Transforming telephony with AI • Revolutionizing customer service • Pioneering the future of conversational AI*
+*Advanced telephony and web chat AI • Enhanced customer service • Intelligent conversational AI*
