@@ -8,6 +8,18 @@
 - The admin page showed 0 WebSocket connections because of hardcoded mock values
 - This type of issue wastes debugging time and creates false confidence
 
+## CRITICAL: No Hardcoded Behaviors Policy
+**AVOID HARDCODED BEHAVIORS - MAKE EVERYTHING CONFIGURABLE AND DATA-DRIVEN**
+- Hardcoded messages, responses, or behaviors violate good software engineering principles
+- All user-facing text should come from configuration, database, or be dynamically generated
+- Examples of prohibited hardcoding:
+  - Fixed greeting messages in voice agents
+  - Hardcoded organization names or contact information
+  - Static response templates that can't be customized
+  - Fixed business logic that should be configurable
+- Use system prompts, configuration parameters, and database-driven content instead
+- This ensures flexibility, maintainability, and customization capabilities
+
 ## CRITICAL: Agent Ownership and Availability Logic
 **CLARIFIED: Agent filtering logic for organization access**
 
@@ -207,6 +219,67 @@ DEEPGRAM_API_KEY=your_api_key_here      # Required for Voice Agent
 - **Call Details Page**: Real-time transcript display in UI
 - **Session Management**: Proper cleanup and resource management
 
+### Voice Agent Collaboration Integration (June 27, 2025)
+
+Successfully implemented the **consent-based collaboration system** for Voice Agent integration with specialist agents, as outlined in the Option B approach.
+
+#### ✅ Completed Implementation:
+
+**1. Consent Workflow (`voice_agent_collaboration.py`)**
+- **Query Complexity Detection**: AI-powered analysis using MODERATOR agent to determine if queries would benefit from specialist consultation
+- **Consent Request**: Natural voice prompts asking callers if they want expert consultation ("This will take about 30 seconds")
+- **Consent Detection**: Both keyword-based and LLM-powered analysis of caller responses
+- **Timeout Handling**: Graceful fallback to standard Voice Agent if no response within 10 seconds
+
+**2. Collaboration Bridge**
+- **Voice Agent Pause**: Uses `update_instructions()` to pause Voice Agent during collaboration
+- **MODERATOR Integration**: Routes queries through existing agent selection and collaboration system
+- **Isolated Processing**: Creates unique thread IDs to avoid conflicts with persistent chat conversations
+- **Error Handling**: Comprehensive fallback mechanisms if collaboration fails
+
+**3. Seamless Handoff**
+- **Enhanced Instructions**: Injects expert knowledge into Voice Agent instructions after collaboration
+- **Natural Response**: Uses `inject_message()` to provide expert insights in conversational format
+- **Context Preservation**: Maintains call flow and allows continued conversation with expert context
+- **Resource Cleanup**: Automatic session cleanup with configurable delay
+
+#### Technical Implementation Details:
+
+**File Structure:**
+- `app/services/voice/voice_agent_collaboration.py` - Core collaboration service (520+ lines)
+- `app/api/telephony_voice_agent.py` - Integration points with telephony handler
+- Uses existing `app/agents/agent_manager.py` and MODERATOR system
+
+**Configuration:**
+```python
+complexity_threshold = 0.7      # Confidence threshold for offering collaboration
+consent_timeout = 10           # Seconds to wait for user consent
+collaboration_timeout = 30     # Seconds for collaboration to complete
+```
+
+**Workflow States:**
+- `IDLE` → `DETECTING_COMPLEXITY` → `REQUESTING_CONSENT` → `AWAITING_CONSENT` → `COLLABORATING` → `RESUMING` → `COMPLETED`
+
+**Integration Points:**
+- Event handler integration in `handle_conversation_text()`
+- Automatic cleanup in call termination handlers
+- Status monitoring via `get_collaboration_status()`
+
+#### Benefits Achieved:
+
+1. **Enhanced Expertise**: Callers can access 20+ specialist agents for complex queries
+2. **User Control**: Callers choose when to access deeper expertise with clear consent
+3. **Graceful Degradation**: Clear fallback to standard Voice Agent if collaboration fails
+4. **Minimal Latency**: Only activates when explicitly requested by caller
+5. **Seamless Experience**: Natural conversation flow with no technical complexity exposed
+
+#### Next Steps:
+
+1. **Testing & Refinement**: Comprehensive testing of collaboration workflows
+2. **Performance Monitoring**: Track collaboration success rates and user satisfaction
+3. **Agent Optimization**: Fine-tune specialist agent selection for voice context
+4. **Advanced Features**: Consider implementing partial collaboration (quick expert insights)
+
 ### Current Status (June 27, 2025)
 
 #### ✅ Completed:
@@ -216,16 +289,32 @@ DEEPGRAM_API_KEY=your_api_key_here      # Required for Voice Agent
 - WebSocket connection management and error handling
 - A/B testing infrastructure for safe deployment
 - Production deployment at 100% rollout
+- **Consent-based Voice Agent collaboration system**
 
 #### 🔄 In Progress:
+- **Fixing collaboration detection for direct user requests**
 - Transcript message saving to database (ConversationText events being received but text content empty)
 - Call details page message display debugging
 
+#### 🚨 Current Issue Being Fixed:
+**Voice Agent Collaboration Request Detection**
+- User says "I would like to talk to an expert agent" but agent claims it cannot collaborate
+- Problem located in `_check_for_collaboration_request()` method in `telephony_voice_agent.py:383-407`
+- Current phrases array doesn't include exact match for "talk to expert agent" pattern
+- Need to add missing phrases like:
+  - "talk to expert"
+  - "speak to expert" 
+  - "talk to an expert"
+  - "speak to an expert"
+  - "I would like to talk to"
+  - "I want to talk to"
+
 #### 🎯 Next Steps:
-- Debug and fix transcript message saving
-- Performance monitoring and optimization
-- Consider removing legacy ElevenLabs system entirely
-- Implement additional Voice Agent features (function calling, voice selection)
+1. **IMMEDIATE**: Fix collaboration request detection by adding missing phrases to `collaboration_request_phrases` array
+2. Test collaboration system with real calls using direct requests
+3. Debug and fix transcript message saving
+4. Performance monitoring for collaboration workflows
+5. Consider advanced collaboration features
 
 ### Technical Debt Removal
 

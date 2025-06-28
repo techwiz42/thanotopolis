@@ -177,7 +177,7 @@ export default function EditOrganization() {
       
       // Redirect to admin page after 2 seconds
       setTimeout(() => {
-        router.push('/admin')
+        router.push('/organizations/admin')
       }, 2000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update organization')
@@ -219,7 +219,7 @@ export default function EditOrganization() {
       <div className="p-6">
         <h1 className="text-2xl font-bold mb-6">Edit Organization</h1>
         <div className="text-red-600">Failed to load organization data.</div>
-        <Button onClick={() => router.push('/admin')} className="mt-4">
+        <Button onClick={() => router.push('/organizations/admin')} className="mt-4">
           Back to Admin
         </Button>
       </div>
@@ -238,7 +238,7 @@ export default function EditOrganization() {
             Manage Members
           </Button>
           <Button 
-            onClick={() => router.push('/admin')}
+            onClick={() => router.push('/organizations/admin')}
             variant="outline"
           >
             Back to Admin
@@ -303,7 +303,7 @@ export default function EditOrganization() {
 
             <div>
               <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-                Description
+                Additional instructions for agent
               </label>
               <textarea
                 id="description"
@@ -312,7 +312,7 @@ export default function EditOrganization() {
                 className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 value={formData.description || ''}
                 onChange={handleChange}
-                placeholder="Brief description of your organization"
+                placeholder="Additional instructions for the AI agent when handling calls and conversations"
               />
             </div>
           </div>
@@ -477,7 +477,7 @@ export default function EditOrganization() {
           <div className="flex justify-end space-x-4">
             <Button
               type="button"
-              onClick={() => router.push('/admin')}
+              onClick={() => router.push('/organizations/admin')}
               variant="outline"
             >
               Cancel

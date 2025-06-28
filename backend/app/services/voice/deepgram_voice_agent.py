@@ -153,19 +153,18 @@ class DeepgramVoiceAgent:
         await self.websocket.send(settings_json)
         logger.info("📤 Sent Voice Agent settings")
     
-    async def _send_greeting_injection(self):
-        """Inject initial message using V1 API format to trigger greeting"""
+    async def send_greeting_message(self, greeting_content: str):
+        """Send an actual greeting message that the agent will speak"""
         try:
-            # Use V1 format with "content" instead of "message"
             inject_message = {
-                "type": "InjectAgentMessage",
-                "content": "Hello! Thank you for calling. How can I help you today?"
+                "type": "InjectAgentMessage", 
+                "content": greeting_content
             }
             
             await self.websocket.send(json.dumps(inject_message))
-            logger.info("📤 Injected greeting message to Voice Agent")
+            logger.info(f"📤 Sent greeting message to Voice Agent")
         except Exception as e:
-            logger.error(f"❌ Failed to inject greeting: {e}")
+            logger.error(f"❌ Failed to send greeting message: {e}")
     
     async def send_audio(self, audio_data: bytes):
         """Send audio data to Voice Agent"""
@@ -211,15 +210,21 @@ class DeepgramVoiceAgent:
         if not self.is_connected or not self.websocket:
             return
             
-        message = {
-            "type": "InjectMessage",
-            "message": {
-                "role": role,
+        # Use correct V1 API format - same as working _send_greeting_injection
+        if role.lower() == "assistant" or role.lower() == "agent":
+            message = {
+                "type": "InjectAgentMessage",
                 "content": text
             }
-        }
+        else:
+            # For user messages, try InjectUserMessage format
+            message = {
+                "type": "InjectUserMessage",
+                "content": text
+            }
         
         await self.websocket.send(json.dumps(message))
+        logger.info(f"📤 Injected {role} message to Voice Agent")
     
     def on_event(self, event_type: str, handler: Callable):
         """Register an event handler"""
@@ -277,8 +282,7 @@ class DeepgramVoiceAgent:
             self.settings_applied = True
             logger.info("✅ Voice Agent ready to receive audio")
             
-            # Inject initial message using V1 API format
-            await self._send_greeting_injection()
+            # Will be triggered by telephony handler with custom greeting
             
         elif event_type == "Error":
             # Log the error details
@@ -377,6 +381,8 @@ class VoiceAgentSession:
         self.agent = DeepgramVoiceAgent(config)
         self.start_time = datetime.utcnow()
         self.audio_queue: asyncio.Queue = asyncio.Queue()
+        # Store original instructions for restoration after collaboration
+        self.original_instructions = config.system_prompt if hasattr(config, 'system_prompt') else None
         
     async def start(self):
         """Start the Voice Agent session"""
@@ -398,6 +404,18 @@ class VoiceAgentSession:
     def register_event_handler(self, event_type: str, handler: Callable):
         """Register handler for specific event type"""
         self.agent.on_event(event_type, handler)
+    
+    async def inject_message(self, text: str, role: str = "assistant"):
+        """Inject a message into the conversation (convenience method)"""
+        return await self.agent.inject_message(text, role)
+    
+    async def update_instructions(self, instructions: str):
+        """Update the agent's instructions (convenience method)"""
+        return await self.agent.update_instructions(instructions)
+    
+    async def send_greeting_message(self, greeting_content: str):
+        """Send an actual greeting message that the agent will speak (convenience method)"""
+        return await self.agent.send_greeting_message(greeting_content)
 
 
 # Service singleton

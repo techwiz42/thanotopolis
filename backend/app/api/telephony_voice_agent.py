@@ -12,13 +12,18 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from openai import AsyncOpenAI
+from twilio.rest import Client as TwilioClient
 
 from app.models.models import PhoneCall, CallDirection, CallMessage, Conversation, Message
 from app.db.database import get_db
 from app.services.voice.deepgram_voice_agent import get_voice_agent_service, VoiceAgentSession
+from app.core.config import settings
+from app.services.voice.voice_agent_collaboration import voice_agent_collaboration_service
 from app.services.usage_service import usage_service
 from app.models.models import TelephonyConfiguration
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 # from app.api.telephony_status import TelephonyStatusManager  # TODO: Implement or remove
 
 logger = logging.getLogger(__name__)
@@ -36,6 +41,7 @@ class TelephonyVoiceAgentHandler:
     def __init__(self):
         self.voice_agent_service = get_voice_agent_service()
         self.call_sessions: Dict[str, Dict[str, Any]] = {}
+        self.db_locks: Dict[str, asyncio.Lock] = {}  # Per-session database locks
         
     async def handle_connection(self, websocket: WebSocket, db: AsyncSession):
         """Handle incoming Twilio WebSocket connection"""
@@ -80,6 +86,9 @@ class TelephonyVoiceAgentHandler:
                             websocket,
                             db
                         )
+                        
+                        # Send custom greeting with organization name
+                        await self._send_custom_greeting(voice_session, session_info)
                         
                         # Start periodic flush task to reduce latency
                         flush_task = asyncio.create_task(
@@ -131,8 +140,10 @@ class TelephonyVoiceAgentHandler:
         
         logger.info(f"📞 New call: {from_number} → {to_number} (org: {org_phone})")
         
-        # Get telephony configuration by organization phone number
-        config_query = select(TelephonyConfiguration).where(
+        # Get telephony configuration by organization phone number with tenant info
+        config_query = select(TelephonyConfiguration).options(
+            selectinload(TelephonyConfiguration.tenant)
+        ).where(
             TelephonyConfiguration.organization_phone_number == org_phone
         )
         config_result = await db.execute(config_query)
@@ -179,8 +190,16 @@ class TelephonyVoiceAgentHandler:
             "from_number": from_number,
             "to_number": to_number,
             "start_time": datetime.utcnow(),
-            "pending_messages": []  # Initialize pending messages list
+            "pending_messages": [],  # Initialize pending messages list
+            "transfer_pending": False,  # Track if agent asked about transfer
+            "transfer_question_time": None,  # When the transfer question was asked
+            "collaboration_pending": False,  # Track if system offered collaboration
+            "collaboration_question_time": None,  # When collaboration was offered
+            "collaboration_user_message": None  # Store the user message that triggered collaboration offer
         }
+        
+        # Initialize database lock for this session
+        self.db_locks[session_id] = asyncio.Lock()
         
         # TODO: Update telephony status
         # status_manager = TelephonyStatusManager()
@@ -214,6 +233,29 @@ class TelephonyVoiceAgentHandler:
         
         return voice_session
     
+    async def _send_custom_greeting(self, voice_session: VoiceAgentSession, session_info: Dict[str, Any]):
+        """Send a custom greeting message with the organization name"""
+        try:
+            config = session_info["config"]
+            
+            # Get organization name from tenant
+            org_name = "this organization"  # Default fallback
+            if hasattr(config, 'tenant') and config.tenant:
+                org_name = config.tenant.name or "this organization"
+            
+            # Create the actual greeting message that will be spoken
+            greeting_message = f"Hello! Thank you for calling {org_name}. This is your AI assistant. How can I help you today?"
+            
+            # Send the actual greeting message
+            await voice_session.send_greeting_message(greeting_message)
+            
+            logger.info(f"📞 Sent custom greeting message for {org_name}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to send custom greeting: {e}")
+            # Fallback to generic greeting
+            await voice_session.send_greeting_message("Hello! Thank you for calling. This is your AI assistant. How can I help you today?")
+    
     def _build_system_prompt(
         self, 
         config: Any, 
@@ -222,31 +264,253 @@ class TelephonyVoiceAgentHandler:
         """Build system prompt for Voice Agent"""
         from_number = session_info["from_number"]
         
-        prompt = f"""You are an AI assistant answering a phone call for the organization.
+        # Get organization information from tenant
+        org_info = ""
+        contact_info = ""
+        additional_instructions = ""
+        org_name = "this organization"  # Default fallback
+        
+        if hasattr(config, 'tenant') and config.tenant:
+            tenant = config.tenant
+            # Use the organization name from the model - name field is the Organization Name
+            # full_name field is the Contact Name (person), not the organization
+            org_name = tenant.name or "this organization"
+            
+            org_info = f"Organization: {org_name}"
+            
+            # Use organization description as additional agent instructions
+            if tenant.description and tenant.description.strip():
+                additional_instructions = f"""
+ADDITIONAL INSTRUCTIONS FOR THIS ORGANIZATION:
+{tenant.description.strip()}
+
+Follow these specific instructions in addition to your general role."""
+            
+            # Build contact person information for call transfers
+            contact_parts = []
+            if tenant.phone:
+                contact_parts.append(f"Phone: {tenant.phone}")
+            if tenant.organization_email:
+                contact_parts.append(f"Email: {tenant.organization_email}")
+            
+            if contact_parts:
+                contact_info = f"""
+CALL TRANSFER OPTION:
+ONLY offer call transfer when the caller explicitly requests to speak with a human person or asks to be connected to a human representative.
+DO NOT offer transfer when consulting with AI specialist agents or during collaboration workflows.
+Contact Information: {', '.join(contact_parts)}
+Say something like: "I can transfer you to a human representative who can help you directly. Would you like me to connect you now?"
+"""
+        
+        prompt = f"""You are an AI assistant answering a phone call for {org_name}.
+
+{org_info}
 
 Caller's phone number: {from_number}
 
-IMPORTANT: You must start the conversation immediately with a friendly greeting. Do not wait for the caller to speak first. Begin by greeting them and asking how you can help.
+CRITICAL: You must start the conversation immediately with a friendly, professional greeting that INCLUDES the organization name "{org_name}". Do not wait for the caller to speak first.
+
+REQUIRED greeting format: "Hello! Thank you for calling {org_name}. This is your AI assistant. How can I help you today?"
+
+You MUST say the organization name "{org_name}" in your very first greeting.
+
+{additional_instructions}
 
 Your role:
-- Start every call with a warm, professional greeting
+- Answer on behalf of {org_name}
 - Be helpful, professional, and conversational
 - Keep responses concise and natural for phone conversations
-- If asked about specific services or information, provide what you know
-- If you don't know something, offer to help find the information or suggest alternatives
+- Provide information about the organization when asked
+- If you don't know something, acknowledge it honestly and offer alternatives
+
+{contact_info}
 
 Important:
 - This is a phone conversation, so avoid long responses
 - Speak naturally, as if having a real phone conversation
-- Don't mention that you're an AI unless directly asked
+- Always identify yourself as representing the organization
 - Always greet the caller first when the call begins
 """
         
         # Add any custom instructions from config
         if hasattr(config, 'custom_prompt') and config.custom_prompt:
             prompt += f"\n\nAdditional instructions:\n{config.custom_prompt}"
+        
+        # Add welcome message if configured
+        if config.welcome_message:
+            prompt += f"\n\nCustom welcome message to incorporate: {config.welcome_message}"
+            prompt += f"\n\nIMPORTANT: Regardless of the custom welcome message, you MUST always include the organization name '{org_name}' in your greeting."
             
         return prompt
+    
+    def _check_for_transfer_question(self, agent_text: str, session_info: Dict[str, Any]) -> bool:
+        """Check if agent is asking about transferring the call"""
+        agent_text_lower = agent_text.lower()
+        
+        # Look for questions about transferring
+        transfer_question_phrases = [
+            "would you like me to transfer",
+            "would you like to be transferred",
+            "shall i transfer you",
+            "should i transfer you", 
+            "would you like to speak with",
+            "would you like me to connect you",
+            "shall i connect you",
+            "should i connect you",
+            "would you like me to connect you now",
+            "can i transfer you",
+            "can i connect you",
+            "shall i put you through",
+            "would you like to be connected"
+        ]
+        
+        return any(phrase in agent_text_lower for phrase in transfer_question_phrases)
+    
+    def _check_for_transfer_consent(self, user_text: str, session_info: Dict[str, Any]) -> bool:
+        """Check if user is agreeing to be transferred"""
+        user_text_lower = user_text.lower().strip()
+        
+        # Positive responses indicating consent
+        positive_responses = [
+            "yes", "yeah", "yep", "sure", "okay", "ok", "alright", "please",
+            "yes please", "that would be great", "that sounds good", 
+            "i would like that", "transfer me", "connect me"
+        ]
+        
+        # Negative responses
+        negative_responses = [
+            "no", "nah", "not now", "not yet", "maybe later", "i'm good",
+            "that's okay", "no thanks", "no thank you"
+        ]
+        
+        # Check for explicit positive consent
+        is_positive = any(response in user_text_lower for response in positive_responses)
+        is_negative = any(response in user_text_lower for response in negative_responses)
+        
+        # Only transfer on clear positive consent, not on negative or unclear responses
+        return is_positive and not is_negative
+    
+    def _check_for_collaboration_consent(self, user_text: str, session_info: Dict[str, Any]) -> bool:
+        """Check if user is agreeing to collaboration with expert agents"""
+        user_text_lower = user_text.lower().strip()
+        
+        # Positive responses indicating consent for expert consultation
+        basic_positive = ["yes", "yeah", "yep", "sure", "okay", "ok", "alright", "please"]
+        expert_positive = [
+            "yes please", "that would be great", "that sounds good", 
+            "i would like that", "check with", "consult", "ask the experts",
+            "get expert help", "talk to specialists", "expert", "specialist"
+        ]
+        
+        # Negative responses
+        negative_responses = [
+            "no", "nah", "not now", "not yet", "maybe later", "i'm good",
+            "that's okay", "no thanks", "no thank you", "just you",
+            "keep it simple", "you can handle it"
+        ]
+        
+        # Check for explicit positive consent (prioritize expert-specific language)
+        has_expert_language = any(response in user_text_lower for response in expert_positive)
+        has_basic_positive = any(response in user_text_lower for response in basic_positive)
+        is_negative = any(response in user_text_lower for response in negative_responses)
+        
+        # Only proceed with collaboration on clear positive consent, especially if expert language is used
+        return (has_expert_language or has_basic_positive) and not is_negative
+    
+    def _check_for_collaboration_request(self, user_text: str, session_info: Dict[str, Any]) -> bool:
+        """Check if user is directly requesting collaboration with expert agents"""
+        user_text_lower = user_text.lower()
+        
+        # Direct collaboration request phrases
+        collaboration_request_phrases = [
+            "can you check with",
+            "ask your team",
+            "consult with",
+            "get expert",
+            "talk to specialist",
+            "connect me with expert",
+            "speak with specialist", 
+            "get help from expert",
+            "ask the experts",
+            "collaborate with",
+            "work with other agents",
+            "get second opinion",
+            "escalate to",
+            "need specialist help",
+            "expert assistance",
+            "specialist consultation",
+            "talk to expert",
+            "speak to expert", 
+            "talk to an expert",
+            "speak to an expert",
+            "i would like to talk to an expert",
+            "i want to talk to an expert",
+            "i would like to talk to expert",
+            "i want to talk to expert",
+            "talk to a specialist",
+            "speak to a specialist",
+            "i would like to talk to specialist",
+            "i want to talk to specialist"
+        ]
+        
+        return any(phrase in user_text_lower for phrase in collaboration_request_phrases)
+    
+    async def _handle_call_transfer(self, session_id: str, websocket: WebSocket):
+        """Handle call transfer to organization contact"""
+        session_info = self.call_sessions.get(session_id)
+        if not session_info:
+            logger.error(f"❌ No session info found for transfer: {session_id}")
+            return
+            
+        config = session_info["config"]
+        
+        # Get contact phone number from organization
+        if hasattr(config, 'tenant') and config.tenant and config.tenant.phone:
+            transfer_number = config.tenant.phone
+            
+            logger.info(f"📞 Transferring call {session_info['call_sid']} to {transfer_number}")
+            logger.info(f"🔍 Call SID: {session_info['call_sid']}")
+            logger.info(f"🔍 Transfer number: {transfer_number}")
+            logger.info(f"🔍 Twilio Account SID: {settings.TWILIO_ACCOUNT_SID}")
+            
+            try:
+                # Use Twilio REST API to transfer the call
+                twilio_client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                
+                # Create TwiML to transfer the call
+                transfer_twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Joanna">Please hold while I transfer your call.</Say>
+    <Dial>
+        <Number>{transfer_number}</Number>
+    </Dial>
+</Response>"""
+                
+                # Update the call with new TwiML
+                logger.info(f"🔍 About to send TwiML: {transfer_twiml}")
+                call = twilio_client.calls(session_info['call_sid']).update(twiml=transfer_twiml)
+                logger.info(f"✅ Call transferred via Twilio API: {session_info['call_sid']} → {transfer_number}")
+                logger.info(f"🔍 Twilio API response: {call}")
+                
+                # Transfer logged via Twilio webhook and cleanup process
+                # No direct database logging here to avoid concurrency issues
+                
+            except Exception as e:
+                logger.error(f"❌ Error transferring call: {e}")
+                logger.error(f"❌ Call SID: {session_info.get('call_sid', 'unknown')}")
+                logger.error(f"❌ Transfer number: {transfer_number}")
+                import traceback
+                logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        else:
+            logger.warning(f"⚠️ No contact phone number available for transfer")
+    
+    async def _delayed_transfer(self, session_id: str, websocket: WebSocket, delay: float = 3.0):
+        """Handle call transfer with a delay to let the agent's message finish"""
+        try:
+            await asyncio.sleep(delay)
+            await self._handle_call_transfer(session_id, websocket)
+        except Exception as e:
+            logger.error(f"❌ Error in delayed transfer: {e}")
     
     def _setup_event_handlers(
         self,
@@ -289,6 +553,64 @@ Important:
             if not text:
                 logger.warning(f"🔍 Empty text in conversation event, skipping save")
                 return
+
+            # Handle collaboration workflow for user messages
+            is_user = role.lower() in ["user", "human", "customer", "caller"]
+            if is_user and text.strip():
+                try:
+                    # Check if user is responding to a collaboration offer
+                    session_info = self.call_sessions.get(session_id)
+                    if session_info and session_info.get("collaboration_pending", False):
+                        if self._check_for_collaboration_consent(text, session_info):
+                            logger.info(f"✅ User consented to collaboration: {text[:50]}...")
+                            # User agreed - proceed with collaboration using stored message
+                            stored_message = session_info.get("collaboration_user_message")
+                            if stored_message:
+                                from app.services.voice.voice_agent_collaboration import voice_agent_collaboration_service
+                                collaboration_initiated = await voice_agent_collaboration_service.process_user_message(
+                                    session_id=session_id,
+                                    voice_session=voice_session,
+                                    user_message=stored_message,
+                                    db_session=db,
+                                    owner_id=None
+                                )
+                                if collaboration_initiated:
+                                    logger.info(f"🤝 Collaboration workflow initiated for: {stored_message[:50]}...")
+                            # Reset collaboration state
+                            session_info["collaboration_pending"] = False
+                            session_info["collaboration_question_time"] = None
+                            session_info["collaboration_user_message"] = None
+                        else:
+                            logger.info(f"❌ User declined collaboration: {text[:50]}...")
+                            # Reset collaboration state
+                            session_info["collaboration_pending"] = False
+                            session_info["collaboration_question_time"] = None
+                            session_info["collaboration_user_message"] = None
+                    else:
+                        # Check if user is directly requesting collaboration
+                        if self._check_for_collaboration_request(text, session_info):
+                            logger.info(f"🤝 Direct collaboration request detected: {text[:50]}...")
+                            # User directly requested collaboration - proceed immediately
+                            try:
+                                from app.services.voice.voice_agent_collaboration import voice_agent_collaboration_service
+                                collaboration_initiated = await voice_agent_collaboration_service.process_user_message(
+                                    session_id=session_id,
+                                    voice_session=voice_session,
+                                    user_message=text,
+                                    db_session=db,
+                                    owner_id=None
+                                )
+                                if collaboration_initiated:
+                                    logger.info(f"🤝 Direct collaboration initiated for: {text[:50]}...")
+                            except Exception as direct_collab_error:
+                                logger.error(f"❌ Error initiating direct collaboration: {direct_collab_error}")
+                        # NOTE: Automatic collaboration offering disabled to prevent redundant prompts
+                        # Organization instructions in system prompt will handle when to offer collaboration
+                        # This allows for more natural, customized collaboration offers per organization
+                    
+                except Exception as collab_error:
+                    logger.error(f"❌ Error in collaboration workflow: {collab_error}")
+                    # Continue with normal processing if collaboration fails
                 
             session_info = self.call_sessions.get(session_id)
             if not session_info:
@@ -311,6 +633,29 @@ Important:
                 logger.warning(f"🚨 UNKNOWN ROLE: '{role}' - treating as agent for safety")
                 is_user = False
             
+            # Handle transfer workflow - but only for phone transfers, not expert collaboration
+            # IMPORTANT: Only handle transfer if NOT in collaboration workflow
+            if is_agent and self._check_for_transfer_question(text, session_info) and not session_info.get("collaboration_pending", False):
+                # Agent is asking about transfer - mark as pending
+                session_info["transfer_pending"] = True
+                session_info["transfer_question_time"] = datetime.utcnow()
+                logger.info(f"📞 Agent asked about transfer: {text[:100]}...")
+            
+            elif is_user and session_info.get("transfer_pending", False) and not session_info.get("collaboration_pending", False):
+                # User responding to transfer question - check if they want phone transfer specifically
+                if self._check_for_transfer_consent(text, session_info) and not self._check_for_collaboration_request(text, session_info):
+                    logger.info(f"✅ User consented to phone transfer: {text[:50]}...")
+                    # Reset transfer state and initiate transfer
+                    session_info["transfer_pending"] = False
+                    session_info["transfer_question_time"] = None
+                    import asyncio
+                    asyncio.create_task(self._delayed_transfer(session_id, websocket, delay=1.0))
+                else:
+                    logger.info(f"❌ User declined phone transfer: {text[:50]}...")
+                    # Reset transfer state
+                    session_info["transfer_pending"] = False
+                    session_info["transfer_question_time"] = None
+                
             call_message = CallMessage(
                 call_id=phone_call.id,
                 content=text,
@@ -349,42 +694,46 @@ Important:
             config = session_info["config"]
             word_count = count_words(text)
             
-            if word_count > 0:
-                if is_user:
-                    # User speech = STT usage (Deepgram transcribed user's speech)
-                    try:
-                        await usage_service.record_stt_usage(
-                            db=db,
-                            tenant_id=config.tenant_id,
-                            user_id=None,  # No specific user for phone calls
-                            word_count=word_count,
-                            service_provider="deepgram",
-                            model_name="nova-3"  # Voice Agent uses nova-3 by default
-                        )
-                        logger.info(f"📊 STT usage recorded: {word_count} words for user speech")
-                    except Exception as e:
-                        logger.error(f"❌ Error recording STT usage: {e}")
-                
-                elif is_agent:
-                    # Agent speech = TTS usage (Deepgram generated agent's speech)
-                    try:
-                        await usage_service.record_tts_usage(
-                            db=db,
-                            tenant_id=config.tenant_id,
-                            user_id=None,  # No specific user for phone calls
-                            word_count=word_count,
-                            service_provider="deepgram",
-                            model_name="aura-2-thalia-en"  # Default Voice Agent TTS model
-                        )
-                        logger.info(f"📊 TTS usage recorded: {word_count} words for agent speech")
-                    except Exception as e:
-                        logger.error(f"❌ Error recording TTS usage: {e}")
+            # Get the database lock for this session
+            db_lock = self.db_locks.get(session_id)
+            if db_lock and word_count > 0:
+                async with db_lock:
+                    if is_user:
+                        # User speech = STT usage (Deepgram transcribed user's speech)
+                        try:
+                            await usage_service.record_stt_usage(
+                                db=db,
+                                tenant_id=config.tenant_id,
+                                user_id=None,  # No specific user for phone calls
+                                word_count=word_count,
+                                service_provider="deepgram",
+                                model_name="nova-3"  # Voice Agent uses nova-3 by default
+                            )
+                            logger.info(f"📊 STT usage recorded: {word_count} words for user speech")
+                        except Exception as e:
+                            logger.error(f"❌ Error recording STT usage: {e}")
+                    
+                    elif is_agent:
+                        # Agent speech = TTS usage (Deepgram generated agent's speech)
+                        try:
+                            await usage_service.record_tts_usage(
+                                db=db,
+                                tenant_id=config.tenant_id,
+                                user_id=None,  # No specific user for phone calls
+                                word_count=word_count,
+                                service_provider="deepgram",
+                                model_name="aura-2-thalia-en"  # Default Voice Agent TTS model
+                            )
+                            logger.info(f"📊 TTS usage recorded: {word_count} words for agent speech")
+                        except Exception as e:
+                            logger.error(f"❌ Error recording TTS usage: {e}")
             
-            # Batch commit every 5 messages or every 10 seconds to reduce latency
-            if len(session_info["pending_messages"]) >= 10:
-                await self._flush_pending_messages(session_id, db)
+            # Messages will be flushed periodically by the background task
+            # or when the call ends to minimize database contention
             
             logger.info(f"💾 Queued {role} message: {text[:50]}...")
+            
+            # Transfer handling is now managed in the conversation flow above
         
         # Register handler for multiple possible transcript event types
         voice_session.register_event_handler("ConversationText", handle_conversation_text)
@@ -468,11 +817,36 @@ Important:
         return conversation
     
     async def _periodic_flush_task(self, session_id: str, db: AsyncSession):
-        """Periodically flush pending messages to reduce latency"""
+        """Periodically flush pending messages and check transfer timeouts"""
         while True:
             try:
-                await asyncio.sleep(5)  # Flush every 5 seconds
+                await asyncio.sleep(3)  # Check every 3 seconds
                 await self._flush_pending_messages(session_id, db)
+                
+                # Check for transfer timeout (30 seconds without response)
+                session_info = self.call_sessions.get(session_id)
+                if session_info:
+                    # Check transfer timeout
+                    if session_info.get("transfer_pending", False):
+                        question_time = session_info.get("transfer_question_time")
+                        if question_time:
+                            time_elapsed = (datetime.utcnow() - question_time).total_seconds()
+                            if time_elapsed > 30:  # 30 second timeout
+                                logger.info(f"⏰ Transfer request timed out for session {session_id}")
+                                session_info["transfer_pending"] = False
+                                session_info["transfer_question_time"] = None
+                    
+                    # Check collaboration timeout (30 seconds without response)
+                    if session_info.get("collaboration_pending", False):
+                        question_time = session_info.get("collaboration_question_time")
+                        if question_time:
+                            time_elapsed = (datetime.utcnow() - question_time).total_seconds()
+                            if time_elapsed > 30:  # 30 second timeout
+                                logger.info(f"⏰ Collaboration offer timed out for session {session_id}")
+                                session_info["collaboration_pending"] = False
+                                session_info["collaboration_question_time"] = None
+                                session_info["collaboration_user_message"] = None
+                            
             except asyncio.CancelledError:
                 # Final flush before task ends
                 await self._flush_pending_messages(session_id, db)
@@ -486,26 +860,36 @@ Important:
         if not session_info or "pending_messages" not in session_info:
             return
             
-        pending_messages = session_info["pending_messages"]
-        if not pending_messages:
+        # Get the database lock for this session
+        db_lock = self.db_locks.get(session_id)
+        if not db_lock:
+            logger.warning(f"⚠️ No database lock found for session {session_id}")
             return
             
-        try:
-            # Add all pending messages to session
-            for message in pending_messages:
-                db.add(message)
-            
-            # Commit all at once
-            await db.commit()
-            
-            # Clear pending messages
-            session_info["pending_messages"] = []
-            
-            logger.info(f"💾 Flushed {len(pending_messages)} messages to database")
-            
-        except Exception as e:
-            logger.error(f"❌ Error flushing messages: {str(e)}")
-            await db.rollback()
+        async with db_lock:
+            pending_messages = session_info["pending_messages"]
+            if not pending_messages:
+                return
+                
+            try:
+                # Add all pending messages to session
+                for message in pending_messages:
+                    db.add(message)
+                
+                # Commit all at once
+                await db.commit()
+                
+                # Clear pending messages
+                session_info["pending_messages"] = []
+                
+                logger.info(f"💾 Flushed {len(pending_messages)} messages to database")
+                
+            except Exception as e:
+                logger.error(f"❌ Error flushing messages: {str(e)}")
+                try:
+                    await db.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"❌ Error during rollback: {str(rollback_error)}")
     
     async def _cleanup_session(self, session_id: str, db: AsyncSession):
         """Cleanup session when call ends"""
@@ -513,58 +897,64 @@ Important:
         if not session_info:
             return
             
+        # Get the database lock for this session
+        db_lock = self.db_locks.get(session_id)
+        if not db_lock:
+            logger.warning(f"⚠️ No database lock found for session {session_id} during cleanup")
+            db_lock = asyncio.Lock()  # Create a temporary lock if needed
+            
         try:
             # Flush any remaining pending messages before cleanup
             await self._flush_pending_messages(session_id, db)
             
-            # Update phone call record
-            phone_call = session_info["phone_call"]
-            from datetime import timezone
-            phone_call.end_time = datetime.now(timezone.utc)
-            phone_call.status = "completed"
-            
-            # Calculate duration (ensure both times are timezone-aware)
-            start_time = phone_call.start_time
-            if start_time.tzinfo is None:
-                start_time = start_time.replace(tzinfo=timezone.utc)
-            duration = (phone_call.end_time - start_time).total_seconds()
-            phone_call.duration_seconds = int(duration)
-            
-            await db.commit()
-            
-            # Record call duration usage
-            config = session_info["config"]
-            if phone_call.duration_seconds and phone_call.duration_seconds > 0:
+            async with db_lock:
+                # Update phone call record
+                phone_call = session_info["phone_call"]
+                from datetime import timezone
+                phone_call.end_time = datetime.now(timezone.utc)
+                phone_call.status = "completed"
+                
+                # Calculate duration (ensure both times are timezone-aware)
+                start_time = phone_call.start_time
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                duration = (phone_call.end_time - start_time).total_seconds()
+                phone_call.duration_seconds = int(duration)
+                
+                # Update conversation status
+                conversation = session_info["conversation"]
+                conversation.status = "completed"
+                
+                await db.commit()
+                
+                # Record call duration usage
+                config = session_info["config"]
+                if phone_call.duration_seconds and phone_call.duration_seconds > 0:
+                    try:
+                        duration_minutes = phone_call.duration_seconds / 60.0
+                        cost_cents = int(duration_minutes * 1.5)  # $0.015 per minute
+                        
+                        await usage_service.record_usage(
+                            db=db,
+                            tenant_id=config.tenant_id,
+                            usage_type="telephony_minutes",
+                            amount=int(duration_minutes),
+                            cost_cents=cost_cents,
+                            additional_data={
+                                "call_id": str(phone_call.id),
+                                "call_sid": phone_call.call_sid,
+                                "voice_agent_type": "deepgram_integrated"
+                            }
+                        )
+                        logger.info(f"📊 Call duration usage recorded: {duration_minutes:.2f} minutes (${cost_cents/100:.2f})")
+                    except Exception as e:
+                        logger.error(f"❌ Error recording call duration usage: {e}")
+                
+                # Auto-generate summary for completed call
                 try:
-                    duration_minutes = phone_call.duration_seconds / 60.0
-                    cost_cents = int(duration_minutes * 1.5)  # $0.015 per minute
-                    
-                    await usage_service.record_usage(
-                        db=db,
-                        tenant_id=config.tenant_id,
-                        usage_type="telephony_minutes",
-                        amount=int(duration_minutes),
-                        cost_cents=cost_cents,
-                        additional_data={
-                            "call_id": str(phone_call.id),
-                            "call_sid": phone_call.call_sid,
-                            "voice_agent_type": "deepgram_integrated"
-                        }
-                    )
-                    logger.info(f"📊 Call duration usage recorded: {duration_minutes:.2f} minutes (${cost_cents/100:.2f})")
+                    await self._generate_call_summary(phone_call.id, db)
                 except Exception as e:
-                    logger.error(f"❌ Error recording call duration usage: {e}")
-            
-            # Update conversation status
-            conversation = session_info["conversation"]
-            conversation.status = "completed"
-            await db.commit()
-            
-            # Auto-generate summary for completed call
-            try:
-                await self._generate_call_summary(phone_call.id, db)
-            except Exception as e:
-                logger.error(f"❌ Error generating summary for call {phone_call.id}: {e}")
+                    logger.error(f"❌ Error generating summary for call {phone_call.id}: {e}")
             
             # TODO: Update telephony status
             # status_manager = TelephonyStatusManager()
@@ -573,14 +963,27 @@ Important:
             #     call_sid=session_info["call_sid"]
             # )
             
-            # Cleanup session
+            # Cleanup collaboration session if active
+            try:
+                await voice_agent_collaboration_service._cleanup_session(session_id)
+                logger.info(f"🤝 Cleaned up collaboration session {session_id}")
+            except Exception as collab_cleanup_error:
+                logger.error(f"❌ Error cleaning up collaboration session: {collab_cleanup_error}")
+
+            # Cleanup session and database lock
             del self.call_sessions[session_id]
+            if session_id in self.db_locks:
+                del self.db_locks[session_id]
             
             logger.info(f"✅ Cleaned up session {session_id}")
             
         except Exception as e:
             logger.error(f"❌ Error cleaning up session: {e}")
     
+    def get_collaboration_status(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get collaboration status for a session"""
+        return voice_agent_collaboration_service.get_session_status(session_id)
+
     async def _generate_call_summary(self, call_id: str, db: AsyncSession):
         """Generate summary for a completed call"""
         
@@ -627,7 +1030,7 @@ Important:
                 logger.error(f"❌ Call {call_id} not found")
                 return
             
-            # Generate basic summary
+            # Generate AI-powered summary
             duration_info = ""
             if call.duration_seconds:
                 minutes = call.duration_seconds // 60
@@ -638,13 +1041,75 @@ Important:
             customer_messages = [m for m in transcript_messages if m.sender.get('type') == 'customer']
             agent_messages = [m for m in transcript_messages if m.sender.get('type') == 'agent']
             
-            summary_content = (
-                f"Call between customer {call.customer_phone_number} and organization "
-                f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
-                f"The conversation included {message_count} messages "
-                f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
-                f"The customer initiated contact and the conversation was handled by the AI agent using Deepgram Voice Agent."
-            )
+            # Build conversation transcript for AI analysis
+            conversation_text = []
+            for msg in transcript_messages:
+                sender_type = msg.sender.get('type', 'unknown')
+                sender_name = 'Customer' if sender_type == 'customer' else 'Agent'
+                conversation_text.append(f"{sender_name}: {msg.content}")
+            
+            full_transcript = "\n".join(conversation_text)
+            
+            # Generate AI summary if transcript has content
+            if full_transcript.strip():
+                try:
+                    # Initialize OpenAI client
+                    client = AsyncOpenAI(
+                        api_key=settings.OPENAI_API_KEY,
+                        organization=getattr(settings, 'OPENAI_ORG_ID', None)
+                    )
+                    
+                    # Generate summary using OpenAI
+                    response = await client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are an AI assistant that creates concise, informative summaries of phone conversations. "
+                                    "Focus on the main topics discussed, any questions asked, issues raised, and resolutions provided. "
+                                    "Keep the summary brief but comprehensive, highlighting the key points of the conversation. "
+                                    "Do not include call metadata like duration or timestamps in the summary."
+                                )
+                            },
+                            {
+                                "role": "user",
+                                "content": f"Please summarize the following phone conversation:\n\n{full_transcript}"
+                            }
+                        ],
+                        temperature=0.3,
+                        max_tokens=300
+                    )
+                    
+                    ai_summary = response.choices[0].message.content.strip()
+                    
+                    # Combine AI summary with metadata
+                    summary_content = (
+                        f"Call Summary - {call.created_at.strftime('%B %d, %Y at %I:%M %p')}\n\n"
+                        f"{ai_summary}\n\n"
+                        f"Call Details:{duration_info} {message_count} messages exchanged "
+                        f"({len(customer_messages)} from customer, {len(agent_messages)} from agent)."
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error generating AI summary: {e}")
+                    # Fall back to basic summary
+                    summary_content = (
+                        f"Call between customer {call.customer_phone_number} and organization "
+                        f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
+                        f"The conversation included {message_count} messages "
+                        f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
+                        f"Unable to generate AI summary due to an error."
+                    )
+            else:
+                # No transcript content available
+                summary_content = (
+                    f"Call between customer {call.customer_phone_number} and organization "
+                    f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
+                    f"The conversation included {message_count} messages "
+                    f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
+                    f"No conversation transcript available for summary."
+                )
             
             # Create summary message
             summary_message = CallMessage(
@@ -666,13 +1131,22 @@ Important:
                 }
             )
             
-            db.add(summary_message)
-            
-            # Also update the phone_call summary field
-            call.summary = summary_content
-            
-            await db.commit()
-            logger.info(f"📝 ✅ Auto-generated summary for Voice Agent call {call_id}")
+            # Add summary to database
+            try:
+                db.add(summary_message)
+                
+                # Also update the phone_call summary field
+                call.summary = summary_content
+                
+                await db.commit()
+                logger.info(f"📝 ✅ Auto-generated summary for Voice Agent call {call_id}")
+                
+            except Exception as commit_error:
+                logger.error(f"❌ Error committing summary for call {call_id}: {commit_error}")
+                try:
+                    await db.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"❌ Error during rollback in summary generation: {rollback_error}")
             
         except Exception as e:
             logger.error(f"❌ Error generating summary for call {call_id}: {e}")
@@ -691,5 +1165,9 @@ async def telephony_voice_agent_websocket(websocket: WebSocket):
         try:
             await telephony_voice_agent_handler.handle_connection(websocket, db)
         finally:
-            await db.close()
+            # Ensure proper session cleanup
+            try:
+                await db.close()
+            except Exception as cleanup_error:
+                logger.error(f"❌ Error during database session cleanup: {cleanup_error}")
         break

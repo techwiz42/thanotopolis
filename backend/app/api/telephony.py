@@ -10,6 +10,8 @@ from sqlalchemy.future import select
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
+from openai import AsyncOpenAI
+import logging
 
 from app.db.database import get_db
 from app.auth.auth import get_current_active_user, require_admin_user, get_current_user
@@ -23,6 +25,8 @@ from sqlalchemy import and_, desc, asc
 # Import Pydantic models for this module
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 # Response models
 class TelephonyConfigResponse(BaseModel):
@@ -971,8 +975,6 @@ async def generate_call_summary(
     
     # Generate summary using AI service
     try:
-        # For now, create a basic summary without AI
-        # TODO: Integrate with AI service for better summaries
         duration_info = ""
         if call.duration_seconds:
             minutes = call.duration_seconds // 60
@@ -983,16 +985,69 @@ async def generate_call_summary(
         customer_messages = [m for m in transcript_messages if m.sender.get('type') == 'customer']
         agent_messages = [m for m in transcript_messages if m.sender.get('type') == 'agent']
         
-        # Extract key topics from conversation
-        all_content = " ".join([msg.content for msg in transcript_messages])
-        
-        summary_content = (
-            f"Call between customer {call.customer_phone_number} and organization "
-            f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
-            f"The conversation included {message_count} messages "
-            f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
-            f"The customer initiated contact and the conversation was handled by the AI agent."
-        )
+        # Generate AI summary if transcript has content
+        if conversation_text.strip():
+            try:
+                # Initialize OpenAI client
+                client = AsyncOpenAI(
+                    api_key=settings.OPENAI_API_KEY,
+                    organization=getattr(settings, 'OPENAI_ORG_ID', None)
+                )
+                
+                # Generate summary using OpenAI
+                response = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an AI assistant that creates concise, informative summaries of phone conversations. "
+                                "Focus on the main topics discussed, any questions asked, issues raised, and resolutions provided. "
+                                "Keep the summary brief but comprehensive, highlighting the key points of the conversation. "
+                                "Do not include call metadata like duration or timestamps in the summary."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Please summarize the following phone conversation:\n\n{conversation_text}"
+                        }
+                    ],
+                    temperature=0.3,
+                    max_tokens=300
+                )
+                
+                ai_summary = response.choices[0].message.content.strip()
+                
+                # Combine AI summary with metadata
+                summary_content = (
+                    f"Call Summary - {call.created_at.strftime('%B %d, %Y at %I:%M %p')}\n\n"
+                    f"{ai_summary}\n\n"
+                    f"Call Details:{duration_info} {message_count} messages exchanged "
+                    f"({len(customer_messages)} from customer, {len(agent_messages)} from agent)."
+                )
+                generation_method = "ai_generated"
+                
+            except Exception as e:
+                logger.error(f"Error generating AI summary: {e}")
+                # Fall back to basic summary
+                summary_content = (
+                    f"Call between customer {call.customer_phone_number} and organization "
+                    f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
+                    f"The conversation included {message_count} messages "
+                    f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
+                    f"Unable to generate AI summary due to an error."
+                )
+                generation_method = "basic_fallback"
+        else:
+            # No transcript content available
+            summary_content = (
+                f"Call between customer {call.customer_phone_number} and organization "
+                f"on {call.created_at.strftime('%B %d, %Y at %I:%M %p')}.{duration_info} "
+                f"The conversation included {message_count} messages "
+                f"({len(customer_messages)} from customer, {len(agent_messages)} from agent). "
+                f"No conversation transcript available for summary."
+            )
+            generation_method = "no_transcript"
         
         # Create summary message
         summary_message = CallMessage(
@@ -1007,7 +1062,7 @@ async def generate_call_summary(
             message_type='summary',
             message_metadata={
                 "is_automated": True,
-                "generation_method": "basic",
+                "generation_method": generation_method,
                 "message_count": message_count,
                 "customer_message_count": len(customer_messages),
                 "agent_message_count": len(agent_messages)

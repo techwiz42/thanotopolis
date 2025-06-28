@@ -547,17 +547,16 @@ class TestUsageTrackingSchemas:
             "period": "month",
             "start_date": datetime.now(timezone.utc),
             "end_date": datetime.now(timezone.utc),
-            "total_tokens": 50000,
             "total_tts_words": 10000,
             "total_stt_words": 8000,
             "total_cost_cents": 500,
-            "breakdown_by_user": {"user1": {"tokens": 25000}},
-            "breakdown_by_service": {"gpt-4": {"tokens": 30000}}
+            "breakdown_by_user": {"user1": {"tts_words": 5000}},
+            "breakdown_by_service": {"deepgram": {"stt_words": 4000}}
         }
         
         stats = UsageStats(**data)
         assert stats.period == "month"
-        assert stats.total_tokens == 50000
+        assert stats.total_tts_words == 10000
         assert stats.total_cost_cents == 500
 
     def test_admin_dashboard_response_schema(self):
@@ -565,6 +564,7 @@ class TestUsageTrackingSchemas:
         data = {
             "total_users": 100,
             "total_conversations": 250,
+            "total_phone_calls": 50,
             "active_ws_connections": 15,
             "db_connection_pool_size": 10,
             "recent_usage": [],
@@ -574,7 +574,6 @@ class TestUsageTrackingSchemas:
                 "period": "month",
                 "start_date": datetime.now(timezone.utc),
                 "end_date": datetime.now(timezone.utc),
-                "total_tokens": 0,
                 "total_tts_words": 0,
                 "total_stt_words": 0,
                 "total_cost_cents": 0

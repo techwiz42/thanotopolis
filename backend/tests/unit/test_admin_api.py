@@ -26,7 +26,7 @@ class TestAdminDashboard:
     async def test_get_admin_dashboard_success(self, test_client, admin_user, mock_db):
         """Test getting admin dashboard data successfully"""
         # Mock database queries with proper async behavior
-        mock_db.scalar = AsyncMock(side_effect=[10, 25])  # total_users, total_conversations
+        mock_db.scalar = AsyncMock(side_effect=[10, 25, 5])  # total_users, total_conversations, total_phone_calls
         
         # Mock usage service responses
         with patch('app.api.admin.usage_service') as mock_usage_service:
@@ -61,7 +61,6 @@ class TestAdminDashboard:
                 period="month",
                 start_date=datetime.now(timezone.utc) - timedelta(days=30),
                 end_date=datetime.now(timezone.utc),
-                total_tokens=1000,
                 total_tts_words=500,
                 total_stt_words=300,
                 total_cost_cents=100
@@ -103,6 +102,7 @@ class TestAdminDashboard:
         data = response.json()
         assert data["total_users"] == 10
         assert data["total_conversations"] == 25
+        assert data["total_phone_calls"] == 5
         assert data["active_ws_connections"] == 3
         assert data["db_connection_pool_size"] == 10
         assert len(data["recent_usage"]) == 1
