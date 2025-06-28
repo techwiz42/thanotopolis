@@ -12,6 +12,8 @@ from uuid import UUID
 from datetime import datetime
 from openai import AsyncOpenAI
 import logging
+import re
+from twilio.request_validator import RequestValidator
 
 from app.db.database import get_db
 from app.auth.auth import get_current_active_user, require_admin_user, get_current_user
@@ -27,6 +29,52 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
+
+def sanitize_phone_number(phone: str) -> str:
+    """Sanitize phone number to prevent injection attacks"""
+    if not phone:
+        return "UNKNOWN"
+    
+    # Remove all non-digit characters except +
+    cleaned = re.sub(r'[^\d+]', '', phone)
+    
+    # Validate format (+ followed by 10-15 digits)
+    if not re.match(r'^\+\d{10,15}$', cleaned):
+        logger.warning(f"Invalid phone number format, sanitized to UNKNOWN: {phone}")
+        return "UNKNOWN"
+    
+    return cleaned
+
+async def verify_twilio_webhook(request: Request):
+    """Verify Twilio webhook signature for security"""
+    try:
+        # Get the signature from headers
+        signature = request.headers.get("X-Twilio-Signature", "")
+        if not signature:
+            logger.error("Missing X-Twilio-Signature header")
+            raise HTTPException(status_code=403, detail="Missing webhook signature")
+        
+        # Get the full URL
+        url = str(request.url)
+        
+        # Get form data as dict
+        form_data = dict(await request.form())
+        
+        # Verify signature using Twilio's validator
+        validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+        
+        if not validator.validate(url, form_data, signature):
+            logger.error(f"Invalid Twilio webhook signature for URL: {url}")
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+            
+        logger.debug("Twilio webhook signature verified successfully")
+        return form_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verifying Twilio webhook: {e}")
+        raise HTTPException(status_code=500, detail="Webhook verification failed")
 
 # Response models
 class TelephonyConfigResponse(BaseModel):
@@ -392,12 +440,17 @@ async def handle_incoming_call_webhook(
     """Handle incoming call webhook from Twilio"""
     
     try:
-        # Parse Twilio webhook data
-        form_data = await request.form()
+        # Verify Twilio webhook signature for security
+        form_data = await verify_twilio_webhook(request)
+        
         call_sid = form_data.get("CallSid")
         customer_number = form_data.get("From")  # The actual caller
         platform_number = form_data.get("To")   # Our Twilio number that received the call
         call_status = form_data.get("CallStatus")
+        
+        # Sanitize phone numbers to prevent injection attacks
+        customer_number = sanitize_phone_number(customer_number)
+        platform_number = sanitize_phone_number(platform_number)
         
         if not all([call_sid, customer_number, platform_number]):
             raise HTTPException(status_code=400, detail="Missing required call data")
@@ -483,7 +536,9 @@ async def handle_call_status_webhook(
     """Handle call status updates from Twilio"""
     
     try:
-        form_data = await request.form()
+        # Verify Twilio webhook signature for security
+        form_data = await verify_twilio_webhook(request)
+        
         call_sid = form_data.get("CallSid")
         call_status = form_data.get("CallStatus")
         call_duration = form_data.get("CallDuration")

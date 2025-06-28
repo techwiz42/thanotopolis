@@ -9,6 +9,7 @@ import base64
 from typing import Dict, Optional, Any
 from datetime import datetime
 import logging
+import re
 
 from fastapi import WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,21 @@ def count_words(text: str) -> int:
         return 0
     return len(text.split())
 
+def sanitize_phone_number(phone: str) -> str:
+    """Sanitize phone number to prevent injection attacks"""
+    if not phone:
+        return "UNKNOWN"
+    
+    # Remove all non-digit characters except +
+    cleaned = re.sub(r'[^\d+]', '', phone)
+    
+    # Validate format (+ followed by 10-15 digits)
+    if not re.match(r'^\+\d{10,15}$', cleaned):
+        logger.warning(f"Invalid phone number format, sanitized to UNKNOWN: {phone}")
+        return "UNKNOWN"
+    
+    return cleaned
+
 
 class TelephonyVoiceAgentHandler:
     """Handles telephony connections using Deepgram Voice Agent"""
@@ -43,6 +59,16 @@ class TelephonyVoiceAgentHandler:
         self.call_sessions: Dict[str, Dict[str, Any]] = {}
         self.db_locks: Dict[str, asyncio.Lock] = {}  # Per-session database locks
         
+        # Rate limiting settings
+        self.max_concurrent_connections = 50  # Maximum concurrent WebSocket connections
+        self.max_audio_packets_per_second = 100  # Maximum audio packets per second per session
+        self.connection_count = 0
+        self.session_packet_counts: Dict[str, int] = {}  # Track packet counts per session
+        self.packet_reset_task: Optional[asyncio.Task] = None
+        
+        # Start packet count reset task
+        self.packet_reset_task = asyncio.create_task(self._reset_packet_counts_periodically())
+        
     async def handle_connection(self, websocket: WebSocket, db: AsyncSession):
         """Handle incoming Twilio WebSocket connection"""
         session_id = None
@@ -50,8 +76,15 @@ class TelephonyVoiceAgentHandler:
         flush_task = None
         
         try:
+            # Rate limiting: Check concurrent connections
+            if self.connection_count >= self.max_concurrent_connections:
+                logger.warning(f"🚫 Rate limit exceeded: {self.connection_count} concurrent connections")
+                await websocket.close(code=1008, reason="Rate limit exceeded")
+                return
+            
             await websocket.accept()
-            logger.info("🔌 Accepted new telephony Voice Agent connection")
+            self.connection_count += 1
+            logger.info(f"🔌 Accepted new telephony Voice Agent connection ({self.connection_count}/{self.max_concurrent_connections})")
             
             # Process Twilio messages
             while True:
@@ -119,11 +152,26 @@ class TelephonyVoiceAgentHandler:
                 except asyncio.CancelledError:
                     pass
                     
-            # Cleanup
+            # Cleanup connection count and session
+            self.connection_count = max(0, self.connection_count - 1)
             if session_id:
+                self.session_packet_counts.pop(session_id, None)
                 await self._cleanup_session(session_id, db)
+            
+            logger.info(f"🔌 Connection closed ({self.connection_count}/{self.max_concurrent_connections})")
             if voice_session:
                 await self.voice_agent_service.end_session(session_id)
+    
+    async def _reset_packet_counts_periodically(self):
+        """Reset packet counts every second for rate limiting"""
+        while True:
+            try:
+                await asyncio.sleep(1)  # Reset every second
+                self.session_packet_counts.clear()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"❌ Error resetting packet counts: {e}")
     
     async def _handle_start(self, data: Dict[str, Any], db: AsyncSession) -> str:
         """Handle Twilio start event"""
@@ -138,7 +186,7 @@ class TelephonyVoiceAgentHandler:
         org_phone = custom_params.get("org_phone", to_number)  # Use org_phone if available, fallback to to_number
         tenant_id = custom_params.get("tenant_id")
         
-        logger.info(f"📞 New call: {from_number} → {to_number} (org: {org_phone})")
+        logger.info(f"📞 New call: {sanitize_phone_number(from_number)} → {sanitize_phone_number(to_number)} (org: {sanitize_phone_number(org_phone)})")
         
         # Get telephony configuration by organization phone number with tenant info
         config_query = select(TelephonyConfiguration).options(
@@ -262,7 +310,7 @@ class TelephonyVoiceAgentHandler:
         session_info: Dict[str, Any]
     ) -> str:
         """Build system prompt for Voice Agent"""
-        from_number = session_info["from_number"]
+        from_number = sanitize_phone_number(session_info["from_number"])
         
         # Get organization information from tenant
         org_info = ""
@@ -779,17 +827,42 @@ Important:
     
     async def _handle_media(self, data: Dict[str, Any], voice_session: VoiceAgentSession):
         """Handle incoming audio from Twilio"""
+        session_id = voice_session.session_id
+        
+        # Rate limiting: Check audio packet rate
+        current_count = self.session_packet_counts.get(session_id, 0)
+        if current_count >= self.max_audio_packets_per_second:
+            logger.warning(f"🚫 Audio rate limit exceeded for session {session_id}: {current_count} packets/sec")
+            return
+        
+        self.session_packet_counts[session_id] = current_count + 1
+        
         media_data = data.get("media", {})
         audio_base64 = media_data.get("payload", "")
         
         if not audio_base64:
             return
-            
-        # Decode mulaw audio from Twilio
-        audio_data = base64.b64decode(audio_base64)
         
-        # Send to Voice Agent
-        await voice_session.agent.send_audio(audio_data)
+        # Validate audio data size (Twilio mulaw packets are typically ~160 bytes, max 2KB)
+        if len(audio_base64) > 4000:  # Base64 encoded, so ~3KB of raw data
+            logger.warning(f"🚫 Audio packet too large: {len(audio_base64)} bytes (max 4000)")
+            return
+            
+        try:
+            # Decode mulaw audio from Twilio
+            audio_data = base64.b64decode(audio_base64)
+            
+            # Additional validation on decoded data
+            if len(audio_data) > 2048:  # 2KB max for raw mulaw data
+                logger.warning(f"🚫 Decoded audio too large: {len(audio_data)} bytes (max 2048)")
+                return
+            
+            # Send to Voice Agent
+            await voice_session.agent.send_audio(audio_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing audio data: {e}")
+            # Don't re-raise to avoid disconnecting the call for invalid audio
     
     async def _create_call_conversation(
         self,

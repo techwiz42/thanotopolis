@@ -32,7 +32,7 @@ class VoiceAgentConfig:
     output_sample_rate: int = 8000
     
     # Agent behavior
-    system_prompt: str = "You are a helpful assistant on a phone call. Keep responses concise and natural."
+    system_prompt: str = "You are a professional AI assistant answering a phone call. Be helpful, respectful, and keep responses concise for phone conversation. If you don't have specific information, offer to connect the caller with more specialized agent or a human representative."
     turn_detection_mode: str = "server_vad"  # Voice Activity Detection
     end_of_speech_threshold: int = 1000  # ms of silence before considering speech complete
 
@@ -60,7 +60,7 @@ class DeepgramVoiceAgent:
             # Voice Agent WebSocket endpoint - correct v1 endpoint
             url = "wss://agent.deepgram.com/v1/agent/converse"
             
-            logger.info(f"🔑 Using API key: {self.config.api_key[:10]}...")
+            logger.info("🔑 Using configured API key...")
             logger.info(f"🌐 Connecting to: {url}")
             logger.info("🔌 Connecting to Deepgram Voice Agent with Authorization header...")
             
@@ -269,9 +269,9 @@ class DeepgramVoiceAgent:
         """Process Voice Agent events"""
         event_type = event.get("type", "")
         
-        # Log ALL events with full data for debugging
+        # Log events (sanitized for security)
         logger.info(f"📥 Voice Agent event: {event_type}")
-        logger.info(f"🔍 FULL EVENT DATA: {event}")
+        logger.debug(f"🔍 Event data: {self._sanitize_event_for_logging(event)}")
         
         # Handle specific events
         if event_type == "Welcome":
@@ -365,6 +365,25 @@ class DeepgramVoiceAgent:
         else:
             logger.warning(f"⚠️ No handler registered for event type: {event_type}")
     
+    def _sanitize_event_for_logging(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Sanitize event data for safe logging"""
+        sanitized = event.copy()
+        
+        # Remove or truncate sensitive fields
+        sensitive_fields = ["content", "text", "transcript", "message", "response"]
+        for field in sensitive_fields:
+            if field in sanitized and sanitized[field]:
+                # Keep first 50 chars only
+                sanitized[field] = str(sanitized[field])[:50] + "..." if len(str(sanitized[field])) > 50 else sanitized[field]
+        
+        # Remove any API keys or tokens
+        if "api_key" in sanitized:
+            sanitized["api_key"] = "***REDACTED***"
+        if "token" in sanitized:
+            sanitized["token"] = "***REDACTED***"
+            
+        return sanitized
+
     async def _handle_audio(self, audio_data: bytes):
         """Process audio data from Voice Agent"""
         # Audio from Voice Agent (agent's speech)
@@ -438,8 +457,10 @@ class VoiceAgentService:
         
         config = VoiceAgentConfig(
             api_key=settings.DEEPGRAM_API_KEY,
-            system_prompt=system_prompt or "You are a helpful assistant on a phone call. Keep responses concise and natural.",
-            speaking_model=voice_model or "aura-2-thalia-en"
+            listening_model=settings.VOICE_AGENT_LISTENING_MODEL,
+            thinking_model=settings.VOICE_AGENT_THINKING_MODEL,
+            speaking_model=voice_model or settings.VOICE_AGENT_SPEAKING_MODEL,
+            system_prompt=system_prompt or "You are a professional AI assistant answering a phone call. Be helpful, respectful, and keep responses concise for phone conversation. If you don't have specific information, offer to connect the caller with more specialized agent or a human representative."
         )
         
         session = VoiceAgentSession(session_id, config)

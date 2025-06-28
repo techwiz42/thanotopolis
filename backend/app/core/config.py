@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     USE_VOICE_AGENT: bool = os.getenv("USE_VOICE_AGENT", "true").lower() == "true"
     VOICE_AGENT_LISTENING_MODEL: str = os.getenv("VOICE_AGENT_LISTENING_MODEL", "nova-3")
     VOICE_AGENT_THINKING_MODEL: str = os.getenv("VOICE_AGENT_THINKING_MODEL", "gpt-4o-mini")
-    VOICE_AGENT_SPEAKING_MODEL: str = os.getenv("VOICE_AGENT_SPEAKING_MODEL", "aura-2-thalia-en")
+    VOICE_AGENT_SPEAKING_MODEL: str = os.getenv("VOICE_AGENT_SPEAKING_MODEL", "aura-2-asteria-en")
     VOICE_AGENT_ROLLOUT_PERCENTAGE: int = int(os.getenv("VOICE_AGENT_ROLLOUT_PERCENTAGE", "100"))
     
     # Twilio Settings
