@@ -612,6 +612,43 @@ A sophisticated web-based chat application that enables organizations to deploy 
 - **Timeout Management**: 30-second individual and 90-second total response timeouts
 - **Graceful Fallback**: Automatic fallback to primary agent when collaboration fails
 
+### **Voice Agent Customization for Organizations**
+
+Organizations can customize their telephony voice agent's behavior and personality through the Admin UI:
+
+1. **Navigate to Organization Settings**:
+   - Go to `/organizations/admin` or click "Admin" in the organization navigation
+   - Click "Edit Organization" button
+
+2. **Configure Voice Agent Instructions**:
+   - Scroll to the **"Additional instructions for agent"** section
+   - Add custom instructions that will shape the voice agent's behavior
+   - Instructions can include:
+     - **Greeting Style**: Custom welcome messages and conversation tone
+     - **Business Context**: Specific services, pricing, policies
+     - **Personality Traits**: Professional, friendly, empathetic, etc.
+     - **Cultural Considerations**: Language preferences, customs
+     - **Knowledge Base**: Organization-specific information
+     - **Call Handling**: How to route specific types of inquiries
+
+3. **Example Customizations**:
+   ```
+   You are a compassionate funeral home assistant. Always:
+   - Express empathy and understanding
+   - Speak in a calm, soothing tone
+   - Offer specific services: burial, cremation, memorial planning
+   - Mention our 24/7 availability for immediate needs
+   - Provide pricing information when asked
+   - Use formal language unless the caller prefers informal
+   ```
+
+4. **Save and Apply**:
+   - Click "Update Organization" to save changes
+   - Voice agent instructions take effect immediately for new calls
+   - No system restart or deployment required
+
+These instructions are dynamically loaded for each call, allowing organizations to tailor the AI voice assistant to their specific needs, industry requirements, and brand personality.
+
 ### **Specialist Agent Network**
 The web chat leverages the same 20+ specialist agents available to telephony:
 
