@@ -12,7 +12,7 @@ interface UsageStats {
   end_date: string
   total_tts_words: number
   total_stt_words: number
-  total_cost_cents: number
+  total_cost_cents: number  // Keep in interface but don't display
 }
 
 interface SystemMetric {
@@ -38,7 +38,7 @@ interface OrganizationUsage {
   subdomain: string
   total_tts_words: number
   total_stt_words: number
-  total_cost_cents: number
+  total_cost_cents: number  // Keep in interface but don't display
   record_count: number
 }
 
@@ -198,10 +198,6 @@ const AdminMonitoringPage = () => {
     }
   }
 
-  const formatCost = (cents: number) => {
-    return `$${(cents / 100).toFixed(2)}`
-  }
-
 
   if (loading) {
     return (
@@ -308,11 +304,11 @@ const AdminMonitoringPage = () => {
         </Card>
       </div>
 
-      {/* Usage Statistics */}
-      {usageStats && (
+      {/* Usage Statistics - Only show for super_admin */}
+      {usageStats && user?.role === 'super_admin' && (
         <Card className="p-6">
           <h2 className="text-xl font-bold mb-4">Usage Statistics (Last Month)</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <h3 className="font-semibold text-sm text-gray-600 mb-1">TTS Usage</h3>
               <p className="text-lg font-bold">{formatWords(usageStats.total_tts_words)}</p>
@@ -321,11 +317,6 @@ const AdminMonitoringPage = () => {
             <div>
               <h3 className="font-semibold text-sm text-gray-600 mb-1">STT Usage</h3>
               <p className="text-lg font-bold">{formatWords(usageStats.total_stt_words)}</p>
-            </div>
-            
-            <div>
-              <h3 className="font-semibold text-sm text-gray-600 mb-1">Total Cost</h3>
-              <p className="text-lg font-bold">{formatCost(usageStats.total_cost_cents)}</p>
             </div>
           </div>
         </Card>
@@ -345,7 +336,6 @@ const AdminMonitoringPage = () => {
                   <th className="text-left py-2">Subdomain</th>
                   <th className="text-right py-2">TTS Words</th>
                   <th className="text-right py-2">STT Words</th>
-                  <th className="text-right py-2">Cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -358,7 +348,6 @@ const AdminMonitoringPage = () => {
                       <td className="py-2 text-gray-600">{org.subdomain}</td>
                       <td className="py-2 text-right">{formatWords(org.total_tts_words)}</td>
                       <td className="py-2 text-right">{formatWords(org.total_stt_words)}</td>
-                      <td className="py-2 text-right">{formatCost(org.total_cost_cents)}</td>
                     </tr>
                   ))}
               </tbody>

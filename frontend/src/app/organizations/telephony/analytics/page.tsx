@@ -156,7 +156,25 @@ export default function VoiceAnalyticsPage() {
     const totalCalls = filteredCalls.length;
     const completedCalls = filteredCalls.filter(call => call.status === 'completed');
     const totalDuration = completedCalls.reduce((sum, call) => sum + (call.duration_seconds || 0), 0);
-    const totalCost = filteredCalls.reduce((sum, call) => sum + call.cost_cents, 0);
+    
+    // Calculate total cost: $1.00 per call + $1.00 per 1000 words (STT or TTS)
+    const totalCost = filteredCalls.reduce((sum, call) => {
+      // Base call cost: $1.00 = 100 cents
+      let callCost = 100;
+      
+      // Add STT cost: $1.00 per 1000 words
+      if (call.stt_words) {
+        callCost += Math.ceil(call.stt_words / 1000) * 100;
+      }
+      
+      // Add TTS cost: $1.00 per 1000 words
+      if (call.tts_words) {
+        callCost += Math.ceil(call.tts_words / 1000) * 100;
+      }
+      
+      return sum + callCost;
+    }, 0);
+    
     const inboundCalls = filteredCalls.filter(call => call.direction === 'inbound').length;
     const outboundCalls = filteredCalls.filter(call => call.direction === 'outbound').length;
 
@@ -196,7 +214,18 @@ export default function VoiceAnalyticsPage() {
       );
       
       const dayDuration = dayCalls.reduce((sum, call) => sum + (call.duration_seconds || 0), 0);
-      const dayCost = dayCalls.reduce((sum, call) => sum + call.cost_cents, 0);
+      
+      // Calculate day cost: $1.00 per call + $1.00 per 1000 words
+      const dayCost = dayCalls.reduce((sum, call) => {
+        let callCost = 100; // Base call cost: $1.00
+        if (call.stt_words) {
+          callCost += Math.ceil(call.stt_words / 1000) * 100;
+        }
+        if (call.tts_words) {
+          callCost += Math.ceil(call.tts_words / 1000) * 100;
+        }
+        return sum + callCost;
+      }, 0);
       
       dailyTrends.push({
         date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -218,7 +247,7 @@ export default function VoiceAnalyticsPage() {
       dailyTrends,
       statusBreakdown,
       averageCallCost: totalCalls > 0 ? totalCost / totalCalls : 0,
-      costPerMinute: totalDuration > 0 ? (totalCost / 100) / (totalDuration / 60) : 0,
+      costPerMinute: totalDuration > 0 ? totalCost / (totalDuration / 60) : 0,
       customerSatisfaction: 85 + Math.random() * 10, // Mock data
       responseTime: 2.5 + Math.random() * 2 // Mock data
     };
@@ -363,7 +392,7 @@ export default function VoiceAnalyticsPage() {
               {telephonyService.formatCallCost(analytics?.totalCost || 0)}
             </div>
             <p className="text-xs text-muted-foreground">
-              ${(analytics?.costPerMinute || 0).toFixed(3)}/min
+              {telephonyService.formatCallCost(analytics?.costPerMinute || 0)}/min
             </p>
           </CardContent>
         </Card>

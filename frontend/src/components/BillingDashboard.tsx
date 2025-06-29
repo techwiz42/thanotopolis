@@ -54,6 +54,9 @@ interface BillingDashboard {
   upcoming_charges: {
     voice_usage_cents: number;
     voice_words_count: number;
+    call_count: number;
+    call_charges_cents: number;
+    total_charges_cents: number;
   };
 }
 
@@ -222,7 +225,7 @@ const BillingDashboard: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="text-center p-4 bg-blue-50 rounded-lg">
               <div className="text-2xl font-bold text-blue-600">
                 {dashboard.current_period_usage.total_stt_words.toLocaleString()}
@@ -235,20 +238,35 @@ const BillingDashboard: React.FC = () => {
               </div>
               <div className="text-sm text-green-600">TTS Words Used</div>
             </div>
+            <div className="text-center p-4 bg-yellow-50 rounded-lg">
+              <div className="text-2xl font-bold text-yellow-600">
+                {dashboard.upcoming_charges.call_count}
+              </div>
+              <div className="text-sm text-yellow-600">Phone Calls</div>
+            </div>
             <div className="text-center p-4 bg-purple-50 rounded-lg">
               <div className="text-2xl font-bold text-purple-600">
-                {formatCurrency(dashboard.upcoming_charges.voice_usage_cents)}
+                {formatCurrency(dashboard.upcoming_charges.total_charges_cents)}
               </div>
-              <div className="text-sm text-purple-600">Estimated Voice Charges</div>
+              <div className="text-sm text-purple-600">Total Charges</div>
             </div>
           </div>
           
-          <div className="mt-4 p-3 bg-gray-50 rounded-md">
-            <p className="text-sm text-gray-600">
-              Voice usage is billed at $1.00 per 1,000 words. Current period: {' '}
-              {dashboard.upcoming_charges.voice_words_count.toLocaleString()} words = {' '}
-              {formatCurrency(dashboard.upcoming_charges.voice_usage_cents)}
-            </p>
+          <div className="mt-4 space-y-2">
+            <div className="p-3 bg-gray-50 rounded-md">
+              <p className="text-sm text-gray-600">
+                <strong>Voice Usage:</strong> $1.00 per 1,000 words (STT + TTS) • {' '}
+                {dashboard.upcoming_charges.voice_words_count.toLocaleString()} words = {' '}
+                {formatCurrency(dashboard.upcoming_charges.voice_usage_cents)}
+              </p>
+            </div>
+            <div className="p-3 bg-gray-50 rounded-md">
+              <p className="text-sm text-gray-600">
+                <strong>Phone Calls:</strong> $1.00 base + word charges per call • {' '}
+                {dashboard.upcoming_charges.call_count} calls = {' '}
+                {formatCurrency(dashboard.upcoming_charges.call_charges_cents)}
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>

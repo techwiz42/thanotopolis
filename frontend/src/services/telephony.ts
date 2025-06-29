@@ -50,6 +50,8 @@ export interface PhoneCall {
   created_at: string;
   messages?: CallMessage[];
   summary?: string;
+  stt_words?: number;
+  tts_words?: number;
 }
 
 export interface CallMessage {
@@ -284,7 +286,14 @@ export const telephonyService = {
   // Get call messages
   async getCallMessages(callId: string, token: string): Promise<CallMessage[]> {
     try {
-      const response = await api.get(`/telephony/calls/${callId}/messages`, {
+      // Pass a high limit to ensure we get all messages
+      const params = new URLSearchParams({
+        limit: '10000', // High limit to get all messages
+        order_by: 'timestamp',
+        order_dir: 'asc'
+      });
+      
+      const response = await api.get(`/telephony/calls/${callId}/messages?${params}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -293,8 +302,8 @@ export const telephonyService = {
       // Backend returns {messages: [], total: number, call_id: string}
       // Frontend expects just the messages array
       if (response.data && typeof response.data === 'object' && 'messages' in response.data) {
-        const data = response.data as { messages: unknown };
-        console.log(`📞 Loaded ${Array.isArray(data.messages) ? data.messages.length : 0} call messages`);
+        const data = response.data as { messages: unknown; total: number };
+        console.log(`📞 Loaded ${Array.isArray(data.messages) ? data.messages.length : 0} call messages (total: ${data.total})`);
         return data.messages as CallMessage[];
       }
       

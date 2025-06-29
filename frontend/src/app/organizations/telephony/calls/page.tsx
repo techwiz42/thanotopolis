@@ -149,11 +149,12 @@ export default function CallManagementPage() {
     }
   };
 
+
   // Calculate call statistics
   const calculateStats = (callData: TelephonyPhoneCall[]) => {
     const completedCalls = callData.filter(call => call.status === 'completed');
     const totalDuration = completedCalls.reduce((sum, call) => sum + (call.duration_seconds || 0), 0);
-    const totalCost = callData.reduce((sum, call) => sum + call.cost_cents, 0);
+    const totalCost = callData.reduce((sum, call) => sum + (call.cost_cents || 0), 0);
     const successRate = callData.length > 0 ? (completedCalls.length / callData.length) * 100 : 0;
 
     setStats({
@@ -300,7 +301,7 @@ export default function CallManagementPage() {
               {telephonyService.formatCallCost(stats.totalCost)}
             </div>
             <p className="text-xs text-muted-foreground">
-              This month
+              Includes call and usage costs
             </p>
           </CardContent>
         </Card>

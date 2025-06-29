@@ -18,7 +18,7 @@ from twilio.base.exceptions import TwilioException
 
 from app.models.models import (
     TelephonyConfiguration, PhoneVerificationAttempt, PhoneCall,
-    PhoneVerificationStatus, CallStatus, CallDirection, Tenant
+    PhoneVerificationStatus, CallStatus, CallDirection, Tenant, UsageRecord
 )
 from app.core.config import settings
 from app.services.usage_service import usage_service
@@ -324,9 +324,24 @@ class TelephonyService:
         await db.commit()
         await db.refresh(call)
         
-        # Record usage if call completed
+        # Record usage if call completed (but not for voice agent calls - they handle their own usage)
         if status == CallStatus.COMPLETED and call.duration_seconds:
-            await self._record_call_usage(db, call)
+            # Check if this is a voice agent call by looking for existing usage records with voice_agent_type
+            existing_usage = await db.execute(
+                select(UsageRecord).where(
+                    and_(
+                        UsageRecord.additional_data.op('->>')('call_id') == str(call.id),
+                        UsageRecord.additional_data.op('->>')('voice_agent_type') == 'deepgram_integrated'
+                    )
+                ).limit(1)
+            )
+            voice_agent_usage = existing_usage.scalar_one_or_none()
+            
+            if not voice_agent_usage:
+                # Not a voice agent call, record usage normally
+                await self._record_call_usage(db, call)
+            else:
+                logger.info(f"📞 Call {call.call_sid} usage already handled by voice agent, skipping duplicate recording")
         
         logger.info(f"📞 Call {call_sid} status updated to {status.value}")
         return call
@@ -542,9 +557,30 @@ FORWARDING SETUP INSTRUCTIONS:
             config = config_result.scalar_one_or_none()
             
             if config:
-                # Record call duration usage
+                # Get STT/TTS word counts for this call from usage records
+                from sqlalchemy import and_
+                usage_query = select(UsageRecord).where(
+                    and_(
+                        UsageRecord.tenant_id == config.tenant_id,
+                        UsageRecord.additional_data.op('->>')('call_id') == str(call.id),
+                        UsageRecord.usage_type.in_(['stt_words', 'tts_words'])
+                    )
+                )
+                usage_result = await db.execute(usage_query)
+                usage_records = usage_result.scalars().all()
+                
+                # Calculate total words (STT + TTS)
+                total_words = sum(record.amount for record in usage_records)
+                
+                # Calculate cost: $1.00 base + $1.00 per 1000 words
+                cost_cents = 100 + int((total_words / 1000) * 100)
+                
+                # Update the call record with the calculated cost
+                call.cost_cents = cost_cents
+                await db.commit()
+                
+                # Record call duration usage (separate from cost calculation)
                 duration_minutes = call.duration_seconds / 60.0  # Convert to minutes
-                cost_cents = int(duration_minutes * 1.5)  # $0.015 per minute = 1.5 cents per minute
                 
                 await usage_service.record_usage(
                     db=db,
@@ -555,7 +591,7 @@ FORWARDING SETUP INSTRUCTIONS:
                     additional_data={"call_id": str(call.id), "call_sid": call.call_sid}
                 )
                 
-                logger.info(f"💰 Usage recorded for call {call.call_sid}: {call.duration_seconds / 60.0:.2f} minutes")
+                logger.info(f"💰 Usage recorded for call {call.call_sid}: {total_words} words, cost: {cost_cents} cents (${cost_cents/100:.2f})")
         
         except Exception as e:
             logger.error(f"❌ Failed to record call usage: {e}")

@@ -349,6 +349,7 @@ class UsageStats(BaseModel):
     end_date: datetime
     total_tts_words: int
     total_stt_words: int
+    total_phone_calls: int = 0
     total_cost_cents: int
     breakdown_by_user: Optional[Dict[str, Dict[str, int]]] = {}
     breakdown_by_service: Optional[Dict[str, Dict[str, int]]] = {}

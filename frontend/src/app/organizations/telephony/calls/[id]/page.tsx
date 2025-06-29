@@ -633,16 +633,6 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
                     }
                   </span>
                 </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <DollarSign className="h-4 w-4 mr-2 text-muted-foreground" />
-                    <span className="text-sm">Cost</span>
-                  </div>
-                  <span className="font-medium">
-                    {telephonyService.formatCallCost(call.cost_cents, call.cost_currency)}
-                  </span>
-                </div>
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
@@ -651,6 +641,20 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
                   </div>
                   <span className="font-medium text-sm">
                     {new Date(call.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <Clock className="h-4 w-4 mr-2 text-muted-foreground" />
+                    <span className="text-sm">Time</span>
+                  </div>
+                  <span className="font-medium text-sm">
+                    {new Date(call.created_at).toLocaleTimeString('en-US', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
+                    })}
                   </span>
                 </div>
               </div>

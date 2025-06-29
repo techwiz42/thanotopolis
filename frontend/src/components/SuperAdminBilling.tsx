@@ -11,6 +11,8 @@ interface Organization {
   subscription_revenue_cents: number;
   voice_words_count: number;
   voice_charges_cents: number;
+  call_count: number;
+  call_charges_cents: number;
   total_charges_cents: number;
   recent_invoices: any[];
   usage_stats: any;
@@ -21,11 +23,14 @@ interface SuperAdminBillingData {
   total_organizations: number;
   total_revenue_cents: number;
   total_voice_words: number;
+  total_phone_calls: number;
   organizations: Organization[];
   summary: {
     period_start: string;
     period_end: string;
     total_subscription_revenue: number;
+    total_voice_revenue: number;
+    total_call_revenue: number;
     total_usage_revenue: number;
   };
 }
@@ -117,22 +122,32 @@ const SuperAdminBilling: React.FC<SuperAdminBillingProps> = ({ data, onRefresh }
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <div className="text-lg font-semibold">{data.total_voice_words.toLocaleString()}</div>
               <div className="text-sm text-gray-600">Total Voice Words</div>
             </div>
             <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <div className="text-lg font-semibold">{data.total_phone_calls.toLocaleString()}</div>
+              <div className="text-sm text-gray-600">Total Phone Calls</div>
+            </div>
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
               <div className="text-lg font-semibold">
-                {formatCurrency(data.summary.total_subscription_revenue)}
+                {formatCurrency(data.summary.total_voice_revenue)}
               </div>
-              <div className="text-sm text-gray-600">Subscription Revenue</div>
+              <div className="text-sm text-gray-600">Voice Revenue</div>
+            </div>
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <div className="text-lg font-semibold">
+                {formatCurrency(data.summary.total_call_revenue)}
+              </div>
+              <div className="text-sm text-gray-600">Call Revenue</div>
             </div>
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <div className="text-lg font-semibold">
                 {formatCurrency(data.summary.total_usage_revenue)}
               </div>
-              <div className="text-sm text-gray-600">Usage Revenue</div>
+              <div className="text-sm text-gray-600">Total Usage Revenue</div>
             </div>
           </div>
         </CardContent>
@@ -153,7 +168,9 @@ const SuperAdminBilling: React.FC<SuperAdminBillingProps> = ({ data, onRefresh }
                   <th className="text-left py-3 px-2">Subdomain</th>
                   <th className="text-right py-3 px-2">Subscription</th>
                   <th className="text-right py-3 px-2">Voice Words</th>
-                  <th className="text-right py-3 px-2">Usage Charges</th>
+                  <th className="text-right py-3 px-2">Phone Calls</th>
+                  <th className="text-right py-3 px-2">Voice Charges</th>
+                  <th className="text-right py-3 px-2">Call Charges</th>
                   <th className="text-right py-3 px-2">Total Revenue</th>
                   <th className="text-center py-3 px-2">Status</th>
                 </tr>
@@ -170,7 +187,13 @@ const SuperAdminBilling: React.FC<SuperAdminBillingProps> = ({ data, onRefresh }
                       {org.voice_words_count.toLocaleString()}
                     </td>
                     <td className="py-3 px-2 text-right">
+                      {org.call_count}
+                    </td>
+                    <td className="py-3 px-2 text-right">
                       {formatCurrency(org.voice_charges_cents)}
+                    </td>
+                    <td className="py-3 px-2 text-right">
+                      {formatCurrency(org.call_charges_cents)}
                     </td>
                     <td className="py-3 px-2 text-right font-semibold">
                       {formatCurrency(org.total_charges_cents)}
@@ -191,7 +214,7 @@ const SuperAdminBilling: React.FC<SuperAdminBillingProps> = ({ data, onRefresh }
               </tbody>
               <tfoot>
                 <tr className="border-t-2 font-semibold">
-                  <td className="py-3 px-2" colSpan={5}>Total</td>
+                  <td className="py-3 px-2" colSpan={7}>Total</td>
                   <td className="py-3 px-2 text-right text-lg">
                     {formatCurrency(data.total_revenue_cents)}
                   </td>

@@ -22,7 +22,7 @@ class UsageTrackingService:
         self, 
         db: AsyncSession,
         tenant_id: UUID,
-        usage_type: str,  # 'tokens', 'tts_words', 'stt_words'
+        usage_type: str,  # 'tokens', 'tts_words', 'stt_words', 'phone_calls'
         amount: int,
         user_id: Optional[UUID] = None,
         conversation_id: Optional[UUID] = None,
@@ -158,6 +158,34 @@ class UsageTrackingService:
             additional_data=additional_data
         )
     
+    async def record_phone_call(
+        self,
+        db: AsyncSession,
+        tenant_id: UUID,
+        user_id: Optional[UUID],
+        call_duration_seconds: int,
+        call_id: Optional[UUID] = None,
+        service_provider: str = "twilio",
+        cost_cents: int = 100  # $1.00 base per call (actual cost calculated based on words)
+    ) -> UsageRecord:
+        """Record phone call usage"""
+        
+        additional_data = {
+            "duration_seconds": call_duration_seconds,
+            "call_id": str(call_id) if call_id else None
+        }
+        
+        return await self.record_usage(
+            db=db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            usage_type="phone_calls",
+            amount=1,  # 1 call
+            service_provider=service_provider,
+            cost_cents=cost_cents,
+            additional_data=additional_data
+        )
+    
     async def get_usage_stats(
         self,
         db: AsyncSession,
@@ -192,6 +220,7 @@ class UsageTrackingService:
         query = select(
             UsageRecord.usage_type,
             func.sum(UsageRecord.amount).label('total_amount'),
+            func.count(UsageRecord.id).label('record_count'),
             func.sum(UsageRecord.cost_cents).label('total_cost')
         ).where(and_(*conditions)).group_by(UsageRecord.usage_type)
         
@@ -201,6 +230,7 @@ class UsageTrackingService:
         # Initialize totals
         total_tts_words = 0
         total_stt_words = 0
+        total_phone_calls = 0
         total_cost_cents = 0
         
         # Process stats
@@ -209,6 +239,11 @@ class UsageTrackingService:
                 total_tts_words = stat.total_amount or 0
             elif stat.usage_type == "stt_words":
                 total_stt_words = stat.total_amount or 0
+            elif stat.usage_type == "phone_calls":
+                total_phone_calls = stat.total_amount or 0
+            elif stat.usage_type == "telephony_minutes":
+                # Each telephony_minutes record represents one call
+                total_phone_calls += stat.record_count or 0
             
             total_cost_cents += stat.total_cost or 0
         
@@ -218,6 +253,7 @@ class UsageTrackingService:
             end_date=end_date,
             total_tts_words=total_tts_words,
             total_stt_words=total_stt_words,
+            total_phone_calls=total_phone_calls,
             total_cost_cents=total_cost_cents
         )
     

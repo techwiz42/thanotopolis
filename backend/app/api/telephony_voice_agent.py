@@ -799,13 +799,20 @@ Important:
                     if is_user:
                         # User speech = STT usage (Deepgram transcribed user's speech)
                         try:
-                            await usage_service.record_stt_usage(
+                            await usage_service.record_usage(
                                 db=db,
                                 tenant_id=config.tenant_id,
                                 user_id=None,  # No specific user for phone calls
-                                word_count=word_count,
+                                usage_type="stt_words",
+                                amount=word_count,
                                 service_provider="deepgram",
-                                model_name="nova-3"  # Voice Agent uses nova-3 by default
+                                model_name="nova-3",
+                                cost_cents=int((word_count / 1000) * 100),  # $1.00 per 1000 words
+                                additional_data={
+                                    "call_id": str(phone_call.id),
+                                    "call_sid": phone_call.call_sid,
+                                    "conversation_id": str(conversation.id)
+                                }
                             )
                             logger.info(f"📊 STT usage recorded: {word_count} words for user speech")
                         except Exception as e:
@@ -814,13 +821,20 @@ Important:
                     elif is_agent:
                         # Agent speech = TTS usage (Deepgram generated agent's speech)
                         try:
-                            await usage_service.record_tts_usage(
+                            await usage_service.record_usage(
                                 db=db,
                                 tenant_id=config.tenant_id,
                                 user_id=None,  # No specific user for phone calls
-                                word_count=word_count,
+                                usage_type="tts_words",
+                                amount=word_count,
                                 service_provider="deepgram",
-                                model_name="aura-2-thalia-en"  # Default Voice Agent TTS model
+                                model_name="aura-2-thalia-en",
+                                cost_cents=int((word_count / 1000) * 100),  # $1.00 per 1000 words
+                                additional_data={
+                                    "call_id": str(phone_call.id),
+                                    "call_sid": phone_call.call_sid,
+                                    "conversation_id": str(conversation.id)
+                                }
                             )
                             logger.info(f"📊 TTS usage recorded: {word_count} words for agent speech")
                         except Exception as e:
@@ -1054,8 +1068,31 @@ Important:
                 config = session_info["config"]
                 if phone_call.duration_seconds and phone_call.duration_seconds > 0:
                     try:
+                        # Get STT/TTS word counts for this call from usage records
+                        from sqlalchemy import and_, select
+                        from app.models.models import UsageRecord
+                        usage_query = select(UsageRecord).where(
+                            and_(
+                                UsageRecord.tenant_id == config.tenant_id,
+                                UsageRecord.additional_data.op('->>')('call_id') == str(phone_call.id),
+                                UsageRecord.usage_type.in_(['stt_words', 'tts_words'])
+                            )
+                        )
+                        usage_result = await db.execute(usage_query)
+                        usage_records = usage_result.scalars().all()
+                        
+                        # Calculate total words (STT + TTS)
+                        total_words = sum(record.amount for record in usage_records)
+                        
+                        # Calculate cost: $1.00 base + $1.00 per 1000 words
+                        cost_cents = 100 + int((total_words / 1000) * 100)
+                        
+                        # Update the call record with the calculated cost
+                        phone_call.cost_cents = cost_cents
+                        await db.commit()
+                        
+                        # Record call duration usage (separate from cost calculation)
                         duration_minutes = phone_call.duration_seconds / 60.0
-                        cost_cents = int(duration_minutes * 1.5)  # $0.015 per minute
                         
                         await usage_service.record_usage(
                             db=db,
@@ -1069,7 +1106,7 @@ Important:
                                 "voice_agent_type": "deepgram_integrated"
                             }
                         )
-                        logger.info(f"📊 Call duration usage recorded: {duration_minutes:.2f} minutes (${cost_cents/100:.2f})")
+                        logger.info(f"📊 Call usage recorded: {total_words} words, cost: {cost_cents} cents (${cost_cents/100:.2f})")
                     except Exception as e:
                         logger.error(f"❌ Error recording call duration usage: {e}")
                 
