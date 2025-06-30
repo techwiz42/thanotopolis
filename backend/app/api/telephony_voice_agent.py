@@ -292,8 +292,12 @@ class TelephonyVoiceAgentHandler:
         patterns = [
             r"(?:I'm|I am|My name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "I'm Ada", "I am Ada", "My name is Ada"
             r"(?:Your name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|\.|\n|$)",  # "Your name is Ada"
+            r"(?:You are)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "You are Ada"
             r"(?:This is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "This is Ada"
-            r"(?:Call me)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "Call me Ada"
+            r"(?:Call me)\s+([A-Z][a-zA-Z]+)(?:,|\s|\.|\n|$)",  # "Call me Ada"
+            r"([A-Z][a-zA-Z]+)\s+(?:is your name)",  # "Ada is your name"
+            r"(?:You're called|You are called)\s+([A-Z][a-zA-Z]+)",  # "You're called Ada"
+            r"(?:Hi,? I am)\s+([A-Z][a-zA-Z]+)",  # "Hi, I am Ada"
         ]
         
         for pattern in patterns:
@@ -301,7 +305,7 @@ class TelephonyVoiceAgentHandler:
             if match:
                 name = match.group(1)
                 # Validate the name isn't a common word that might be misidentified
-                common_words = ['AI', 'Assistant', 'Agent', 'Your', 'The', 'This']
+                common_words = ['AI', 'Assistant', 'Agent', 'Your', 'The', 'This', 'An', 'A']
                 if name not in common_words:
                     return name
         
