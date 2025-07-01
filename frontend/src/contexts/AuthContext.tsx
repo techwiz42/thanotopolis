@@ -32,6 +32,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>
   register: (data: RegisterData) => Promise<void>
   logout: () => void
+  switchOrganization?: (tenantId: string) => Promise<void>
   isLoading: boolean
 }
 
@@ -171,8 +172,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       await fetchUser(access_token, organization_subdomain)
       
-      // Redirect to conversations after successful login
-      router.push('/conversations')
+      // Redirect based on user role
+      const userResponse = await fetch(`${API_BASE_URL}/api/auth/me`, {
+        headers: {
+          'Authorization': `Bearer ${access_token}`,
+          'X-Tenant-ID': organization_subdomain
+        }
+      })
+      
+      if (userResponse.ok) {
+        const userData = await userResponse.json()
+        if (userData.role === 'super_admin') {
+          router.push('/admin/organizations')
+        } else {
+          router.push('/conversations')
+        }
+      } else {
+        router.push('/conversations')
+      }
     } catch (error) {
       console.error('Login error:', error)
       throw error
@@ -206,9 +223,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await fetchUser(access_token, organization_subdomain)
   }
 
+  const switchOrganization = async (tenantId: string) => {
+    if (!tokens || !user) {
+      throw new Error('Not authenticated')
+    }
+
+    if (user.role !== 'super_admin') {
+      throw new Error('Only super admins can switch organizations')
+    }
+
+    try {
+      // Get organization details to get subdomain
+      const orgResponse = await fetch(`${API_BASE_URL}/api/organizations/${tenantId}`, {
+        headers: {
+          'Authorization': `Bearer ${tokens.access_token}`,
+          'X-Tenant-ID': organization || '',
+        }
+      })
+
+      if (!orgResponse.ok) {
+        throw new Error('Failed to get organization details')
+      }
+
+      const orgData = await orgResponse.json()
+      const newOrganization = orgData.subdomain
+
+      // Update local state
+      setOrganization(newOrganization)
+      localStorage.setItem('organization', newOrganization)
+
+      // Fetch user data with new organization context
+      await fetchUser(tokens.access_token, newOrganization)
+    } catch (error) {
+      console.error('Error switching organization:', error)
+      throw error
+    }
+  }
+
 
   return (
-    <AuthContext.Provider value={{ user, tokens, token, organization, login, register, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, tokens, token, organization, login, register, logout, switchOrganization, isLoading }}>
       {children}
     </AuthContext.Provider>
   )

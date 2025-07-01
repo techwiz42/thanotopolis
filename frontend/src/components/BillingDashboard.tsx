@@ -48,9 +48,11 @@ interface UsageStats {
 }
 
 interface BillingDashboard {
+  is_demo?: boolean;
+  demo_message?: string;
   current_subscription?: StripeSubscription;
   recent_invoices: StripeInvoice[];
-  current_period_usage: UsageStats;
+  current_period_usage?: UsageStats;
   upcoming_charges: {
     voice_usage_cents: number;
     voice_words_count: number;
@@ -65,6 +67,8 @@ const BillingDashboard: React.FC = () => {
   const [dashboard, setDashboard] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [reactivating, setReactivating] = useState(false);
 
   useEffect(() => {
     if (tokens?.access_token && organization) {
@@ -95,6 +99,62 @@ const BillingDashboard: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!tokens?.access_token || !organization) return;
+    
+    setCancelling(true);
+    try {
+      const response = await fetch('/api/billing/cancel-subscription', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${tokens.access_token}`,
+          'X-Tenant-ID': organization,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel subscription');
+      }
+
+      const result = await response.json();
+      alert(result.message);
+      await fetchBillingDashboard(); // Refresh data
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel subscription');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleReactivateSubscription = async () => {
+    if (!tokens?.access_token || !organization) return;
+    
+    setReactivating(true);
+    try {
+      const response = await fetch('/api/billing/reactivate-subscription', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${tokens.access_token}`,
+          'X-Tenant-ID': organization,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to reactivate subscription');
+      }
+
+      const result = await response.json();
+      alert(result.message);
+      await fetchBillingDashboard(); // Refresh data
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reactivate subscription');
+    } finally {
+      setReactivating(false);
     }
   };
 
@@ -159,6 +219,41 @@ const BillingDashboard: React.FC = () => {
     return <SuperAdminBilling data={dashboard} onRefresh={fetchBillingDashboard} />;
   }
 
+  // Check if this is a demo account
+  if (dashboard.is_demo) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Billing Dashboard</h1>
+          <Button onClick={fetchBillingDashboard} variant="outline">
+            Refresh
+          </Button>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Demo Account</CardTitle>
+            <CardDescription>This account is exempt from billing charges</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-8">
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
+                <svg className="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Demo Account</h3>
+              <p className="text-gray-600 mb-4">{dashboard.demo_message}</p>
+              <p className="text-sm text-gray-500">
+                This account has full access to all platform features without any billing charges.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -203,6 +298,38 @@ const BillingDashboard: React.FC = () => {
                   </p>
                 </div>
               )}
+              
+              {/* Subscription Management Buttons */}
+              <div className="flex gap-3 pt-4 border-t">
+                {dashboard.current_subscription.cancel_at_period_end ? (
+                  <Button 
+                    onClick={handleReactivateSubscription}
+                    disabled={reactivating}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    {reactivating ? 'Reactivating...' : 'Reactivate Subscription'}
+                  </Button>
+                ) : (
+                  <Button 
+                    onClick={handleCancelSubscription}
+                    disabled={cancelling}
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                  >
+                    {cancelling ? 'Cancelling...' : 'Cancel Subscription'}
+                  </Button>
+                )}
+                
+                <Button 
+                  variant="outline"
+                  onClick={() => {
+                    const portalUrl = `/api/billing/customer-portal?return_url=${encodeURIComponent(window.location.href)}`;
+                    window.open(portalUrl, '_blank', 'noopener,noreferrer');
+                  }}
+                >
+                  Manage Payment Methods
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="text-center py-8">

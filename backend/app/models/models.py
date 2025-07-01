@@ -80,6 +80,7 @@ class Tenant(Base):
     organization_email = Column(String, nullable=True)
     
     is_active = Column(Boolean, default=True)
+    is_demo = Column(Boolean, default=False)  # Demo accounts exempt from billing
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
@@ -90,6 +91,9 @@ class Tenant(Base):
     usage_records = relationship("UsageRecord", back_populates="tenant", cascade="all, delete-orphan")
     # NEW: Telephony relationship
     telephony_config = relationship("TelephonyConfiguration", back_populates="tenant", uselist=False, cascade="all, delete-orphan")
+    # Stripe billing relationship  
+    # Note: StripeCustomer is defined in stripe_models.py
+    stripe_customer = relationship("StripeCustomer", back_populates="tenant", uselist=False)
     
 class User(Base):
     __tablename__ = "users"
@@ -103,7 +107,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     role = Column(String, default="member")  # member, org_admin, admin
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
@@ -150,7 +154,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     title = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     status = Column(String, default=ConversationStatus.ACTIVE.value)
@@ -164,15 +168,14 @@ class Conversation(Base):
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
     users = relationship("ConversationUser", back_populates="conversation", cascade="all, delete-orphan")
     participants = relationship("ConversationParticipant", back_populates="conversation", cascade="all, delete-orphan")
-    # NEW: Telephony relationship
-    phone_calls = relationship("PhoneCall", back_populates="conversation", cascade="all, delete-orphan")
+    # No relationship to phone_calls - they are separate entities
 
 class ConversationUser(Base):
     __tablename__ = "conversation_users"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     is_active = Column(Boolean, default=True)
     joined_at = Column(DateTime(timezone=True), server_default=func.now())
     left_at = Column(DateTime(timezone=True), nullable=True)
@@ -189,7 +192,7 @@ class ConversationParticipant(Base):
     __tablename__ = "conversation_participants"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     participant_type = Column(String, nullable=False)  # phone, email
     identifier = Column(String, nullable=False)  # phone number or email
     display_name = Column(String, nullable=True)
@@ -207,7 +210,7 @@ class Message(Base):
     __tablename__ = "messages"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     participant_id = Column(UUID(as_uuid=True), ForeignKey("conversation_participants.id"), nullable=True)
     
@@ -235,7 +238,7 @@ class UsageRecord(Base):
     __tablename__ = "usage_records"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True)
     
@@ -309,7 +312,7 @@ class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token = Column(String, nullable=False, unique=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_revoked = Column(Boolean, default=False)
@@ -373,7 +376,7 @@ class PhoneVerificationAttempt(Base):
     __tablename__ = "phone_verification_attempts"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    telephony_config_id = Column(UUID(as_uuid=True), ForeignKey("telephony_configurations.id"), nullable=False)
+    telephony_config_id = Column(UUID(as_uuid=True), ForeignKey("telephony_configurations.id", ondelete="CASCADE"), nullable=False)
     
     # Verification details for organization's phone number
     verification_code = Column(String, nullable=False)
@@ -397,8 +400,8 @@ class PhoneCall(Base):
     __tablename__ = "phone_calls"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    telephony_config_id = Column(UUID(as_uuid=True), ForeignKey("telephony_configurations.id"), nullable=False)
-    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True)
+    telephony_config_id = Column(UUID(as_uuid=True), ForeignKey("telephony_configurations.id", ondelete="CASCADE"), nullable=False)
+    # No relationship to conversations - they are separate entities
     
     # Call identification
     call_sid = Column(String, unique=True, nullable=False)  # External telephony provider ID
@@ -433,7 +436,7 @@ class PhoneCall(Base):
     
     # Relationships
     telephony_config = relationship("TelephonyConfiguration", back_populates="calls")
-    conversation = relationship("Conversation", back_populates="phone_calls")
+    # No relationship to conversations - they are separate entities
     call_agents = relationship("CallAgent", back_populates="call", cascade="all, delete-orphan")
     messages = relationship("CallMessage", back_populates="call", cascade="all, delete-orphan", order_by="CallMessage.timestamp")
     
@@ -732,7 +735,7 @@ class CallAgent(Base):
     __tablename__ = "call_agents"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    call_id = Column(UUID(as_uuid=True), ForeignKey("phone_calls.id"), nullable=False)
+    call_id = Column(UUID(as_uuid=True), ForeignKey("phone_calls.id", ondelete="CASCADE"), nullable=False)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
     
     # Agent usage in call

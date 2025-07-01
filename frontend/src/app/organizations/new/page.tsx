@@ -19,7 +19,6 @@ export default function NewOrganization() {
     country: 'US',
     postal_code: ''
   })
-  const [accessCode, setAccessCode] = useState('')
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const router = useRouter()
@@ -58,76 +57,19 @@ export default function NewOrganization() {
         ...(contact_phone && { phone: contact_phone })
       }
       
-      const response = await fetch('/api/organizations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(organizationData)
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Failed to create organization')
-      }
-
-      const org = await response.json()
-      setAccessCode(org.access_code)
+      // Store organization data in sessionStorage for payment process
+      sessionStorage.setItem('pendingOrganization', JSON.stringify(organizationData))
+      
+      // Redirect to billing page instead of creating organization immediately
+      router.push('/billing/signup')
+      
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create organization')
+      setError(err instanceof Error ? err.message : 'Failed to prepare organization data')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  if (accessCode) {
-    return (
-      <div className="flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8 min-h-[calc(100vh-8rem)]">
-        <div className="max-w-2xl w-full space-y-8">
-          <div className="bg-green-50 border border-green-200 rounded-lg p-6">
-            <h2 className="text-2xl font-bold text-green-900 mb-4">
-              Organization Created Successfully!
-            </h2>
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium text-gray-700">Organization Name:</p>
-                <p className="text-lg font-semibold text-gray-900">{formData.name}</p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-700">Subdomain:</p>
-                <p className="text-lg font-semibold text-gray-900">{formData.subdomain}</p>
-              </div>
-              <div className="bg-yellow-100 border border-yellow-300 rounded-md p-4">
-                <p className="text-sm font-medium text-yellow-800 mb-2">
-                  Important: Save this access code!
-                </p>
-                <p className="text-2xl font-bold text-yellow-900 font-mono">
-                  {accessCode}
-                </p>
-                <p className="text-xs text-yellow-700 mt-2">
-                  Share this code only with authorized members who should join your organization.
-                </p>
-              </div>
-            </div>
-            <div className="mt-6 flex gap-4">
-              <button
-                onClick={() => router.push('/register')}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition duration-300"
-              >
-                Register First User
-              </button>
-              <button
-                onClick={() => router.push('/')}
-                className="flex-1 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium transition duration-300"
-              >
-                Go Home
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8 min-h-[calc(100vh-8rem)]">
@@ -194,17 +136,24 @@ export default function NewOrganization() {
 
               <div>
                 <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-                  Additional instructions for agent
+                  Custom Instructions for Agent
                 </label>
                 <textarea
                   id="description"
                   name="description"
-                  rows={3}
+                  rows={5}
                   className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                   value={formData.description}
                   onChange={handleChange}
-                  placeholder="Additional instructions for the AI agent when handling calls and conversations"
+                  placeholder="Example: 'You are a customer service representative for Acme Healthcare. Always introduce yourself as Sarah from Acme Healthcare. Our main services include primary care, cardiology, and telehealth consultations. If customers ask about appointments, direct them to call our scheduling line at (555) 123-4567. Always be professional, empathetic, and helpful. For medical emergencies, immediately direct callers to call 911.'"
                 />
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                  <p className="text-sm text-blue-800">
+                    <strong>Need help creating custom instructions?</strong> Our team can help you craft the perfect agent instructions for your organization's specific needs. 
+                    <br />
+                    <span className="font-medium">Contact us at pete@cyberiad.ai or (617) 997-1844 for personalized agent setup assistance.</span>
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -363,7 +312,7 @@ export default function NewOrganization() {
               disabled={isSubmitting}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isSubmitting ? 'Creating organization...' : 'Create Organization'}
+              {isSubmitting ? 'Preparing billing...' : 'Continue to Billing'}
             </button>
           </div>
         </form>

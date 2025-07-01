@@ -5,13 +5,14 @@ import asyncio
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_
 import logging
 
 from app.db.database import AsyncSessionLocal
 from app.models.models import Tenant
-# Stripe service removed
+from app.models.stripe_models import StripeCustomer, StripeSubscription
 from app.schemas.schemas import UsageBillingCreate
+from app.services.stripe_service import stripe_service
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,66 @@ class BillingAutomationService:
         }
         
         async with AsyncSessionLocal() as db:
-            # TODO: Implement billing logic without Stripe
-            logger.info("Billing automation disabled - Stripe service removed")
-            results["errors"].append("Billing automation disabled - Stripe service removed")
+            # Get all active organizations with subscriptions (excluding demo accounts)
+            orgs_result = await db.execute(
+                select(Tenant)
+                .join(StripeCustomer)
+                .join(StripeSubscription)
+                .where(
+                    and_(
+                        Tenant.is_active == True,
+                        Tenant.is_demo == False,  # Exclude demo accounts from billing
+                        StripeSubscription.status.in_(['active', 'past_due'])
+                    )
+                )
+            )
+            organizations = orgs_result.scalars().all()
+            
+            for org in organizations:
+                try:
+                    # Get Stripe customer
+                    customer_result = await db.execute(
+                        select(StripeCustomer).where(StripeCustomer.tenant_id == org.id)
+                    )
+                    stripe_customer = customer_result.scalar_one_or_none()
+                    
+                    if not stripe_customer:
+                        logger.warning(f"No Stripe customer found for organization {org.name}")
+                        results["failed_invoices"] += 1
+                        results["errors"].append(f"No Stripe customer for {org.name}")
+                        continue
+                    
+                    # Create invoice items for usage
+                    invoice_items = await stripe_service.create_invoice_items_for_usage(
+                        customer_id=stripe_customer.stripe_customer_id,
+                        tenant_id=org.id,
+                        db=db,
+                        period_start=period_start,
+                        period_end=period_end
+                    )
+                    
+                    if invoice_items:
+                        # Create and finalize invoice
+                        invoice = await stripe_service.create_invoice(
+                            customer_id=stripe_customer.stripe_customer_id,
+                            auto_advance=True
+                        )
+                        
+                        # Calculate total usage charges
+                        usage_charges = sum(item.amount for item in invoice_items)
+                        results["total_usage_charges"] += usage_charges
+                        results["successful_invoices"] += 1
+                        
+                        logger.info(f"Created invoice for {org.name}: ${usage_charges/100:.2f}")
+                    else:
+                        logger.info(f"No usage charges for {org.name} in period")
+                    
+                    results["processed_organizations"] += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing billing for {org.name}: {str(e)}")
+                    results["failed_invoices"] += 1
+                    results["errors"].append(f"Error for {org.name}: {str(e)}")
         
         logger.info(f"Monthly billing complete: {results}")
         return results

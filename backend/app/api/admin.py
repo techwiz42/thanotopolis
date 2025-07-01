@@ -10,7 +10,7 @@ from uuid import UUID
 import logging
 
 from app.db.database import get_db
-from app.auth.auth import get_current_user, require_admin_user
+from app.auth.auth import get_current_user, require_admin_user, require_super_admin_user
 from app.models.models import User, Tenant, UsageRecord, SystemMetrics, Conversation, PhoneCall, TelephonyConfiguration, PhoneVerificationStatus
 from app.schemas.schemas import (
     UserResponse, 
@@ -463,6 +463,121 @@ async def get_usage_by_organization(
         "end_date": end_date,
         "organizations": list(tenant_usage.values())
     }
+
+
+@router.get("/organizations")
+async def list_organizations(
+    current_user: User = Depends(require_super_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all organizations for super admin organization management"""
+    
+    # Query to get organizations with user counts
+    org_query = select(
+        Tenant.id,
+        Tenant.name,
+        Tenant.subdomain,
+        Tenant.description,
+        Tenant.full_name,
+        Tenant.phone,
+        Tenant.organization_email,
+        Tenant.is_active,
+        Tenant.is_demo,
+        Tenant.created_at,
+        Tenant.updated_at,
+        func.count(User.id).label('user_count')
+    ).select_from(
+        Tenant
+    ).outerjoin(User, User.tenant_id == Tenant.id
+    ).group_by(
+        Tenant.id, Tenant.name, Tenant.subdomain, Tenant.description,
+        Tenant.full_name, Tenant.phone, Tenant.organization_email,
+        Tenant.is_active, Tenant.is_demo, Tenant.created_at, Tenant.updated_at
+    ).order_by(Tenant.created_at.desc())
+    
+    result = await db.execute(org_query)
+    organizations = result.all()
+    
+    return [
+        {
+            "id": str(org.id),
+            "name": org.name,
+            "subdomain": org.subdomain,
+            "description": org.description,
+            "full_name": org.full_name,
+            "phone": org.phone,
+            "organization_email": org.organization_email,
+            "is_active": org.is_active,
+            "is_demo": org.is_demo,
+            "created_at": org.created_at,
+            "updated_at": org.updated_at,
+            "user_count": org.user_count or 0
+        }
+        for org in organizations
+    ]
+
+
+@router.post("/organizations/{org_id}/toggle-status")
+async def toggle_organization_status(
+    org_id: UUID,
+    current_user: User = Depends(require_super_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Toggle organization active status (super admin only)"""
+    
+    # Get organization
+    result = await db.execute(select(Tenant).where(Tenant.id == org_id))
+    org = result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    # Toggle status
+    org.is_active = not org.is_active
+    
+    await db.commit()
+    await db.refresh(org)
+    
+    logger.info(f"🔧 Super admin {current_user.email} {'activated' if org.is_active else 'deactivated'} organization {org.name} ({org.subdomain})")
+    
+    return {
+        "success": True,
+        "message": f"Organization {org.name} {'activated' if org.is_active else 'deactivated'}",
+        "is_active": org.is_active
+    }
+
+
+@router.get("/organizations/{org_id}/billing")
+async def get_organization_billing(
+    org_id: UUID,
+    current_user: User = Depends(require_super_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get billing dashboard for a specific organization (super admin only)"""
+    
+    # Import here to avoid circular imports
+    from app.api.billing import get_organization_billing_dashboard
+    
+    # Verify organization exists
+    result = await db.execute(select(Tenant).where(Tenant.id == org_id))
+    org = result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    # Get billing data for this organization
+    billing_data = await get_organization_billing_dashboard(db, org_id)
+    
+    # Add organization info to the response
+    billing_data.update({
+        "organization_id": str(org.id),
+        "organization_name": org.name,
+        "subdomain": org.subdomain
+    })
+    
+    logger.info(f"🔧 Super admin {current_user.email} viewed billing for organization {org.name} ({org.subdomain})")
+    
+    return billing_data
 
 
 @router.get("/tenants")

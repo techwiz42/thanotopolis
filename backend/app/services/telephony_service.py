@@ -69,12 +69,22 @@ class TelephonyService:
             # Update existing configuration
             config.organization_phone_number = normalized_phone
             config.formatted_phone_number = self._format_phone_number(normalized_phone)
-            config.verification_status = PhoneVerificationStatus.PENDING.value
+            
+            # Auto-verify if organization number matches platform number (Twilio-purchased number)
+            is_twilio_purchased = (normalized_phone == config.platform_phone_number)
+            config.verification_status = PhoneVerificationStatus.VERIFIED.value if is_twilio_purchased else PhoneVerificationStatus.PENDING.value
+            config.call_forwarding_enabled = is_twilio_purchased or config.call_forwarding_enabled  # Preserve existing state or auto-enable
+            
             config.welcome_message = welcome_message or config.welcome_message
             config.business_hours = business_hours or config.business_hours
         else:
             # Assign a platform phone number for this organization
             platform_number = await self._assign_platform_phone_number(db, tenant_id)
+            
+            # Auto-verify if organization number matches platform number (Twilio-purchased number)
+            is_twilio_purchased = (normalized_phone == platform_number)
+            verification_status = PhoneVerificationStatus.VERIFIED.value if is_twilio_purchased else PhoneVerificationStatus.PENDING.value
+            call_forwarding_enabled = is_twilio_purchased  # Auto-enable for Twilio numbers
             
             # Create new configuration
             config = TelephonyConfiguration(
@@ -85,8 +95,8 @@ class TelephonyService:
                 platform_phone_number=platform_number,
                 welcome_message=welcome_message or "Hello! Thank you for calling. How can our AI assistant help you today?",
                 business_hours=business_hours or self._default_business_hours(),
-                verification_status=PhoneVerificationStatus.PENDING.value,
-                call_forwarding_enabled=False,  # Will be enabled after verification
+                verification_status=verification_status,
+                call_forwarding_enabled=call_forwarding_enabled,
                 forwarding_instructions=self._generate_forwarding_instructions(platform_number)
             )
             db.add(config)
@@ -94,7 +104,12 @@ class TelephonyService:
         await db.commit()
         await db.refresh(config)
         
-        logger.info(f"📞 Phone configuration created/updated for tenant {tenant_id}: {normalized_phone} -> {config.platform_phone_number}")
+        # Log verification status
+        if config.verification_status == PhoneVerificationStatus.VERIFIED.value and normalized_phone == config.platform_phone_number:
+            logger.info(f"📞 Phone configuration created/updated for tenant {tenant_id}: {normalized_phone} -> {config.platform_phone_number} (auto-verified as Twilio-purchased number)")
+        else:
+            logger.info(f"📞 Phone configuration created/updated for tenant {tenant_id}: {normalized_phone} -> {config.platform_phone_number} (verification required)")
+        
         return config
     
     async def initiate_phone_verification(

@@ -21,6 +21,11 @@ from .models import (
     PhoneCall,
     CallAgent
 )
+from .stripe_models import (
+    StripeCustomer,
+    StripeSubscription,
+    StripeInvoice
+)
 
 __all__ = [
     "Base",

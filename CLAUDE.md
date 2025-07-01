@@ -121,6 +121,74 @@ await voice_agent.update_instructions(
 
 ---
 
+## Stripe Billing System
+
+### Implementation Overview
+
+The platform features a comprehensive Stripe-based billing system with subscription management, usage-based pricing, and automated monthly billing.
+
+#### Core Architecture:
+- **Stripe Integration**: Full customer, subscription, and invoice management
+- **Usage Tracking**: Real-time monitoring of voice services and phone calls
+- **Automated Billing**: Monthly invoice generation with detailed usage breakdown
+- **Demo Account Support**: Billing exemption for demo organizations
+
+#### Database Models (`backend/app/models/stripe_models.py`):
+- **StripeCustomer**: Links tenants to Stripe customers
+- **StripeSubscription**: Tracks subscription lifecycle and billing periods
+- **StripeInvoice**: Stores invoice history with usage tracking
+
+#### Pricing Structure:
+- **Monthly Subscription**: $299/month for platform access
+- **Voice Usage**: $1.00 per 1,000 words (STT/TTS)
+- **Phone Calls**: $1.00 per call + voice usage charges
+
+### Key Features
+
+#### Subscription Management:
+- Stripe Checkout integration for new signups
+- Cancel at period end with reactivation option
+- Customer portal for payment method management
+- Automatic trial period support
+
+#### Billing API (`backend/app/api/billing.py`):
+- Customer workflow endpoints (checkout, signup, portal)
+- Subscription management (cancel, reactivate)
+- Admin features (demo status, billing dashboard)
+- Webhook event handling
+
+#### Frontend Components:
+- **BillingDashboard**: Subscription status, usage stats, invoice history
+- **Organization Signup**: New customer onboarding flow
+- **Admin Dashboard**: Platform-wide revenue and usage metrics
+
+#### Automated Billing (`backend/app/services/billing_automation.py`):
+- Monthly billing runs on 1st of each month
+- Usage calculation for previous month
+- Automated invoice generation and delivery
+- Demo account exclusion
+
+#### Configuration:
+- Stripe API keys and webhook secrets
+- Monthly subscription price ID
+- Demo account flags in tenant model
+
+### Usage
+
+#### Manual Billing Trigger:
+```python
+from app.services.billing_automation import trigger_manual_billing
+await trigger_manual_billing()  # Bills for previous month
+```
+
+#### Demo Account Management:
+```python
+# Mark organization as demo (exempt from billing)
+POST /api/billing/set-demo-status/{tenant_id}
+```
+
+---
+
 ## Development Commands
 
 ### Testing
