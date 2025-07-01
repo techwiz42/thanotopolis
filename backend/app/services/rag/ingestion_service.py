@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from fastapi import UploadFile, HTTPException
 import magic
-import PyPDF2
+import pypdf
 import docx2txt
 from io import BytesIO
 from app.models.models import Conversation, Message
@@ -223,7 +223,7 @@ class DataIngestionManager:
         """Extract text from PDF file."""
         try:
             pdf_file = BytesIO(content)
-            reader = PyPDF2.PdfReader(pdf_file)
+            reader = pypdf.PdfReader(pdf_file)
             
             text_content = []
             for page in reader.pages:

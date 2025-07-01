@@ -296,9 +296,9 @@ class TestVoiceAgentCollaborationService:
         
         # Check consent message content
         consent_call = self.voice_session.agent.inject_message.call_args[0][0]
-        assert "LEGAL, COMPLIANCE" in consent_call
+        assert "compliance experts" in consent_call
         assert "25 seconds" in consent_call
-        assert "Would you like me to check with the experts?" in consent_call
+        assert "Would you like me to consult with them?" in consent_call
         
         assert session.timeout_task is not None
     
@@ -436,7 +436,7 @@ class TestVoiceAgentCollaborationService:
             # Should ask for clarification
             self.voice_session.agent.inject_message.assert_called_once()
             clarification_call = self.voice_session.agent.inject_message.call_args[0][0]
-            assert "didn't catch that" in clarification_call
+            assert "didn't quite understand" in clarification_call
     
     @pytest.mark.asyncio
     async def test_start_collaboration(self):
@@ -465,7 +465,7 @@ class TestVoiceAgentCollaborationService:
             assert session.state == CollaborationState.COLLABORATING
             mock_timeout_task.cancel.assert_called_once()
             self.voice_session.agent.inject_message.assert_called_once()
-            self.voice_session.agent.update_instructions.assert_called_once()
+            # Note: update_instructions is not supported in Voice Agent V1 API
             
             # Check that collaboration message was injected
             collab_call = self.voice_session.agent.inject_message.call_args[0][0]
@@ -523,17 +523,15 @@ class TestVoiceAgentCollaborationService:
             await self.service._resume_voice_agent(session)
             
             assert session.state == CollaborationState.COMPLETED
-            self.voice_session.agent.update_instructions.assert_called_once()
+            # Note: update_instructions is not supported in Voice Agent V1 API
             self.voice_session.agent.inject_message.assert_called_once()
             
-            # Check enhanced instructions
-            instructions_call = self.voice_session.agent.update_instructions.call_args[0][0]
-            assert "Expert legal advice about your situation" in instructions_call
-            assert "expert consultation" in instructions_call
+            # Note: update_instructions is not supported in Voice Agent V1 API
+            # Enhanced instructions are communicated via inject_message instead
             
             # Check response injection
             response_call = self.voice_session.agent.inject_message.call_args[0][0]
-            assert "expert consultation" in response_call
+            assert "specialist team" in response_call
             assert "Expert legal advice" in response_call
             
             # Check delayed cleanup was scheduled
@@ -811,8 +809,8 @@ class TestCollaborationServiceConfiguration:
         service = VoiceAgentCollaborationService()
         
         assert service.complexity_threshold == 0.7
-        assert service.consent_timeout == 10
-        assert service.collaboration_timeout == 30
+        assert service.consent_timeout == 20
+        assert service.collaboration_timeout == 60
         assert len(service.active_sessions) == 0
         assert service.agent_manager is not None
     

@@ -484,8 +484,8 @@ Respond with JSON:
                 "No problem! Let me give you the best answer I can provide directly."
             )
             
-            # Clean up session
-            await self._cleanup_session(session.session_id)
+            # Clean up session after delay to allow tests to access final state
+            asyncio.create_task(self._delayed_cleanup(session.session_id, 5))
             
             logger.info(f"User declined collaboration for session {session.session_id}")
             

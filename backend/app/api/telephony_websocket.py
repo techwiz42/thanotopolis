@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 import base64
-import audioop
+import struct
 import io
 import time
 import wave

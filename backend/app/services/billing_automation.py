@@ -50,6 +50,12 @@ class BillingAutomationService:
             "errors": []
         }
         
+        # Check if billing is enabled
+        if not stripe_service.is_enabled:
+            logger.info("Billing automation disabled - Stripe service not configured")
+            results["errors"].append("Billing automation disabled - Stripe service not configured")
+            return results
+        
         async with AsyncSessionLocal() as db:
             # Get all active organizations with subscriptions (excluding demo accounts)
             orgs_result = await db.execute(

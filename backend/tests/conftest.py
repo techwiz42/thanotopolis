@@ -1,6 +1,7 @@
 # tests/conftest.py
 import pytest
 import asyncio
+import warnings
 from unittest.mock import Mock, AsyncMock
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -9,6 +10,11 @@ from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from app.main import app
 from app.models.models import User, Tenant
+
+# Suppress warnings for testing
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="fastapi.*")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*TelephonyVoiceAgentHandler.*")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="_pytest.assertion.rewrite")
 
 
 # Test database configuration

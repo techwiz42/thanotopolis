@@ -30,6 +30,16 @@ class StripeService:
         # Usage-based pricing configuration
         self.VOICE_USAGE_PRICE_PER_1000 = 100  # $1.00 per 1000 words
         self.CALL_BASE_PRICE = 100  # $1.00 per call
+    
+    @property
+    def is_enabled(self) -> bool:
+        """Check if Stripe service is properly configured and enabled"""
+        return (
+            settings.STRIPE_SECRET_KEY and 
+            settings.STRIPE_SECRET_KEY != "NOT_SET" and
+            self.MONTHLY_SUBSCRIPTION_PRICE_ID and
+            self.MONTHLY_SUBSCRIPTION_PRICE_ID != "NOT_SET"
+        )
         
     async def create_customer(
         self,
