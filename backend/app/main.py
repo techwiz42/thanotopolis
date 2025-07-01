@@ -22,6 +22,8 @@ from app.api.agents import router as agents_router
 # NEW: Telephony routers
 from app.api.telephony import router as telephony_router
 from app.api.telephony_websocket import router as telephony_ws_router
+# CRM router
+from app.api.crm import router as crm_router
 from app.core.config import settings
 
 # Set up logging
@@ -422,6 +424,13 @@ try:
     logger.info("✅ Agents router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register agents router: {e}")
+
+# CRM router
+try:
+    app.include_router(crm_router, prefix="/api", tags=["CRM"])
+    logger.info("✅ CRM router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register CRM router: {e}")
 
 # NEW: Add telephony routers
 try:

@@ -574,3 +574,209 @@ class CallAnalytics(BaseModel):
     call_status_breakdown: Dict[str, int]
     calls_by_hour: Dict[str, int]
     top_agents_used: List[Dict[str, Any]]
+
+# ============================================================================
+# CRM SCHEMAS
+# ============================================================================
+
+# CRM Enums
+class ContactStatus(str, Enum):
+    LEAD = "lead"
+    PROSPECT = "prospect"
+    CUSTOMER = "customer"
+    INACTIVE = "inactive"
+    QUALIFIED = "qualified"
+    CLOSED_WON = "closed_won"
+    CLOSED_LOST = "closed_lost"
+
+class ContactInteractionType(str, Enum):
+    PHONE_CALL = "phone_call"
+    EMAIL = "email"
+    MEETING = "meeting"
+    NOTE = "note"
+    TASK = "task"
+    FOLLOW_UP = "follow_up"
+
+class CustomFieldType(str, Enum):
+    TEXT = "text"
+    NUMBER = "number"
+    DATE = "date"
+    EMAIL = "email"
+    PHONE = "phone"
+    SELECT = "select"
+    BOOLEAN = "boolean"
+    TEXTAREA = "textarea"
+
+# Contact Schemas
+class ContactBase(BaseModel):
+    business_name: str = Field(..., min_length=1, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=50)
+    contact_name: str = Field(..., min_length=1, max_length=255)
+    contact_email: Optional[EmailStr] = None
+    contact_role: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=20)
+    website: Optional[str] = Field(None, max_length=255)
+    address: Optional[str] = None
+    status: ContactStatus = ContactStatus.LEAD
+    notes: Optional[str] = None
+    custom_fields: Dict[str, Any] = Field(default_factory=dict)
+    stripe_customer_id: Optional[str] = None
+
+class ContactCreate(ContactBase):
+    pass
+
+class ContactUpdate(BaseModel):
+    business_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=50)
+    contact_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    contact_email: Optional[EmailStr] = None
+    contact_role: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=20)
+    website: Optional[str] = Field(None, max_length=255)
+    address: Optional[str] = None
+    status: Optional[ContactStatus] = None
+    notes: Optional[str] = None
+    custom_fields: Optional[Dict[str, Any]] = None
+    stripe_customer_id: Optional[str] = None
+
+class ContactResponse(ContactBase):
+    id: UUID
+    tenant_id: UUID
+    created_by_user_id: Optional[UUID]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    interaction_count: Optional[int] = 0
+    last_interaction_date: Optional[datetime] = None
+    billing_status: Optional[str] = None  # Populated from Stripe data
+    subscription_status: Optional[str] = None  # Populated from Stripe data
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Contact Interaction Schemas
+class ContactInteractionBase(BaseModel):
+    interaction_type: ContactInteractionType
+    subject: Optional[str] = Field(None, max_length=255)
+    content: str = Field(..., min_length=1)
+    interaction_date: datetime
+    interaction_metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ContactInteractionCreate(ContactInteractionBase):
+    contact_id: UUID
+
+class ContactInteractionUpdate(BaseModel):
+    interaction_type: Optional[ContactInteractionType] = None
+    subject: Optional[str] = Field(None, max_length=255)
+    content: Optional[str] = Field(None, min_length=1)
+    interaction_date: Optional[datetime] = None
+    interaction_metadata: Optional[Dict[str, Any]] = None
+
+class ContactInteractionResponse(ContactInteractionBase):
+    id: UUID
+    contact_id: UUID
+    user_id: UUID
+    created_at: datetime
+    updated_at: Optional[datetime]
+    user_name: Optional[str] = None  # Populated from user relationship
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Custom Field Schemas
+class CustomFieldBase(BaseModel):
+    field_name: str = Field(..., min_length=1, max_length=50, pattern=r'^[a-zA-Z][a-zA-Z0-9_]*$')
+    field_label: str = Field(..., min_length=1, max_length=100)
+    field_type: CustomFieldType
+    field_options: Dict[str, Any] = Field(default_factory=dict)
+    is_required: bool = False
+    display_order: int = Field(default=0, ge=0)
+    is_active: bool = True
+
+class CustomFieldCreate(CustomFieldBase):
+    pass
+
+class CustomFieldUpdate(BaseModel):
+    field_label: Optional[str] = Field(None, min_length=1, max_length=100)
+    field_type: Optional[CustomFieldType] = None
+    field_options: Optional[Dict[str, Any]] = None
+    is_required: Optional[bool] = None
+    display_order: Optional[int] = Field(None, ge=0)
+    is_active: Optional[bool] = None
+
+class CustomFieldResponse(CustomFieldBase):
+    id: UUID
+    tenant_id: UUID
+    created_by_user_id: Optional[UUID]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# CSV Import Schemas
+class ContactImportRequest(BaseModel):
+    csv_data: str = Field(..., description="CSV data as string")
+    field_mapping: Dict[str, str] = Field(..., description="Map CSV headers to contact fields")
+    skip_header: bool = Field(default=True, description="Skip first row as header")
+    update_existing: bool = Field(default=False, description="Update existing contacts based on email")
+
+class ContactImportResult(BaseModel):
+    total_rows: int
+    successful_imports: int
+    failed_imports: int
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    created_contacts: List[UUID] = Field(default_factory=list)
+    updated_contacts: List[UUID] = Field(default_factory=list)
+
+# Email Template Schemas
+class EmailTemplateBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    subject: str = Field(..., min_length=1, max_length=255)
+    html_content: str = Field(..., min_length=1)
+    text_content: Optional[str] = None
+    variables: List[str] = Field(default_factory=list, description="Available template variables")
+
+class EmailTemplateCreate(EmailTemplateBase):
+    pass
+
+class EmailTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    subject: Optional[str] = Field(None, min_length=1, max_length=255)
+    html_content: Optional[str] = Field(None, min_length=1)
+    text_content: Optional[str] = None
+    variables: Optional[List[str]] = None
+
+class EmailTemplateResponse(EmailTemplateBase):
+    id: UUID
+    tenant_id: UUID
+    created_by_user_id: Optional[UUID]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Bulk Email Schemas
+class BulkEmailRequest(BaseModel):
+    template_id: UUID
+    contact_ids: List[UUID] = Field(..., min_items=1)
+    template_variables: Dict[str, Any] = Field(default_factory=dict)
+    schedule_send: Optional[datetime] = None
+
+class BulkEmailResult(BaseModel):
+    total_recipients: int
+    successful_sends: int
+    failed_sends: int
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    email_ids: List[str] = Field(default_factory=list)
+
+# CRM Dashboard Schemas
+class CRMDashboardStats(BaseModel):
+    total_contacts: int
+    contacts_by_status: Dict[str, int]
+    recent_interactions: List[ContactInteractionResponse]
+    upcoming_tasks: List[ContactInteractionResponse]
+    contact_growth: Dict[str, int]  # Last 30 days
+    
+class CRMDashboardResponse(BaseModel):
+    stats: CRMDashboardStats
+    recent_contacts: List[ContactResponse]
+    custom_fields: List[CustomFieldResponse]

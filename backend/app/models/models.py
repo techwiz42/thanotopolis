@@ -94,6 +94,10 @@ class Tenant(Base):
     # Stripe billing relationship  
     # Note: StripeCustomer is defined in stripe_models.py
     stripe_customer = relationship("StripeCustomer", back_populates="tenant", uselist=False)
+    # CRM relationships
+    contacts = relationship("Contact", back_populates="tenant", cascade="all, delete-orphan")
+    custom_fields = relationship("CustomField", back_populates="tenant", cascade="all, delete-orphan")
+    email_templates = relationship("EmailTemplate", back_populates="tenant", cascade="all, delete-orphan")
     
 class User(Base):
     __tablename__ = "users"
@@ -753,6 +757,166 @@ class CallAgent(Base):
     agent = relationship("Agent", back_populates="call_usages")
 
 # ============================================================================
+# CRM MODELS
+# ============================================================================
+
+class ContactStatus(str, enum.Enum):
+    LEAD = "lead"
+    PROSPECT = "prospect"
+    CUSTOMER = "customer"
+    INACTIVE = "inactive"
+    QUALIFIED = "qualified"
+    CLOSED_WON = "closed_won"
+    CLOSED_LOST = "closed_lost"
+
+class ContactInteractionType(str, enum.Enum):
+    PHONE_CALL = "phone_call"
+    EMAIL = "email"
+    MEETING = "meeting"
+    NOTE = "note"
+    TASK = "task"
+    FOLLOW_UP = "follow_up"
+
+class CustomFieldType(str, enum.Enum):
+    TEXT = "text"
+    NUMBER = "number"
+    DATE = "date"
+    EMAIL = "email"
+    PHONE = "phone"
+    SELECT = "select"
+    BOOLEAN = "boolean"
+
+class Contact(Base):
+    __tablename__ = "contacts"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    
+    # Core contact information
+    business_name = Column(String, nullable=False)
+    city = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    contact_name = Column(String, nullable=False)
+    contact_email = Column(String, nullable=True)
+    contact_role = Column(String, nullable=True)
+    
+    # Contact details
+    phone = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    address = Column(Text, nullable=True)
+    
+    # CRM fields
+    status = Column(String, default=ContactStatus.LEAD.value)
+    notes = Column(Text, nullable=True)
+    
+    # Custom fields (JSON for flexibility)
+    custom_fields = Column(JSONB, default={})
+    
+    # Billing integration
+    stripe_customer_id = Column(String, nullable=True)  # Link to Stripe customer for billing
+    
+    # Metadata
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    tenant = relationship("Tenant", back_populates="contacts")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    interactions = relationship("ContactInteraction", back_populates="contact", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<Contact {self.business_name} - {self.contact_name}>"
+
+class ContactInteraction(Base):
+    __tablename__ = "contact_interactions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contact_id = Column(UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    
+    # Interaction details
+    interaction_type = Column(String, nullable=False)
+    subject = Column(String, nullable=True)
+    content = Column(Text, nullable=False)
+    
+    # Date/time
+    interaction_date = Column(DateTime(timezone=True), nullable=False)
+    
+    # Metadata
+    interaction_metadata = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    contact = relationship("Contact", back_populates="interactions")
+    user = relationship("User")
+    
+    def __repr__(self):
+        return f"<ContactInteraction {self.interaction_type} - {self.subject}>"
+
+class CustomField(Base):
+    __tablename__ = "custom_fields"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    
+    # Field definition
+    field_name = Column(String, nullable=False)
+    field_label = Column(String, nullable=False)
+    field_type = Column(String, nullable=False)  # text, number, date, email, phone, select, boolean
+    field_options = Column(JSONB, default={})  # For select fields, validation rules, etc.
+    
+    # Display settings
+    is_required = Column(Boolean, default=False)
+    display_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    
+    # Metadata
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Unique constraint for field name per tenant
+    __table_args__ = (UniqueConstraint('tenant_id', 'field_name', name='unique_field_per_tenant'),)
+    
+    # Relationships
+    tenant = relationship("Tenant", back_populates="custom_fields")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    
+    def __repr__(self):
+        return f"<CustomField {self.field_name} ({self.field_type})>"
+
+class EmailTemplate(Base):
+    __tablename__ = "email_templates"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    
+    # Template details
+    name = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    html_content = Column(Text, nullable=False)
+    text_content = Column(Text, nullable=True)
+    variables = Column(JSONB, default=[])  # List of available template variables
+    
+    # Metadata
+    is_active = Column(Boolean, default=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Unique constraint for template name per tenant
+    __table_args__ = (UniqueConstraint('tenant_id', 'name', name='unique_template_per_tenant'),)
+    
+    # Relationships
+    tenant = relationship("Tenant", back_populates="email_templates")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    
+    def __repr__(self):
+        return f"<EmailTemplate {self.name}>"
+
+# ============================================================================
 # INDEXES FOR PERFORMANCE
 # ============================================================================
 
@@ -790,3 +954,17 @@ Index('idx_phone_calls_status', PhoneCall.status)
 Index('idx_phone_verification_config_id', PhoneVerificationAttempt.telephony_config_id)
 Index('idx_call_agents_call_id', CallAgent.call_id)
 Index('idx_call_agents_agent_id', CallAgent.agent_id)
+
+# CRM indexes
+Index('idx_contacts_tenant_id', Contact.tenant_id)
+Index('idx_contacts_business_name', Contact.business_name)
+Index('idx_contacts_contact_email', Contact.contact_email)
+Index('idx_contacts_status', Contact.status)
+Index('idx_contacts_created_at', Contact.created_at)
+Index('idx_contact_interactions_contact_id', ContactInteraction.contact_id)
+Index('idx_contact_interactions_user_id', ContactInteraction.user_id)
+Index('idx_contact_interactions_date', ContactInteraction.interaction_date)
+Index('idx_custom_fields_tenant_id', CustomField.tenant_id)
+Index('idx_custom_fields_field_name', CustomField.field_name)
+Index('idx_email_templates_tenant_id', EmailTemplate.tenant_id)
+Index('idx_email_templates_name', EmailTemplate.name)

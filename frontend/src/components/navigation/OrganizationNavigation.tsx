@@ -20,7 +20,8 @@ import {
   Headphones,
   Radio,
   Activity,
-  TestTube
+  TestTube,
+  UserCheck
 } from 'lucide-react';
 
 import { telephonyService, TelephonyConfig } from '@/services/telephony';
@@ -123,6 +124,12 @@ export default function OrganizationNavigation() {
       href: '/conversations',
       icon: MessageSquare,
       description: 'AI-powered chat conversations'
+    },
+    {
+      name: 'CRM',
+      href: '/organizations/crm',
+      icon: UserCheck,
+      description: 'Contact management and customer relationships'
     }
   ];
 
