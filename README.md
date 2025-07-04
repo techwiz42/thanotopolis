@@ -43,9 +43,17 @@ Integration combining Voice Agent's real-time capabilities with 20+ specialist a
 - **Service Agents**: Financial, Compliance, Emergency, Inventory, Grief Support
 - **Technical Agents**: Web Search, Regulatory, Documentation
 
-## 📢 What's New (June 2025)
+## 📢 What's New
 
-### **Recent Updates**
+### **July 2025 Updates**
+- **📇 CRM System**: Complete Customer Relationship Management system with contact management
+- **📧 Email Integration**: SendGrid-powered email campaigns with template system
+- **📊 CSV Import**: Bulk contact import with field mapping and validation
+- **💰 Billing Integration**: Direct connection between CRM contacts and Stripe customers
+- **🎨 Custom Fields**: Dynamic field creation per organization with validation rules
+- **📈 Interaction Tracking**: Complete customer touchpoint history and timeline
+
+### **June 2025 Updates**
 - **🎙️ Deepgram Voice Agent**: Complete telephony architecture update with 90% latency reduction
 - **🤖 Voice-Agent Collaboration**: Consent-based specialist agent integration for complex queries
 - **📊 Advanced Call Analytics**: Message-based call tracking with granular transcript analysis
@@ -84,6 +92,9 @@ erDiagram
     TENANTS ||--o{ USERS : owns
     TENANTS ||--o{ CONVERSATIONS : hosts
     TENANTS ||--o{ AGENTS : owns
+    TENANTS ||--o{ CONTACTS : manages
+    TENANTS ||--o{ CUSTOM_FIELDS : defines
+    TENANTS ||--o{ EMAIL_TEMPLATES : stores
     TENANTS ||--|| TELEPHONY_CONFIGURATIONS : has
     
     TELEPHONY_CONFIGURATIONS ||--o{ PHONE_CALLS : receives
@@ -101,8 +112,13 @@ erDiagram
     USERS ||--o{ CONVERSATIONS : creates
     USERS ||--o{ USAGE_RECORDS : generates
     USERS ||--o{ DOCUMENT_EMBEDDINGS : owns
+    USERS ||--o{ CONTACTS : creates
+    USERS ||--o{ CONTACT_INTERACTIONS : logs
     
     AGENTS ||--o{ CALL_AGENTS : participates_in
+    
+    CONTACTS ||--o{ CONTACT_INTERACTIONS : has
+    CONTACTS }o--|| STRIPE_CUSTOMERS : linked_to
     
     TENANTS {
         uuid id PK
@@ -235,6 +251,64 @@ erDiagram
         timestamp usage_date
         timestamp created_at
     }
+    
+    CONTACTS {
+        uuid id PK
+        uuid tenant_id FK
+        string business_name
+        string city
+        string state
+        string contact_name
+        string contact_email UK
+        string contact_role
+        string phone
+        string website
+        text address
+        text notes
+        string status
+        jsonb custom_fields
+        string stripe_customer_id FK
+        uuid created_by_user_id FK
+        timestamp created_at
+        timestamp updated_at
+    }
+    
+    CONTACT_INTERACTIONS {
+        uuid id PK
+        uuid contact_id FK
+        uuid user_id FK
+        string interaction_type
+        string subject
+        text content
+        timestamp interaction_date
+        jsonb metadata
+        timestamp created_at
+    }
+    
+    CUSTOM_FIELDS {
+        uuid id PK
+        uuid tenant_id FK
+        string field_name UK
+        string field_label
+        string field_type
+        jsonb field_options
+        boolean is_required
+        integer display_order
+        boolean is_active
+        uuid created_by_user_id FK
+    }
+    
+    EMAIL_TEMPLATES {
+        uuid id PK
+        uuid tenant_id FK
+        string name UK
+        string subject
+        text html_content
+        text text_content
+        jsonb variables
+        boolean is_active
+        uuid created_by_user_id FK
+    }
 ```
 
 ### **Backend Code Structure**
@@ -285,6 +359,7 @@ backend/
 │   │   ├── agents.py                   # Agent discovery & configuration
 │   │   ├── organizations.py            # Multi-tenant management
 │   │   ├── billing.py                  # Usage tracking & payments
+│   │   ├── crm.py                      # 📇 CRM endpoints & contact management
 │   │   ├── telephony.py                # Legacy telephony API
 │   │   ├── telephony_voice_agent.py    # 🎙️ Voice Agent WebSocket handler
 │   │   ├── telephony_websocket.py      # Legacy telephony WebSocket
@@ -314,10 +389,12 @@ backend/
 │   │   ├── billing_automation.py       # Automated billing & usage
 │   │   ├── usage_service.py            # Usage tracking & metrics
 │   │   ├── monitoring_service.py       # System monitoring
+│   │   ├── email_service.py            # 📧 SendGrid email integration
 │   │   └── context_manager.py          # Request context management
 │   │
 │   ├── models/                         # 🗄️ Database Models
-│   │   └── models.py                   # Complete SQLAlchemy schema
+│   │   ├── models.py                   # Complete SQLAlchemy schema
+│   │   └── stripe_models.py            # Stripe billing models
 │   │
 │   ├── schemas/                        # 📋 Pydantic Schemas
 │   │   └── schemas.py                  # API request/response models
@@ -406,6 +483,9 @@ frontend/
 │   │   │   │       ├── PhoneVerificationModal.tsx
 │   │   │   │       ├── BusinessHoursEditor.tsx
 │   │   │   │       └── ForwardingInstructionsModal.tsx
+│   │   │   ├── crm/                    # 📇 CRM Interface
+│   │   │   │   ├── page.tsx            # Contact list & dashboard
+│   │   │   │   └── components/         # CRM UI components
 │   │   │   ├── admin/page.tsx         # Organization admin
 │   │   │   ├── members/page.tsx       # Member management
 │   │   │   ├── edit/page.tsx          # Organization settings
@@ -691,6 +771,129 @@ The web chat leverages the same 20+ specialist agents available to telephony:
 5. **Unified response** delivered through natural conversation flow
 6. **Conversation history** preserved for follow-up and reference
 
+## 📇 CRM System
+
+### **Comprehensive Customer Relationship Management**
+A fully-featured CRM system integrated into the platform, providing organizations with professional contact management, interaction tracking, email campaigns, and direct billing integration. The CRM is designed specifically for organizations needing to manage customer relationships alongside their AI-powered communication services.
+
+### **Core CRM Features**
+- **Contact Management**: Complete customer database with business and personal information
+- **Interaction Tracking**: Log calls, emails, meetings, notes, and tasks with timeline view
+- **Email Campaigns**: SendGrid-powered bulk email with personalized templates
+- **CSV Import**: Bulk contact import with intelligent field mapping and validation
+- **Custom Fields**: Organization-specific dynamic fields with validation rules
+- **Billing Integration**: Direct link to Stripe subscription and payment status
+- **Admin-Only Access**: Secure access restricted to admin and super_admin roles
+
+### **Contact Management System**
+- **Business Information**: Company name, address, website, industry details
+- **Contact Person**: Name, email, phone, role, and communication preferences
+- **Status Workflow**: Lead → Prospect → Qualified → Customer → Closed Won/Lost
+- **Custom Fields**: Add organization-specific data fields dynamically
+- **Search & Filter**: Real-time search by name, email, or status
+- **Duplicate Prevention**: Email-based duplicate detection within organizations
+
+### **Interaction Tracking**
+Comprehensive timeline of all customer touchpoints:
+- **Phone Calls**: Log inbound/outbound calls with notes and duration
+- **Emails**: Track sent/received emails with subject and content
+- **Meetings**: Schedule and document in-person or virtual meetings
+- **Notes**: Add internal notes and observations
+- **Tasks**: Create follow-up tasks with due dates
+- **Follow-ups**: Set reminders for future actions
+
+### **Email Campaign System**
+#### **SendGrid Integration**
+- Professional email delivery with tracking and analytics
+- HTML and plain text email support
+- Bulk sending with personalization
+- Template variable substitution
+- Error handling and delivery reports
+
+#### **Template System**
+- **Jinja2 Templates**: Dynamic content with variable substitution
+- **Default Templates**: Pre-built for common scenarios (welcome, follow-up, reminders)
+- **Custom Templates**: Create organization-specific templates
+- **Variable Support**: `{{contact_name}}`, `{{business_name}}`, `{{organization_name}}`, etc.
+- **Preview System**: Test templates before sending
+
+#### **Example Email Template**
+```html
+<h2>Welcome {{contact_name}}!</h2>
+<p>Thank you for your interest in {{organization_name}}. We're excited to work with {{business_name}}.</p>
+<p>Our team specializes in providing compassionate funeral and memorial services.</p>
+<p>Best regards,<br>{{organization_name}} Team</p>
+```
+
+### **CSV Import Features**
+- **Drag-and-Drop Interface**: Intuitive field mapping UI
+- **Smart Field Detection**: Automatic column recognition
+- **Duplicate Handling**: Update existing or skip duplicates
+- **Validation**: Real-time error detection with row-by-row feedback
+- **Preview Mode**: Review mapped data before import
+- **Large File Support**: Efficient batch processing
+
+#### **CSV Format Example**
+```csv
+business_name,contact_name,contact_email,phone,city,state,status,notes
+"Smith Funeral Home","John Smith","john@smithfh.com","+1-555-123-4567","New York","NY","lead","Interested in voice agent services"
+"Memorial Gardens","Jane Doe","jane@memorial.com","+1-555-987-6543","Los Angeles","CA","customer","Active subscriber since 2024"
+```
+
+### **Billing Integration**
+- **Stripe Customer Link**: Connect CRM contacts to billing accounts
+- **Subscription Status**: View active/canceled/trial status
+- **Payment History**: Access invoice and payment records
+- **Usage Metrics**: See voice agent and call usage statistics
+- **Demo Accounts**: Special handling for demo organizations
+
+### **Technical Implementation**
+#### **Database Schema**
+- **contacts**: Core contact information with tenant isolation
+- **contact_interactions**: Complete interaction history
+- **custom_fields**: Dynamic field definitions per organization
+- **email_templates**: Reusable email templates with variables
+
+#### **API Endpoints**
+- **`GET /api/crm/dashboard`**: Statistics and recent activity
+- **`GET/POST/PUT/DELETE /api/crm/contacts`**: Full CRUD operations
+- **`POST /api/crm/contacts/import`**: CSV import with mapping
+- **`GET/POST /api/crm/contacts/{id}/interactions`**: Interaction management
+- **`POST /api/crm/contacts/bulk-email`**: Send emails to multiple contacts
+- **`GET/POST/PUT/DELETE /api/crm/custom-fields`**: Custom field management
+- **`GET/POST/PUT/DELETE /api/crm/email-templates`**: Template management
+
+#### **Frontend Interface**
+- **Location**: `/organizations/crm` (admin-only access)
+- **Card Layout**: Visual contact cards with key information
+- **Responsive Design**: Desktop and mobile optimized
+- **Real-time Search**: Instant filtering as you type
+- **Status Filters**: Quick filter by lead status
+- **Action Buttons**: Quick access to email, call, and edit functions
+
+### **Security & Access Control**
+- **Role-Based Access**: CRM restricted to admin and super_admin users
+- **Tenant Isolation**: Contacts strictly segregated by organization
+- **API Authentication**: JWT token required for all endpoints
+- **Data Validation**: Input sanitization and validation
+- **Audit Trail**: Track who created/modified contacts
+
+### **Configuration Requirements**
+```bash
+# SendGrid Email Configuration
+SENDGRID_API_KEY=your_sendgrid_api_key
+SMTP_FROM_EMAIL=noreply@yourdomain.com
+SMTP_FROM_NAME=Your Organization Name
+```
+
+### **How CRM Works**
+1. **Admin accesses** CRM through organization navigation
+2. **Contacts imported** via manual entry or CSV upload
+3. **Interactions logged** for complete customer history
+4. **Email campaigns** sent using personalized templates
+5. **Billing status** monitored through Stripe integration
+6. **Follow-ups tracked** ensuring no opportunity is missed
+
 ## 🌐 API Architecture
 
 ### **Core API Endpoints**
@@ -700,6 +903,7 @@ The web chat leverages the same 20+ specialist agents available to telephony:
 - **`/api/telephony/*`** - Phone system integration
 - **`/api/organizations/*`** - Multi-tenant management
 - **`/api/billing/*`** - Usage tracking & payments
+- **`/api/crm/*`** - Contact management & CRM operations
 
 ### **Real-time WebSocket Endpoints**
 - **`/api/ws/conversation/{id}`** - Chat conversations
@@ -712,6 +916,21 @@ The web chat leverages the same 20+ specialist agents available to telephony:
 - **`POST /api/telephony/calls/{call_id}/messages`** - Add call messages
 - **`PATCH /api/telephony/calls/{call_id}/messages/{message_id}`** - Update messages
 - **`DELETE /api/telephony/calls/{call_id}/messages/{message_id}`** - Delete messages
+
+### **CRM APIs**
+- **`GET /api/crm/dashboard`** - CRM statistics and recent activity
+- **`GET /api/crm/contacts`** - List contacts with search/filter
+- **`POST /api/crm/contacts`** - Create new contact
+- **`PUT /api/crm/contacts/{id}`** - Update contact information
+- **`DELETE /api/crm/contacts/{id}`** - Delete contact
+- **`POST /api/crm/contacts/import`** - CSV import with field mapping
+- **`GET /api/crm/contacts/{id}/interactions`** - Get contact interactions
+- **`POST /api/crm/contacts/{id}/interactions`** - Log new interaction
+- **`POST /api/crm/contacts/bulk-email`** - Send bulk emails
+- **`GET /api/crm/custom-fields`** - List custom fields
+- **`POST /api/crm/custom-fields`** - Create custom field
+- **`GET /api/crm/email-templates`** - List email templates
+- **`POST /api/crm/email-templates`** - Create email template
 
 ## 🤖 AI Agent Ecosystem
 
