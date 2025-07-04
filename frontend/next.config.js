@@ -1,6 +1,43 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Optimize memory usage during builds
+  experimental: {
+    // Reduce memory usage by limiting worker threads
+    workerThreads: false,
+    // Reduce memory pressure during builds
+    cpus: 1,
+  },
+  // Optimize webpack for memory usage
+  webpack: (config, { isServer }) => {
+    // Fix webpack chunk loading for server-side rendering
+    // This prevents the 'self is not defined' error
+    if (isServer) {
+      config.output.globalObject = '(typeof self !== "undefined" ? self : this)';
+    }
+    
+    // Simplified optimization to prevent chunk loading issues
+    config.optimization = {
+      ...config.optimization,
+      splitChunks: {
+        ...config.optimization.splitChunks,
+        cacheGroups: {
+          default: false,
+          vendors: false,
+        },
+      },
+    };
+    
+    // Limit parallelism to reduce memory usage
+    config.parallelism = 1;
+    
+    // Disable caching during builds to save memory
+    if (process.env.WEBPACK_DISABLE_CACHE === 'true') {
+      config.cache = false;
+    }
+    
+    return config;
+  },
   async rewrites() {
     return [
       {

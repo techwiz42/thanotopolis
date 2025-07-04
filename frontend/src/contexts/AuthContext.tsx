@@ -3,26 +3,10 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { User, AuthTokens } from '@/types/user.types'
 
-// Types
-interface User {
-  id: string
-  email: string
-  username: string
-  first_name?: string
-  last_name?: string
-  role: string
-  is_active: boolean
-  is_verified: boolean
-  tenant_id: string
-  created_at: string
-}
-
-export interface AuthTokens {
-  access_token: string
-  refresh_token: string
-  token_type: string
-}
+// Re-export AuthTokens for backward compatibility
+export type { AuthTokens }
 
 interface AuthContextType {
   user: User | null

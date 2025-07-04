@@ -480,14 +480,51 @@ business_name,contact_name,contact_email,phone,city,state,status
 6. **Security**: Admin-only access with tenant isolation
 7. **User-Friendly Interface**: Intuitive card-based design
 
+### Email Domain Verification System (Future Enhancement)
+
+**Challenge**: Currently all CRM emails must be sent from `pete@cyberiad.ai` (the only verified sender in SendGrid). Organizations cannot send emails from their own domains.
+
+**Proposed Solution**: Implement programmatic domain verification system allowing organizations to verify their own domains through the CRM interface.
+
+**Implementation Plan**:
+1. **Admin Interface**: Domain registration form, DNS record display, verification status
+2. **Backend API**: 
+   - `POST /email-settings/register-domain` - Register domain with SendGrid API
+   - `GET /email-settings/verify-domain/{domain_id}` - Check verification status
+3. **Database Schema**: 
+   ```sql
+   CREATE TABLE email_domains (
+       id UUID PRIMARY KEY,
+       tenant_id UUID REFERENCES tenants(id),
+       domain VARCHAR NOT NULL,
+       sendgrid_domain_id VARCHAR,
+       verification_status VARCHAR DEFAULT 'pending',
+       dns_records JSONB,
+       verified_at TIMESTAMP,
+       created_at TIMESTAMP DEFAULT NOW()
+   );
+   ```
+4. **SendGrid Integration**: Use Domain Authentication API for programmatic domain verification
+5. **User Flow**: 
+   - User enters domain → System generates DNS records → User adds DNS records → System verifies → Domain becomes available for sending
+6. **Email Service Update**: Automatically use organization's verified domain when available, fallback to `pete@cyberiad.ai`
+
+**Alternative Approaches**:
+- **Reply-To Method**: Send from `pete@cyberiad.ai` with customer email as reply-to
+- **Per-Organization SendGrid**: Each org gets their own SendGrid account
+- **Subdomain Approach**: Use `orgname@thanotopolis.com` pattern
+
+**Current Status**: All CRM emails use `pete@cyberiad.ai` as verified sender. Domain verification system planned for future implementation.
+
 ### Future Enhancements
 
-1. **Advanced Email Campaigns**: Automated drip campaigns and segmentation
-2. **Mobile App**: Native mobile interface for field sales teams
-3. **Calendar Integration**: Schedule and track meetings
-4. **Advanced Analytics**: Contact scoring and pipeline forecasting
-5. **API Webhooks**: Real-time integration with external systems
-6. **Document Management**: Attach files and documents to contacts
+1. **Email Domain Verification**: Allow organizations to send from their own verified domains
+2. **Advanced Email Campaigns**: Automated drip campaigns and segmentation
+3. **Mobile App**: Native mobile interface for field sales teams
+4. **Calendar Integration**: Schedule and track meetings
+5. **Advanced Analytics**: Contact scoring and pipeline forecasting
+6. **API Webhooks**: Real-time integration with external systems
+7. **Document Management**: Attach files and documents to contacts
 
 ### Current Status (June 27, 2025)
 

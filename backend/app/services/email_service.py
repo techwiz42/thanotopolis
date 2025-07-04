@@ -58,8 +58,8 @@ class SendGridEmailService:
             self.client = SendGridAPIClient(api_key=self.api_key)
         
         self.template_service = EmailTemplateService()
-        self.from_email = os.getenv('SMTP_FROM_EMAIL', 'noreply@thanotopolis.com')
-        self.from_name = os.getenv('SMTP_FROM_NAME', 'Thanotopolis')
+        self.from_email = 'pete@cyberiad.ai'  # Verified SendGrid sender
+        self.from_name = 'Thanotopolis CRM'
     
     def is_configured(self) -> bool:
         """Check if SendGrid is properly configured"""

@@ -12,7 +12,7 @@ import io
 import logging
 
 from app.db.database import get_db
-from app.auth.auth import get_current_user, require_admin_user
+from app.auth.auth import get_current_user
 from app.models.models import (
     User, Tenant, Contact, ContactInteraction, CustomField, EmailTemplate,
     ContactStatus, ContactInteractionType, CustomFieldType
@@ -75,7 +75,7 @@ async def get_contact_billing_status(contact: Contact, db: AsyncSession) -> tupl
 
 @router.get("/dashboard", response_model=CRMDashboardResponse)
 async def get_crm_dashboard(
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get CRM dashboard with stats and recent data"""
@@ -179,7 +179,7 @@ async def get_crm_dashboard(
 
 @router.get("/contacts", response_model=PaginatedResponse)
 async def list_contacts(
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     pagination: PaginationParams = Depends(),
     search: Optional[str] = Query(None, description="Search in business name, contact name, or email"),
     status: Optional[ContactStatus] = Query(None),
@@ -264,7 +264,7 @@ async def list_contacts(
 @router.get("/contacts/{contact_id}", response_model=ContactResponse)
 async def get_contact(
     contact_id: UUID,
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get contact details"""
@@ -308,7 +308,7 @@ async def get_contact(
 @router.post("/contacts", response_model=ContactResponse)
 async def create_contact(
     contact_data: ContactCreate,
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new contact"""
@@ -348,7 +348,7 @@ async def create_contact(
 async def update_contact(
     contact_id: UUID,
     contact_data: ContactUpdate,
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update contact"""
@@ -394,7 +394,7 @@ async def update_contact(
 @router.delete("/contacts/{contact_id}")
 async def delete_contact(
     contact_id: UUID,
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete contact"""
@@ -425,7 +425,7 @@ async def delete_contact(
 @router.get("/contacts/{contact_id}/interactions", response_model=List[ContactInteractionResponse])
 async def list_contact_interactions(
     contact_id: UUID,
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     interaction_type: Optional[ContactInteractionType] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
@@ -468,7 +468,7 @@ async def list_contact_interactions(
 @router.post("/interactions", response_model=ContactInteractionResponse)
 async def create_interaction(
     interaction_data: ContactInteractionCreate,
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new interaction"""
@@ -511,7 +511,7 @@ async def import_contacts_csv(
     file: UploadFile = File(...),
     field_mapping: str = Query(..., description="JSON string mapping CSV headers to contact fields"),
     update_existing: bool = Query(False, description="Update existing contacts based on email"),
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Import contacts from CSV file"""
@@ -627,7 +627,7 @@ async def import_contacts_csv(
 
 @router.get("/custom-fields", response_model=List[CustomFieldResponse])
 async def list_custom_fields(
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     include_inactive: bool = Query(False),
     db: AsyncSession = Depends(get_db)
 ):
@@ -648,7 +648,7 @@ async def list_custom_fields(
 @router.post("/custom-fields", response_model=CustomFieldResponse)
 async def create_custom_field(
     field_data: CustomFieldCreate,
-    current_user: User = Depends(require_admin_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new custom field"""
@@ -682,5 +682,560 @@ async def create_custom_field(
     
     return CustomFieldResponse.model_validate(field)
 
-# Add more endpoints for email templates, bulk operations, etc...
-# This is a substantial start to the CRM API
+# ============================================================================
+# EMAIL TESTING
+# ============================================================================
+
+from pydantic import BaseModel, EmailStr
+
+class TestEmailRequest(BaseModel):
+    to_email: EmailStr
+    test_type: str = "simple"  # "simple" or "template"
+
+@router.post("/test-email")
+async def send_test_email(
+    request: TestEmailRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Send a test email to verify SendGrid configuration"""
+    
+    if not email_service.is_configured():
+        raise HTTPException(
+            status_code=500,
+            detail="Email service is not configured. Please set SENDGRID_API_KEY environment variable."
+        )
+    
+    try:
+        if request.test_type == "template":
+            # Send template test email
+            template_vars = {
+                "contact_name": f"{current_user.first_name} {current_user.last_name}".strip() or "Test User",
+                "organization_name": "Thanotopolis CRM",
+                "business_name": "Test Organization",
+                "contact_role": "Admin",
+                "contact_email": request.to_email,
+                "phone": "+1-555-123-4567"
+            }
+            
+            welcome_template = DEFAULT_TEMPLATES["contact_welcome"]
+            
+            result = await email_service.send_template_email(
+                to_email=request.to_email,
+                subject_template=welcome_template["subject"],
+                html_template=welcome_template["html_content"],
+                template_variables=template_vars,
+                text_template=welcome_template["text_content"],
+                to_name=template_vars["contact_name"]
+            )
+        else:
+            # Send simple test email
+            subject = "Test Email from Thanotopolis CRM"
+            html_content = f"""
+            <html>
+            <body>
+                <h2>Test Email</h2>
+                <p>Hello {current_user.first_name or 'Admin'},</p>
+                <p>This is a test email from your Thanotopolis CRM system.</p>
+                <p>If you're receiving this, it means your SendGrid integration is working correctly!</p>
+                <hr>
+                <p><strong>Email Service Details:</strong></p>
+                <ul>
+                    <li>Service: SendGrid</li>
+                    <li>From: {email_service.from_email}</li>
+                    <li>From Name: {email_service.from_name}</li>
+                    <li>Sent by: {current_user.first_name} {current_user.last_name}</li>
+                </ul>
+                <p>Best regards,<br>Thanotopolis CRM Team</p>
+            </body>
+            </html>
+            """
+            
+            result = await email_service.send_email(
+                to_email=request.to_email,
+                subject=subject,
+                html_content=html_content,
+                to_name=f"{current_user.first_name} {current_user.last_name}".strip()
+            )
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "message": f"Test email sent successfully to {request.to_email}",
+                "status_code": result["status_code"],
+                "message_id": result.get("message_id"),
+                "test_type": request.test_type
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to send test email: {result.get('error', 'Unknown error')}"
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error sending test email: {str(e)}"
+        )
+
+
+# ============================================================================
+# EMAIL TEMPLATES
+# ============================================================================
+
+@router.get("/email-templates", response_model=List[EmailTemplateResponse])
+async def list_email_templates(
+    current_user: User = Depends(get_current_user),
+    include_inactive: bool = Query(False),
+    db: AsyncSession = Depends(get_db)
+):
+    """List email templates"""
+    
+    query = select(EmailTemplate).where(EmailTemplate.tenant_id == current_user.tenant_id)
+    
+    if not include_inactive:
+        query = query.where(EmailTemplate.is_active == True)
+    
+    query = query.order_by(EmailTemplate.name)
+    
+    result = await db.execute(query)
+    templates = result.scalars().all()
+    
+    return [EmailTemplateResponse.model_validate(template) for template in templates]
+
+@router.get("/email-templates/{template_id}", response_model=EmailTemplateResponse)
+async def get_email_template(
+    template_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get email template details"""
+    
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            and_(
+                EmailTemplate.id == template_id,
+                EmailTemplate.tenant_id == current_user.tenant_id
+            )
+        )
+    )
+    
+    if not template:
+        raise HTTPException(status_code=404, detail="Email template not found")
+    
+    return EmailTemplateResponse.model_validate(template)
+
+@router.post("/email-templates", response_model=EmailTemplateResponse)
+async def create_email_template(
+    template_data: EmailTemplateCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new email template"""
+    
+    # Check for duplicate template name
+    existing = await db.scalar(
+        select(EmailTemplate).where(
+            and_(
+                EmailTemplate.tenant_id == current_user.tenant_id,
+                EmailTemplate.name == template_data.name
+            )
+        )
+    )
+    
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email template with name '{template_data.name}' already exists"
+        )
+    
+    # Create template
+    template = EmailTemplate(
+        tenant_id=current_user.tenant_id,
+        created_by_user_id=current_user.id,
+        **template_data.model_dump()
+    )
+    
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    
+    logger.info(f"Email template created: {template.name} by user {current_user.email}")
+    
+    return EmailTemplateResponse.model_validate(template)
+
+@router.patch("/email-templates/{template_id}", response_model=EmailTemplateResponse)
+async def update_email_template(
+    template_id: UUID,
+    template_data: EmailTemplateUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update email template"""
+    
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            and_(
+                EmailTemplate.id == template_id,
+                EmailTemplate.tenant_id == current_user.tenant_id
+            )
+        )
+    )
+    
+    if not template:
+        raise HTTPException(status_code=404, detail="Email template not found")
+    
+    # Check for duplicate name if name is being updated
+    if template_data.name and template_data.name != template.name:
+        existing = await db.scalar(
+            select(EmailTemplate).where(
+                and_(
+                    EmailTemplate.tenant_id == current_user.tenant_id,
+                    EmailTemplate.name == template_data.name,
+                    EmailTemplate.id != template_id
+                )
+            )
+        )
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Email template with name '{template_data.name}' already exists"
+            )
+    
+    # Update fields
+    for field, value in template_data.model_dump(exclude_unset=True).items():
+        setattr(template, field, value)
+    
+    await db.commit()
+    await db.refresh(template)
+    
+    return EmailTemplateResponse.model_validate(template)
+
+@router.delete("/email-templates/{template_id}")
+async def delete_email_template(
+    template_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete email template"""
+    
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            and_(
+                EmailTemplate.id == template_id,
+                EmailTemplate.tenant_id == current_user.tenant_id
+            )
+        )
+    )
+    
+    if not template:
+        raise HTTPException(status_code=404, detail="Email template not found")
+    
+    await db.delete(template)
+    await db.commit()
+    
+    logger.info(f"Email template deleted: {template.name} by user {current_user.email}")
+    
+    return {"message": "Email template deleted successfully"}
+
+@router.post("/email-templates/upload")
+async def upload_email_template(
+    file: UploadFile = File(...),
+    name: str = Query(..., description="Template name"),
+    subject: str = Query(..., description="Email subject"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Upload email template from HTML file"""
+    
+    if not file.filename.endswith(('.html', '.htm')):
+        raise HTTPException(status_code=400, detail="File must be HTML")
+    
+    # Check for duplicate template name
+    existing = await db.scalar(
+        select(EmailTemplate).where(
+            and_(
+                EmailTemplate.tenant_id == current_user.tenant_id,
+                EmailTemplate.name == name
+            )
+        )
+    )
+    
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email template with name '{name}' already exists"
+        )
+    
+    # Read HTML content
+    content = await file.read()
+    html_content = content.decode('utf-8')
+    
+    # Extract variables from HTML (looking for {{variable}} patterns)
+    import re
+    variables = list(set(re.findall(r'\{\{([^}]+)\}\}', html_content)))
+    
+    # Create template
+    template = EmailTemplate(
+        tenant_id=current_user.tenant_id,
+        created_by_user_id=current_user.id,
+        name=name,
+        subject=subject,
+        html_content=html_content,
+        variables=variables,
+        is_active=True
+    )
+    
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    
+    logger.info(f"Email template uploaded: {template.name} by user {current_user.email}")
+    
+    return {
+        "message": "Email template uploaded successfully",
+        "template": EmailTemplateResponse.model_validate(template)
+    }
+
+# ============================================================================
+# BULK EMAIL
+# ============================================================================
+
+@router.post("/bulk-email")
+async def send_bulk_email(
+    request: BulkEmailRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Send bulk email to multiple contacts using a template"""
+    
+    if not email_service.is_configured():
+        raise HTTPException(
+            status_code=500,
+            detail="Email service is not configured. Please set SENDGRID_API_KEY environment variable."
+        )
+    
+    # Get email template
+    template = await db.scalar(
+        select(EmailTemplate).where(
+            and_(
+                EmailTemplate.id == request.template_id,
+                EmailTemplate.tenant_id == current_user.tenant_id,
+                EmailTemplate.is_active == True
+            )
+        )
+    )
+    
+    if not template:
+        raise HTTPException(status_code=404, detail="Email template not found")
+    
+    # Get contacts
+    contacts_query = select(Contact).where(
+        and_(
+            Contact.tenant_id == current_user.tenant_id,
+            Contact.id.in_(request.contact_ids),
+            Contact.contact_email.is_not(None),
+            Contact.contact_email != ""
+        )
+    )
+    
+    contacts_result = await db.execute(contacts_query)
+    contacts = contacts_result.scalars().all()
+    
+    if not contacts:
+        raise HTTPException(status_code=400, detail="No valid contacts found with email addresses")
+    
+    # Get organization name for template variables
+    tenant = await db.scalar(select(Tenant).where(Tenant.id == current_user.tenant_id))
+    organization_name = tenant.name if tenant else "Unknown Organization"
+    
+    # Send emails
+    results = BulkEmailResult(
+        template_id=str(request.template_id),
+        total_contacts=len(contacts),
+        successful_sends=0,
+        failed_sends=0,
+        errors=[]
+    )
+    
+    for contact in contacts:
+        try:
+            # Prepare template variables
+            template_vars = {
+                "contact_name": contact.contact_name,
+                "business_name": contact.business_name,
+                "organization_name": organization_name,
+                "contact_role": contact.contact_role or "",
+                "contact_email": contact.contact_email,
+                "phone": contact.phone or "",
+                "city": contact.city or "",
+                "state": contact.state or "",
+                "website": contact.website or "",
+                "address": contact.address or "",
+                **request.additional_variables  # Allow custom variables
+            }
+            
+            # Send email
+            result = await email_service.send_template_email(
+                to_email=contact.contact_email,
+                subject_template=template.subject,
+                html_template=template.html_content,
+                template_variables=template_vars,
+                text_template=template.text_content,
+                to_name=contact.contact_name
+            )
+            
+            if result["success"]:
+                results.successful_sends += 1
+                
+                # Log interaction
+                interaction = ContactInteraction(
+                    contact_id=contact.id,
+                    user_id=current_user.id,
+                    interaction_type=ContactInteractionType.EMAIL.value,
+                    subject=f"Bulk Email: {template.subject}",
+                    content=f"Sent email using template '{template.name}'",
+                    interaction_date=datetime.now(timezone.utc),
+                    metadata={"template_id": str(template.id), "bulk_email": True}
+                )
+                db.add(interaction)
+            else:
+                results.failed_sends += 1
+                results.errors.append({
+                    "contact_id": str(contact.id),
+                    "contact_email": contact.contact_email,
+                    "error": result.get("error", "Unknown error")
+                })
+                
+        except Exception as e:
+            results.failed_sends += 1
+            results.errors.append({
+                "contact_id": str(contact.id),
+                "contact_email": contact.contact_email,
+                "error": str(e)
+            })
+    
+    # Commit interactions
+    await db.commit()
+    
+    logger.info(f"Bulk email sent: {results.successful_sends} successful, {results.failed_sends} failed by user {current_user.email}")
+    
+    return results
+
+@router.get("/contacts/search", response_model=PaginatedResponse)
+async def search_contacts_advanced(
+    current_user: User = Depends(get_current_user),
+    pagination: PaginationParams = Depends(),
+    search_term: Optional[str] = Query(None, description="Search term"),
+    search_fields: Optional[str] = Query(None, description="Comma-separated list of fields to search"),
+    status: Optional[ContactStatus] = Query(None),
+    city: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    has_email: Optional[bool] = Query(None, description="Filter contacts with/without email"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Advanced contact search with field selection"""
+    
+    tenant_id = current_user.tenant_id
+    
+    # Build query
+    query = select(Contact).where(Contact.tenant_id == tenant_id)
+    conditions = []
+    
+    # Search term with field selection
+    if search_term and search_fields:
+        fields = [field.strip() for field in search_fields.split(',')]
+        search_conditions = []
+        search_pattern = f"%{search_term}%"
+        
+        for field in fields:
+            if field == 'business_name':
+                search_conditions.append(Contact.business_name.ilike(search_pattern))
+            elif field == 'contact_name':
+                search_conditions.append(Contact.contact_name.ilike(search_pattern))
+            elif field == 'contact_email':
+                search_conditions.append(Contact.contact_email.ilike(search_pattern))
+            elif field == 'contact_role':
+                search_conditions.append(Contact.contact_role.ilike(search_pattern))
+            elif field == 'phone':
+                search_conditions.append(Contact.phone.ilike(search_pattern))
+            elif field == 'city':
+                search_conditions.append(Contact.city.ilike(search_pattern))
+            elif field == 'state':
+                search_conditions.append(Contact.state.ilike(search_pattern))
+            elif field == 'notes':
+                search_conditions.append(Contact.notes.ilike(search_pattern))
+        
+        if search_conditions:
+            conditions.append(or_(*search_conditions))
+    elif search_term:  # Fallback to all fields search
+        search_pattern = f"%{search_term}%"
+        conditions.append(
+            or_(
+                Contact.business_name.ilike(search_pattern),
+                Contact.contact_name.ilike(search_pattern),
+                Contact.contact_email.ilike(search_pattern),
+                Contact.contact_role.ilike(search_pattern),
+                Contact.phone.ilike(search_pattern),
+                Contact.city.ilike(search_pattern),
+                Contact.state.ilike(search_pattern),
+                Contact.notes.ilike(search_pattern)
+            )
+        )
+    
+    # Other filters
+    if status:
+        conditions.append(Contact.status == status.value)
+    
+    if city:
+        conditions.append(Contact.city.ilike(f"%{city}%"))
+    
+    if state:
+        conditions.append(Contact.state.ilike(f"%{state}%"))
+    
+    if has_email is True:
+        conditions.append(and_(Contact.contact_email.is_not(None), Contact.contact_email != ""))
+    elif has_email is False:
+        conditions.append(or_(Contact.contact_email.is_(None), Contact.contact_email == ""))
+    
+    if conditions:
+        query = query.where(and_(*conditions))
+    
+    # Get total count
+    total_query = select(func.count()).select_from(query.subquery())
+    total = await db.scalar(total_query)
+    
+    # Apply pagination
+    offset = (pagination.page - 1) * pagination.page_size
+    query = query.offset(offset).limit(pagination.page_size).order_by(desc(Contact.created_at))
+    
+    result = await db.execute(query)
+    contacts = result.scalars().all()
+    
+    # Add interaction counts
+    contact_responses = []
+    for contact in contacts:
+        interaction_count = await db.scalar(
+            select(func.count(ContactInteraction.id)).where(
+                ContactInteraction.contact_id == contact.id
+            )
+        )
+        
+        last_interaction = await db.scalar(
+            select(func.max(ContactInteraction.interaction_date)).where(
+                ContactInteraction.contact_id == contact.id
+            )
+        )
+        
+        contact_dict = ContactResponse.model_validate(contact).model_dump()
+        contact_dict["interaction_count"] = interaction_count or 0
+        contact_dict["last_interaction_date"] = last_interaction
+        contact_responses.append(contact_dict)
+    
+    return PaginatedResponse(
+        items=contact_responses,
+        total=total or 0,
+        page=pagination.page,
+        page_size=pagination.page_size,
+        total_pages=((total or 0) + pagination.page_size - 1) // pagination.page_size
+    )

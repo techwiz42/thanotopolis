@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,7 +14,6 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import FieldMapping from '@/components/crm/FieldMapping'
 import CSVPreview from '@/components/crm/CSVPreview'
-import ContactCardView from '@/components/crm/ContactCardView'
 import ContactTableView from '@/components/crm/ContactTableView'
 import { parseCSV, createInitialMapping, validateMapping, generateFieldMappingJSON, type FieldMapping as FieldMappingType, type CSVParseResult } from '@/utils/csvParser'
 import { 
@@ -35,8 +35,10 @@ import {
   Download,
   ArrowRight,
   ArrowLeft,
-  Grid3X3,
-  Table
+  FileText,
+  Edit,
+  Trash2,
+  Eye
 } from 'lucide-react'
 
 interface Contact {
@@ -72,6 +74,17 @@ interface DashboardStats {
   contact_growth: Record<string, number>
 }
 
+interface EmailTemplate {
+  id: string
+  name: string
+  subject: string
+  html_content: string
+  text_content?: string
+  variables: string[]
+  is_active: boolean
+  created_at: string
+}
+
 interface PaginatedContactsResponse {
   items: Contact[]
   total: number
@@ -82,6 +95,7 @@ interface PaginatedContactsResponse {
 
 export default function CRMPage() {
   const { token, user } = useAuth()
+  const router = useRouter()
   const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState(true)
@@ -92,7 +106,25 @@ export default function CRMPage() {
   const [showAddContact, setShowAddContact] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards')
+  const [activeTab, setActiveTab] = useState<'contacts' | 'templates'>('contacts')
+  
+  // Email template state
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [showTemplateUpload, setShowTemplateUpload] = useState(false)
+  const [showTemplateView, setShowTemplateView] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null)
+  const [templateFile, setTemplateFile] = useState<File | null>(null)
+  const [templateName, setTemplateName] = useState('')
+  const [templateSubject, setTemplateSubject] = useState('')
+  const [isEditingTemplate, setIsEditingTemplate] = useState(false)
+  const [editTemplateName, setEditTemplateName] = useState('')
+  const [editTemplateSubject, setEditTemplateSubject] = useState('')
+  const [editTemplateContent, setEditTemplateContent] = useState('')
+  
+  // Feature not implemented modal state
+  const [showNotImplementedModal, setShowNotImplementedModal] = useState(false)
+  const [notImplementedFeature, setNotImplementedFeature] = useState('')
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -164,6 +196,40 @@ export default function CRMPage() {
     }
   }, [searchTerm, statusFilter, showAllContacts])
 
+  // Fetch email templates when templates tab is active
+  useEffect(() => {
+    if (activeTab === 'templates' && token) {
+      fetchEmailTemplates()
+    }
+  }, [activeTab, token])
+
+
+  // Fetch email templates
+  const fetchEmailTemplates = async () => {
+    if (!token) return
+    
+    setTemplatesLoading(true)
+    try {
+      const response = await fetch('/api/crm/email-templates', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (response.ok) {
+        const templates = await response.json()
+        setEmailTemplates(templates)
+      } else {
+        console.error('Failed to fetch email templates')
+      }
+    } catch (error) {
+      console.error('Error fetching email templates:', error)
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }
+
   // Fetch contacts with pagination
   const fetchContacts = async (page: number = 1, search?: string, status?: string) => {
     if (!token) return
@@ -219,8 +285,25 @@ export default function CRMPage() {
     }
   }
 
+  // Check if user is authenticated
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Card className="w-96">
+          <CardContent className="p-6 text-center">
+            <AlertCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
+            <p className="text-gray-600">
+              Please log in to access the CRM.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   // Check if user has admin access
-  if (!user || !['admin', 'super_admin'].includes(user.role)) {
+  if (user.role !== 'admin' && user.role !== 'super_admin' && user.role !== 'org_admin') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <Card className="w-96">
@@ -228,8 +311,14 @@ export default function CRMPage() {
             <AlertCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
             <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
             <p className="text-gray-600">
-              CRM access is restricted to admin users only.
+              You need administrator privileges to access the CRM system.
             </p>
+            <Button 
+              onClick={() => router.push('/conversations')} 
+              className="mt-4"
+            >
+              Return to Conversations
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -435,6 +524,152 @@ export default function CRMPage() {
     }
   }
 
+  // Handle template upload
+  const handleTemplateUpload = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!token || !templateFile || !templateName || !templateSubject) return
+    
+    setIsSubmitting(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', templateFile)
+      
+      const response = await fetch(`/api/crm/email-templates/upload?name=${encodeURIComponent(templateName)}&subject=${encodeURIComponent(templateSubject)}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      })
+      
+      if (response.ok) {
+        // Reset form and close dialog
+        setTemplateFile(null)
+        setTemplateName('')
+        setTemplateSubject('')
+        setShowTemplateUpload(false)
+        
+        // Refresh templates
+        await fetchEmailTemplates()
+        
+        alert('Email template uploaded successfully!')
+      } else {
+        const error = await response.json()
+        alert(`Error uploading template: ${error.detail}`)
+      }
+    } catch (error) {
+      console.error('Error uploading template:', error)
+      alert('Error uploading template. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Handle template deletion
+  const handleTemplateDelete = async (templateId: string) => {
+    if (!token || !confirm('Are you sure you want to delete this email template?')) return
+    
+    try {
+      const response = await fetch(`/api/crm/email-templates/${templateId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      if (response.ok) {
+        // Remove template from local state
+        setEmailTemplates(prevTemplates => 
+          prevTemplates.filter(template => template.id !== templateId)
+        )
+      } else {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to delete template')
+      }
+    } catch (error) {
+      console.error('Error deleting template:', error)
+      alert('Error deleting template. Please try again.')
+    }
+  }
+
+  // Handle template update
+  const handleTemplateUpdate = async () => {
+    if (!token || !selectedTemplate) return
+    
+    setIsSubmitting(true)
+    try {
+      const updateData: any = {}
+      
+      if (editTemplateName !== selectedTemplate.name) {
+        updateData.name = editTemplateName
+      }
+      if (editTemplateSubject !== selectedTemplate.subject) {
+        updateData.subject = editTemplateSubject
+      }
+      if (editTemplateContent !== selectedTemplate.html_content) {
+        updateData.html_content = editTemplateContent
+        // Re-extract variables from updated content
+        const variableRegex = /\{\{([^}]+)\}\}/g
+        const variables: string[] = []
+        let match
+        while ((match = variableRegex.exec(editTemplateContent)) !== null) {
+          if (!variables.includes(match[1])) {
+            variables.push(match[1])
+          }
+        }
+        updateData.variables = variables
+      }
+      
+      if (Object.keys(updateData).length === 0) {
+        setIsEditingTemplate(false)
+        return
+      }
+      
+      const response = await fetch(`/api/crm/email-templates/${selectedTemplate.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updateData)
+      })
+      
+      if (response.ok) {
+        const updatedTemplate = await response.json()
+        
+        // Update local state
+        setEmailTemplates(prevTemplates => 
+          prevTemplates.map(template => 
+            template.id === selectedTemplate.id ? updatedTemplate : template
+          )
+        )
+        
+        // Update selected template
+        setSelectedTemplate(updatedTemplate)
+        setIsEditingTemplate(false)
+        
+        alert('Template updated successfully!')
+      } else {
+        const error = await response.json()
+        alert(`Error updating template: ${error.detail}`)
+      }
+    } catch (error) {
+      console.error('Error updating template:', error)
+      alert('Error updating template. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Start editing template
+  const startEditingTemplate = (template: EmailTemplate) => {
+    setEditTemplateName(template.name)
+    setEditTemplateSubject(template.subject)
+    setEditTemplateContent(template.html_content)
+    setIsEditingTemplate(true)
+  }
+
   // Handle contact update
   const handleContactUpdate = async (contactId: string, updatedContact: Partial<Contact>) => {
     if (!token) return
@@ -538,94 +773,128 @@ export default function CRMPage() {
   })
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="p-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-              <UserCheck className="h-8 w-8 mr-3 text-blue-600" />
-              Customer Relationship Management
-            </h1>
-            <p className="text-gray-600 mt-1">
-              Manage contacts, track interactions, and grow your business relationships
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => setShowImportDialog(true)}>
-              <Upload className="h-4 w-4 mr-2" />
-              Import Contacts
-            </Button>
-            <Button onClick={() => setShowAddContact(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Contact
-            </Button>
+    <div className="min-h-screen bg-gray-50 w-full overflow-x-hidden">
+      {/* Sticky Header */}
+      <div className="sticky top-0 bg-white border-b border-gray-200 z-50 shadow-sm">
+        <div className="p-4 sm:p-6 max-w-full">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 flex items-center">
+                <UserCheck className="h-5 w-5 sm:h-6 sm:w-6 lg:h-8 lg:w-8 mr-2 sm:mr-3 text-blue-600 flex-shrink-0" />
+                <span className="truncate">Customer Relationship Management</span>
+              </h1>
+              <p className="text-xs sm:text-sm lg:text-base text-gray-600 mt-1">
+                Manage contacts, track interactions, and grow your business relationships
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 sm:gap-3 w-full sm:w-auto sm:flex-shrink-0">
+              {activeTab === 'contacts' && (
+                <>
+                  <Button variant="outline" onClick={() => setShowImportDialog(true)} className="flex-1 sm:flex-initial">
+                    <Upload className="h-4 w-4 mr-2" />
+                    <span className="hidden sm:inline">Import Contacts</span>
+                    <span className="sm:hidden">Import</span>
+                  </Button>
+                  <Button onClick={() => setShowAddContact(true)} className="flex-1 sm:flex-initial">
+                    <Plus className="h-4 w-4 mr-2" />
+                    <span className="hidden sm:inline">Add Contact</span>
+                    <span className="sm:hidden">Add</span>
+                  </Button>
+                </>
+              )}
+              {activeTab === 'templates' && (
+                <Button onClick={() => setShowTemplateUpload(true)} className="w-full sm:w-auto">
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload Template
+                </Button>
+              )}
+            </div>
           </div>
         </div>
+      </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Contacts</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {dashboardStats?.total_contacts || 0}
-                  </p>
-                </div>
-                <Users className="h-8 w-8 text-blue-600" />
-              </div>
-            </CardContent>
-          </Card>
+      {/* Main Content */}
+      <div className="p-4 sm:p-6 max-w-full overflow-x-hidden">
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Active Customers</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {dashboardStats?.contacts_by_status?.customer || 0}
-                  </p>
-                </div>
-                <CheckCircle className="h-8 w-8 text-green-600" />
-              </div>
-            </CardContent>
-          </Card>
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'contacts' | 'templates')} className="mb-6">
+          <TabsList className="grid w-full grid-cols-2 max-w-full sm:max-w-md mx-auto sm:mx-0">
+            <TabsTrigger value="contacts" className="flex items-center gap-2 text-xs sm:text-sm">
+              <Users className="h-3 w-3 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline">Contacts</span>
+              <span className="xs:hidden">Contacts</span>
+            </TabsTrigger>
+            <TabsTrigger value="templates" className="flex items-center gap-2 text-xs sm:text-sm">
+              <FileText className="h-3 w-3 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline">Email Templates</span>
+              <span className="xs:hidden">Templates</span>
+            </TabsTrigger>
+          </TabsList>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Prospects</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {dashboardStats?.contacts_by_status?.prospect || 0}
-                  </p>
-                </div>
-                <TrendingUp className="h-8 w-8 text-orange-600" />
-              </div>
-            </CardContent>
-          </Card>
+          <TabsContent value="contacts">
+            {/* Stats Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 mb-6 sm:mb-8">
+              <Card className="min-w-0">
+                <CardContent className="p-3 sm:p-4 lg:p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs sm:text-sm font-medium text-gray-600 truncate">Total Contacts</p>
+                      <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">
+                        {dashboardStats?.total_contacts || 0}
+                      </p>
+                    </div>
+                    <Users className="h-5 w-5 sm:h-6 sm:w-6 lg:h-8 lg:w-8 text-blue-600 flex-shrink-0" />
+                  </div>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">New Leads</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {dashboardStats?.contacts_by_status?.lead || 0}
-                  </p>
-                </div>
-                <Clock className="h-8 w-8 text-purple-600" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              <Card className="min-w-0">
+                <CardContent className="p-3 sm:p-4 lg:p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs sm:text-sm font-medium text-gray-600 truncate">Active Customers</p>
+                      <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">
+                        {dashboardStats?.contacts_by_status?.customer || 0}
+                      </p>
+                    </div>
+                    <CheckCircle className="h-5 w-5 sm:h-6 sm:w-6 lg:h-8 lg:w-8 text-green-600 flex-shrink-0" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="min-w-0">
+                <CardContent className="p-3 sm:p-4 lg:p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs sm:text-sm font-medium text-gray-600 truncate">Prospects</p>
+                      <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">
+                        {dashboardStats?.contacts_by_status?.prospect || 0}
+                      </p>
+                    </div>
+                    <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 lg:h-8 lg:w-8 text-orange-600 flex-shrink-0" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="min-w-0">
+                <CardContent className="p-3 sm:p-4 lg:p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs sm:text-sm font-medium text-gray-600 truncate">New Leads</p>
+                      <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">
+                        {dashboardStats?.contacts_by_status?.lead || 0}
+                      </p>
+                    </div>
+                    <Clock className="h-5 w-5 sm:h-6 sm:w-6 lg:h-8 lg:w-8 text-purple-600 flex-shrink-0" />
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
         {/* Main Content */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div>
           {/* Contacts List */}
-          <div className="lg:col-span-2">
+          <div>
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -634,25 +903,7 @@ export default function CRMPage() {
                     {showAllContacts && <span className="text-sm font-normal text-gray-500 ml-2">(Page {currentPage} of {totalPages})</span>}
                     {!showAllContacts && <span className="text-sm font-normal text-gray-500 ml-2">(Recent 10)</span>}
                   </CardTitle>
-                  <div className="flex items-center gap-2">
-                    <div className="flex border rounded-lg">
-                      <Button
-                        variant={viewMode === 'cards' ? 'default' : 'ghost'}
-                        size="sm"
-                        onClick={() => setViewMode('cards')}
-                        className="rounded-r-none"
-                      >
-                        <Grid3X3 className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant={viewMode === 'table' ? 'default' : 'ghost'}
-                        size="sm"
-                        onClick={() => setViewMode('table')}
-                        className="rounded-l-none"
-                      >
-                        <Table className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  <div className="flex gap-2">
                     <Button 
                       variant="outline" 
                       size="sm"
@@ -666,45 +917,78 @@ export default function CRMPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                {/* Search and Filter */}
-                <div className="flex gap-4 mb-4">
-                  <div className="flex-1">
-                    <Input
-                      placeholder="Search contacts..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full"
-                    />
+                {/* Sidebar Actions */}
+            <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h3 className="font-medium text-blue-900 mb-2 sm:mb-3 text-sm sm:text-base">Quick Actions</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                <Button 
+                  variant="outline" 
+                  className="justify-start text-xs sm:text-sm bg-white hover:bg-blue-100 w-full"
+                  onClick={() => router.push('/organizations/crm/bulk-email')}
+                >
+                  <Mail className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="truncate">Send Email Campaign</span>
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="justify-start text-xs sm:text-sm bg-white hover:bg-blue-100 w-full"
+                  onClick={() => {
+                    setNotImplementedFeature('Export Contacts')
+                    setShowNotImplementedModal(true)
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="truncate">Export Contacts</span>
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="justify-start text-xs sm:text-sm bg-white hover:bg-blue-100 w-full"
+                  onClick={() => {
+                    setNotImplementedFeature('Advanced Filters')
+                    setShowNotImplementedModal(true)
+                  }}
+                >
+                  <Filter className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="truncate">Advanced Filters</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Search and Filter */}
+                <div className="bg-white py-3 sm:py-4 border-b border-gray-100 mb-4">
+                  <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+                    <div className="flex-1">
+                      <Input
+                        placeholder="Search contacts..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full"
+                      />
+                    </div>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="w-full sm:w-40">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="lead">Lead</SelectItem>
+                        <SelectItem value="prospect">Prospect</SelectItem>
+                        <SelectItem value="customer">Customer</SelectItem>
+                        <SelectItem value="inactive">Inactive</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-40">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="lead">Lead</SelectItem>
-                      <SelectItem value="prospect">Prospect</SelectItem>
-                      <SelectItem value="customer">Customer</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
 
-                {/* Contact Views */}
-                <div className={viewMode === 'table' ? '' : 'max-h-96 overflow-y-auto'}>
-                  {viewMode === 'cards' ? (
-                    <ContactCardView 
-                      contacts={filteredContacts} 
-                      onContactUpdate={handleContactUpdate}
-                      onContactDelete={handleContactDelete}
-                    />
-                  ) : (
+                {/* Contact Table - Fixed height with scrolling */}
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="max-h-[400px] sm:max-h-[500px] lg:max-h-[600px] overflow-y-auto">
                     <ContactTableView 
                       contacts={filteredContacts} 
                       onContactUpdate={handleContactUpdate}
                       onContactDelete={handleContactDelete}
                     />
-                  )}
+                  </div>
                 </div>
 
                 {/* Pagination Controls */}
@@ -768,87 +1052,123 @@ export default function CRMPage() {
               </CardContent>
             </Card>
           </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Recent Activity */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <MessageSquare className="h-5 w-5 mr-2" />
-                  Recent Activity
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3 max-h-48 overflow-y-auto">
-                  {dashboardStats?.recent_interactions?.slice(0, 5).map((interaction) => (
-                    <div key={interaction.id} className="text-sm">
-                      <p className="font-medium text-gray-900">{interaction.subject || 'No subject'}</p>
-                      <p className="text-gray-600 text-xs">{interaction.user_name}</p>
-                      <p className="text-gray-500 text-xs">
-                        {new Date(interaction.interaction_date).toLocaleDateString()}
-                      </p>
-                    </div>
-                  )) || <p className="text-gray-500 text-sm">No recent activity</p>}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Upcoming Tasks */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Calendar className="h-5 w-5 mr-2" />
-                  Upcoming Tasks
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3 max-h-48 overflow-y-auto">
-                  {dashboardStats?.upcoming_tasks?.slice(0, 5).map((task) => (
-                    <div key={task.id} className="text-sm">
-                      <p className="font-medium text-gray-900">{task.subject || 'No subject'}</p>
-                      <p className="text-gray-600 text-xs">{task.content.substring(0, 50)}...</p>
-                      <p className="text-gray-500 text-xs">
-                        Due: {new Date(task.interaction_date).toLocaleDateString()}
-                      </p>
-                    </div>
-                  )) || <p className="text-gray-500 text-sm">No upcoming tasks</p>}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <Button variant="outline" className="w-full justify-start">
-                  <Mail className="h-4 w-4 mr-2" />
-                  Send Email Campaign
-                </Button>
-                <Button variant="outline" className="w-full justify-start">
-                  <Download className="h-4 w-4 mr-2" />
-                  Export Contacts
-                </Button>
-                <Button variant="outline" className="w-full justify-start">
-                  <Filter className="h-4 w-4 mr-2" />
-                  Advanced Filters
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
         </div>
+          </TabsContent>
+
+          <TabsContent value="templates">
+            {/* Email Templates */}
+            <Card className="w-full">
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <FileText className="h-5 w-5 mr-2" />
+                  Email Templates ({emailTemplates.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="w-full">
+                {templatesLoading ? (
+                  <div className="text-center py-8">
+                    <div className="animate-pulse">Loading templates...</div>
+                  </div>
+                ) : emailTemplates.length === 0 ? (
+                  <div className="text-center py-8">
+                    <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No Email Templates</h3>
+                    <p className="text-gray-600 mb-4">Upload your first email template to get started.</p>
+                    <Button onClick={() => setShowTemplateUpload(true)}>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload Template
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
+                    {emailTemplates.map((template) => (
+                      <Card key={template.id} className="border border-gray-200">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-medium text-gray-900 truncate">{template.name}</h4>
+                              <p className="text-sm text-gray-600 truncate">{template.subject}</p>
+                            </div>
+                            <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedTemplate(template)
+                                  setIsEditingTemplate(false)
+                                  setShowTemplateView(true)
+                                }}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedTemplate(template)
+                                  startEditingTemplate(template)
+                                  setShowTemplateView(true)
+                                }}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleTemplateDelete(template.id)}
+                                className="text-red-600 hover:text-red-700"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-xs text-gray-500">
+                              <span>Variables: {template.variables.length}</span>
+                              <span className={template.is_active ? 'text-green-600' : 'text-red-600'}>
+                                {template.is_active ? 'Active' : 'Inactive'}
+                              </span>
+                            </div>
+                            
+                            {template.variables.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {template.variables.slice(0, 3).map((variable) => (
+                                  <Badge key={variable} variant="outline" className="text-xs">
+                                    {variable}
+                                  </Badge>
+                                ))}
+                                {template.variables.length > 3 && (
+                                  <Badge variant="outline" className="text-xs">
+                                    +{template.variables.length - 3}
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
+                            
+                            <p className="text-xs text-gray-500">
+                              Created: {new Date(template.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Add Contact Dialog */}
       <Dialog open={showAddContact} onOpenChange={setShowAddContact}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-white border border-gray-200 shadow-lg">
+        <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-2xl max-h-[95vh] overflow-y-auto bg-white border border-gray-200 shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-gray-900">Add New Contact</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateContact} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="business_name">Business Name *</Label>
                 <Input
@@ -869,7 +1189,7 @@ export default function CRMPage() {
               </div>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="contact_email">Email</Label>
                 <Input
@@ -889,7 +1209,7 @@ export default function CRMPage() {
               </div>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="phone">Phone</Label>
                 <Input
@@ -908,7 +1228,7 @@ export default function CRMPage() {
               </div>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="city">City</Label>
                 <Input
@@ -978,15 +1298,15 @@ export default function CRMPage() {
       
       {/* Import Contacts Dialog */}
       <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-white border border-gray-200 shadow-lg">
+        <DialogContent className="w-[98vw] max-w-[98vw] sm:max-w-[95vw] lg:max-w-[1000px] xl:max-w-[1200px] max-h-[95vh] overflow-y-auto bg-white border border-gray-200 shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-gray-900 flex items-center gap-2">
               <Upload className="h-5 w-5" />
               Import Contacts from CSV
-              <div className="ml-auto flex items-center gap-2">
-                {importStep === 'upload' && <span className="text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded">Step 1: Upload</span>}
-                {importStep === 'mapping' && <span className="text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded">Step 2: Map Fields</span>}
-                {importStep === 'results' && <span className="text-sm bg-green-100 text-green-800 px-2 py-1 rounded">Step 3: Results</span>}
+              <div className="ml-auto flex items-center gap-2 hidden sm:flex">
+                {importStep === 'upload' && <span className="text-xs sm:text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded">Step 1: Upload</span>}
+                {importStep === 'mapping' && <span className="text-xs sm:text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded">Step 2: Map Fields</span>}
+                {importStep === 'results' && <span className="text-xs sm:text-sm bg-green-100 text-green-800 px-2 py-1 rounded">Step 3: Results</span>}
               </div>
             </DialogTitle>
           </DialogHeader>
@@ -1115,6 +1435,228 @@ export default function CRMPage() {
                   Close
                 </Button>
               </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Template Upload Dialog */}
+      <Dialog open={showTemplateUpload} onOpenChange={setShowTemplateUpload}>
+        <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-[80vw] lg:max-w-[900px] xl:max-w-[1000px] bg-white border border-gray-200 shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900">Upload Email Template</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleTemplateUpload} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="template-name">Template Name *</Label>
+                <Input
+                  id="template-name"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="e.g., Welcome Email"
+                  className="w-full"
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="template-subject">Email Subject *</Label>
+                <Input
+                  id="template-subject"
+                  value={templateSubject}
+                  onChange={(e) => setTemplateSubject(e.target.value)}
+                  placeholder="e.g., Welcome to {{organization_name}}"
+                  className="w-full"
+                  required
+                />
+              </div>
+            </div>
+            
+            <div>
+              <Label htmlFor="template-file">HTML File *</Label>
+              <Input
+                id="template-file"
+                type="file"
+                accept=".html,.htm"
+                className="w-full"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  setTemplateFile(file || null)
+                }}
+                required
+              />
+              <p className="text-sm text-gray-600 mt-1">
+                Upload an HTML file with your email template. Use &#123;&#123;variable&#125;&#125; for dynamic content.
+              </p>
+            </div>
+            
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setShowTemplateUpload(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Uploading...' : 'Upload Template'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Feature Not Implemented Modal */}
+      <Dialog open={showNotImplementedModal} onOpenChange={setShowNotImplementedModal}>
+        <DialogContent className="w-[95vw] max-w-md bg-white border border-gray-200 shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900 flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-orange-500" />
+              Feature Not Available
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-gray-600">
+              <strong>{notImplementedFeature}</strong> is not yet implemented. This feature is coming soon!
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowNotImplementedModal(false)}
+            >
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Template View Dialog */}
+      <Dialog open={showTemplateView} onOpenChange={setShowTemplateView}>
+        <DialogContent className="w-[98vw] max-w-[98vw] sm:max-w-[95vw] lg:max-w-[1200px] xl:max-w-[1400px] h-[95vh] flex flex-col bg-white border border-gray-200 shadow-lg overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900 flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              {isEditingTemplate ? 'Edit Template' : selectedTemplate?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedTemplate && (
+            <div className="space-y-4 flex-1 overflow-y-auto min-h-0">
+              {isEditingTemplate ? (
+                // Edit Mode
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 xl:gap-6 h-full min-h-0">
+                  {/* Left Column - Form */}
+                  <div className="space-y-4 min-w-0 overflow-y-auto">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="edit-name">Template Name</Label>
+                        <Input
+                          id="edit-name"
+                          value={editTemplateName}
+                          onChange={(e) => setEditTemplateName(e.target.value)}
+                          className="w-full"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="edit-subject">Email Subject</Label>
+                        <Input
+                          id="edit-subject"
+                          value={editTemplateSubject}
+                          onChange={(e) => setEditTemplateSubject(e.target.value)}
+                          className="w-full"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex-1 min-h-0">
+                      <Label htmlFor="edit-content">HTML Content</Label>
+                      <Textarea
+                        id="edit-content"
+                        value={editTemplateContent}
+                        onChange={(e) => setEditTemplateContent(e.target.value)}
+                        className="font-mono text-sm w-full resize-none min-h-[400px] sm:min-h-[500px] lg:min-h-[600px] xl:min-h-[700px]"
+                        placeholder="Enter HTML content with {{variable}} placeholders..."
+                      />
+                    </div>
+                    
+                    <div className="flex justify-end gap-2 pt-4">
+                      <Button variant="outline" onClick={() => setIsEditingTemplate(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={handleTemplateUpdate} disabled={isSubmitting}>
+                        {isSubmitting ? 'Saving...' : 'Save Changes'}
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  {/* Right Column - Preview */}
+                  <div className="flex-1 min-w-0 overflow-y-auto">
+                    <Label className="text-sm font-medium">Live Preview</Label>
+                    <div className="border rounded p-4 bg-gray-50 h-[400px] sm:h-[500px] lg:h-[600px] xl:h-[700px] mt-2">
+                      <iframe
+                        srcDoc={editTemplateContent}
+                        className="w-full h-full border rounded"
+                        title="Email Template Preview"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                // View Mode
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium">Subject</Label>
+                      <p className="text-sm text-gray-600 border rounded p-2">{selectedTemplate.subject}</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Status</Label>
+                      <Badge variant={selectedTemplate.is_active ? 'default' : 'destructive'} className="ml-2">
+                        {selectedTemplate.is_active ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </div>
+                  </div>
+                  
+                  {selectedTemplate.variables.length > 0 && (
+                    <div>
+                      <Label className="text-sm font-medium">Variables ({selectedTemplate.variables.length})</Label>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {selectedTemplate.variables.map((variable) => (
+                          <Badge key={variable} variant="outline">
+                            &#123;&#123;{variable}&#125;&#125;
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="flex-1">
+                      <Label className="text-sm font-medium">HTML Preview</Label>
+                      <div className="border rounded p-4 bg-gray-50 h-[400px] mt-2">
+                        <iframe
+                          srcDoc={selectedTemplate.html_content}
+                          className="w-full h-full border rounded"
+                          title="Email Template Preview"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex-1">
+                      <Label className="text-sm font-medium">HTML Source</Label>
+                      <pre className="text-xs bg-gray-100 p-4 rounded border overflow-auto h-[400px] mt-2">
+                        {selectedTemplate.html_content}
+                      </pre>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between gap-2">
+                    <Button variant="outline" onClick={() => startEditingTemplate(selectedTemplate)}>
+                      <Edit className="h-4 w-4 mr-2" />
+                      Edit Template
+                    </Button>
+                    <Button variant="outline" onClick={() => setShowTemplateView(false)}>
+                      Close
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </DialogContent>

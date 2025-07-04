@@ -111,6 +111,9 @@ class Settings(BaseSettings):
 
     SMTP_FROM_EMAIL: str = "pete@cyberiad.ai"
     SMTP_FROM_NAME: str = "Cyberiad.ai"
+    
+    # SendGrid Email Configuration
+    SENDGRID_API_KEY: str = os.getenv("SENDGRID_API_KEY", "")
 
     # Telephony Settings
     TELEPHONY_ENABLED: bool = os.getenv("TELEPHONY_ENABLED", "false").lower() == "true"

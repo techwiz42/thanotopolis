@@ -107,59 +107,60 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="border-b border-gray-200 bg-gray-50">
-            <th className="text-left p-3 font-medium text-gray-900">Business</th>
-            <th className="text-left p-3 font-medium text-gray-900">Contact</th>
-            <th className="text-left p-3 font-medium text-gray-900">Email</th>
-            <th className="text-left p-3 font-medium text-gray-900">Phone</th>
-            <th className="text-left p-3 font-medium text-gray-900">Location</th>
-            <th className="text-left p-3 font-medium text-gray-900">Status</th>
-            <th className="text-left p-3 font-medium text-gray-900">Activity</th>
-            <th className="text-left p-3 font-medium text-gray-900">Actions</th>
-          </tr>
-        </thead>
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="overflow-x-auto max-h-[400px] sm:max-h-[500px] lg:max-h-[600px]">
+        <table className="w-full border-collapse min-w-[800px] lg:min-w-full">
+          <thead className="sticky top-0 z-10 bg-gray-50 shadow-sm">
+            <tr className="border-b border-gray-200">
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm bg-gray-50">Business</th>
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm hidden sm:table-cell bg-gray-50">Contact</th>
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm hidden md:table-cell bg-gray-50">Email</th>
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm hidden lg:table-cell bg-gray-50">Phone</th>
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm hidden xl:table-cell bg-gray-50">Location</th>
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm bg-gray-50">Status</th>
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm hidden lg:table-cell bg-gray-50">Activity</th>
+              <th className="sticky top-0 text-left p-2 sm:p-3 font-medium text-gray-900 text-xs sm:text-sm bg-gray-50">Actions</th>
+            </tr>
+          </thead>
         <tbody>
           {contacts.map((contact) => (
             <tr key={contact.id} className="border-b border-gray-100 hover:bg-gray-50">
               {editingId === contact.id ? (
                 <>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3">
                     <Input
                       value={editForm.business_name || ''}
                       onChange={(e) => handleFieldChange('business_name', e.target.value)}
                       placeholder="Business Name"
-                      className="w-full min-w-[150px]"
+                      className="w-full min-w-0"
                     />
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden sm:table-cell">
                     <div className="space-y-1">
                       <Input
                         value={editForm.contact_name || ''}
                         onChange={(e) => handleFieldChange('contact_name', e.target.value)}
                         placeholder="Contact Name"
-                        className="w-full min-w-[120px]"
+                        className="w-full min-w-0"
                       />
                       <Input
                         value={editForm.contact_role || ''}
                         onChange={(e) => handleFieldChange('contact_role', e.target.value)}
                         placeholder="Role"
-                        className="w-full min-w-[120px] text-xs"
+                        className="w-full min-w-0 text-xs"
                       />
                     </div>
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden md:table-cell">
                     <Input
                       value={editForm.contact_email || ''}
                       onChange={(e) => handleFieldChange('contact_email', e.target.value)}
                       placeholder="Email"
                       type="email"
-                      className="w-full min-w-[180px]"
+                      className="w-full min-w-0"
                     />
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden lg:table-cell">
                     <Input
                       value={editForm.phone || ''}
                       onChange={(e) => handleFieldChange('phone', e.target.value)}
@@ -167,28 +168,28 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
                       className="w-full min-w-[120px]"
                     />
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden xl:table-cell">
                     <div className="space-y-1">
                       <Input
                         value={editForm.city || ''}
                         onChange={(e) => handleFieldChange('city', e.target.value)}
                         placeholder="City"
-                        className="w-full min-w-[100px]"
+                        className="w-full min-w-0"
                       />
                       <Input
                         value={editForm.state || ''}
                         onChange={(e) => handleFieldChange('state', e.target.value)}
                         placeholder="State"
-                        className="w-full min-w-[100px]"
+                        className="w-full min-w-0"
                       />
                     </div>
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3">
                     <Select 
                       value={editForm.status || contact.status} 
                       onValueChange={(value) => handleFieldChange('status', value)}
                     >
-                      <SelectTrigger className="w-full min-w-[120px]">
+                      <SelectTrigger className="w-full min-w-0">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -202,7 +203,7 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
                       </SelectContent>
                     </Select>
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden lg:table-cell">
                     <div className="text-xs text-gray-500">
                       <div className="flex items-center gap-1 mb-1">
                         <MessageSquare className="h-3 w-3" />
@@ -216,7 +217,7 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
                       )}
                     </div>
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3">
                     <div className="flex gap-1">
                       <Button 
                         variant="ghost" 
@@ -241,55 +242,64 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
                 </>
               ) : (
                 <>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3">
                     <div className="flex items-center gap-2">
                       <Building className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                      <span className="font-medium text-gray-900 truncate">{contact.business_name}</span>
+                      <span className="font-medium text-gray-900 truncate text-xs sm:text-sm">{contact.business_name}</span>
                     </div>
-                  </td>
-                  <td className="p-3">
-                    <div>
-                      <div className="font-medium text-gray-900">{contact.contact_name}</div>
-                      {contact.contact_role && (
-                        <div className="text-sm text-gray-600">{contact.contact_role}</div>
+                    <div className="sm:hidden mt-1 space-y-1">
+                      <div className="text-xs text-gray-600">{contact.contact_name}</div>
+                      {contact.contact_email && (
+                        <div className="text-xs text-gray-500 truncate">{contact.contact_email}</div>
+                      )}
+                      {contact.phone && (
+                        <div className="text-xs text-gray-500">{contact.phone}</div>
                       )}
                     </div>
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden sm:table-cell">
+                    <div>
+                      <div className="font-medium text-gray-900 text-sm">{contact.contact_name}</div>
+                      {contact.contact_role && (
+                        <div className="text-xs sm:text-sm text-gray-600">{contact.contact_role}</div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="p-2 sm:p-3 hidden md:table-cell">
                     {contact.contact_email ? (
                       <div className="flex items-center gap-2">
                         <Mail className="h-3 w-3 text-gray-400 flex-shrink-0" />
-                        <span className="text-sm text-gray-900 truncate">{contact.contact_email}</span>
+                        <span className="text-xs sm:text-sm text-gray-900 truncate">{contact.contact_email}</span>
                       </div>
                     ) : (
-                      <span className="text-gray-400 text-sm">-</span>
+                      <span className="text-gray-400 text-xs sm:text-sm">-</span>
                     )}
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden lg:table-cell">
                     {contact.phone ? (
                       <div className="flex items-center gap-2">
                         <Phone className="h-3 w-3 text-gray-400 flex-shrink-0" />
-                        <span className="text-sm text-gray-900">{contact.phone}</span>
+                        <span className="text-xs sm:text-sm text-gray-900">{contact.phone}</span>
                       </div>
                     ) : (
-                      <span className="text-gray-400 text-sm">-</span>
+                      <span className="text-gray-400 text-xs sm:text-sm">-</span>
                     )}
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden xl:table-cell">
                     {(contact.city || contact.state) ? (
-                      <span className="text-sm text-gray-900">
+                      <span className="text-xs sm:text-sm text-gray-900">
                         {[contact.city, contact.state].filter(Boolean).join(', ')}
                       </span>
                     ) : (
-                      <span className="text-gray-400 text-sm">-</span>
+                      <span className="text-gray-400 text-xs sm:text-sm">-</span>
                     )}
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3">
                     <Badge variant={getStatusBadgeVariant(contact.status)}>
                       {formatStatus(contact.status)}
                     </Badge>
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3 hidden lg:table-cell">
                     <div className="text-xs text-gray-500">
                       <div className="flex items-center gap-1 mb-1">
                         <MessageSquare className="h-3 w-3" />
@@ -303,7 +313,7 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
                       )}
                     </div>
                   </td>
-                  <td className="p-3">
+                  <td className="p-2 sm:p-3">
                     <div className="flex gap-1">
                       <Button
                         variant="ghost"
@@ -328,13 +338,14 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
             </tr>
           ))}
         </tbody>
-      </table>
-      
-      {contacts.length === 0 && (
-        <div className="text-center py-8 text-gray-500">
-          No contacts found
-        </div>
-      )}
+        </table>
+        
+        {contacts.length === 0 && (
+          <div className="text-center py-8 text-gray-500">
+            No contacts found
+          </div>
+        )}
+      </div>
     </div>
   )
 }
