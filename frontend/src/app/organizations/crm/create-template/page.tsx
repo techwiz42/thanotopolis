@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,6 +14,7 @@ import { useToast } from '@/components/ui/use-toast';
 export default function CreateTemplatePage() {
   const router = useRouter();
   const { toast } = useToast();
+  const { token } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [formData, setFormData] = useState({
@@ -67,6 +69,16 @@ export default function CreateTemplatePage() {
   };
 
   const handleSave = async () => {
+    if (!token) {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to create templates",
+        variant: "destructive"
+      });
+      router.push('/login');
+      return;
+    }
+
     if (!formData.name.trim()) {
       toast({
         title: "Validation Error",
@@ -103,6 +115,7 @@ export default function CreateTemplatePage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           ...formData,

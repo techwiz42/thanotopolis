@@ -122,6 +122,12 @@ export default function CRMPage() {
   const [editTemplateSubject, setEditTemplateSubject] = useState('')
   const [editTemplateContent, setEditTemplateContent] = useState('')
   
+  // Create new template state
+  const [showCreateTemplate, setShowCreateTemplate] = useState(false)
+  const [newTemplateName, setNewTemplateName] = useState('')
+  const [newTemplateSubject, setNewTemplateSubject] = useState('')
+  const [newTemplateContent, setNewTemplateContent] = useState('')
+  
   // Feature not implemented modal state
   const [showNotImplementedModal, setShowNotImplementedModal] = useState(false)
   const [notImplementedFeature, setNotImplementedFeature] = useState('')
@@ -670,6 +676,64 @@ export default function CRMPage() {
     setIsEditingTemplate(true)
   }
 
+  // Handle create new template
+  const handleCreateTemplate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!token || !newTemplateName || !newTemplateSubject || !newTemplateContent) return
+    
+    setIsSubmitting(true)
+    try {
+      // Extract variables from content
+      const variableRegex = /\{\{([^}]+)\}\}/g
+      const variables: string[] = []
+      let match
+      while ((match = variableRegex.exec(newTemplateContent)) !== null) {
+        if (!variables.includes(match[1])) {
+          variables.push(match[1])
+        }
+      }
+      
+      const response = await fetch(`/api/crm/email-templates`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: newTemplateName,
+          subject: newTemplateSubject,
+          html_content: newTemplateContent,
+          text_content: null,
+          variables: variables,
+          is_active: true
+        })
+      })
+      
+      if (response.ok) {
+        const newTemplate = await response.json()
+        
+        // Add to templates list
+        setEmailTemplates(prevTemplates => [...prevTemplates, newTemplate])
+        
+        // Reset form and close dialog
+        setNewTemplateName('')
+        setNewTemplateSubject('')
+        setNewTemplateContent('')
+        setShowCreateTemplate(false)
+        
+        alert('Template created successfully!')
+      } else {
+        const error = await response.json()
+        alert(`Error creating template: ${error.detail}`)
+      }
+    } catch (error) {
+      console.error('Error creating template:', error)
+      alert('Error creating template. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   // Handle contact update
   const handleContactUpdate = async (contactId: string, updatedContact: Partial<Contact>) => {
     if (!token) return
@@ -803,10 +867,16 @@ export default function CRMPage() {
                 </>
               )}
               {activeTab === 'templates' && (
-                <Button onClick={() => setShowTemplateUpload(true)} className="w-full sm:w-auto">
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload Template
-                </Button>
+                <>
+                  <Button onClick={() => setShowCreateTemplate(true)} className="w-full sm:w-auto">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Template
+                  </Button>
+                  <Button variant="outline" onClick={() => setShowTemplateUpload(true)} className="w-full sm:w-auto">
+                    <Upload className="h-4 w-4 mr-2" />
+                    Upload Template
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -1524,6 +1594,102 @@ export default function CRMPage() {
               OK
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Template Dialog */}
+      <Dialog open={showCreateTemplate} onOpenChange={setShowCreateTemplate}>
+        <DialogContent className="w-[98vw] max-w-[98vw] sm:max-w-[95vw] lg:max-w-[1200px] xl:max-w-[1400px] h-[95vh] flex flex-col bg-white border border-gray-200 shadow-lg overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900 flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Create New Email Template
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateTemplate} className="space-y-4 flex-1 overflow-y-auto min-h-0">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 xl:gap-6 h-full min-h-0">
+              {/* Left Column - Form */}
+              <div className="space-y-4 min-w-0 overflow-y-auto">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="new-template-name">Template Name *</Label>
+                    <Input
+                      id="new-template-name"
+                      value={newTemplateName}
+                      onChange={(e) => setNewTemplateName(e.target.value)}
+                      placeholder="e.g., Welcome Email"
+                      className="w-full"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="new-template-subject">Email Subject *</Label>
+                    <Input
+                      id="new-template-subject"
+                      value={newTemplateSubject}
+                      onChange={(e) => setNewTemplateSubject(e.target.value)}
+                      placeholder="e.g., Welcome to {{organization_name}}"
+                      className="w-full"
+                      required
+                    />
+                  </div>
+                </div>
+                
+                <div className="flex-1 min-h-0">
+                  <Label htmlFor="new-template-content">HTML Content *</Label>
+                  <Textarea
+                    id="new-template-content"
+                    value={newTemplateContent}
+                    onChange={(e) => setNewTemplateContent(e.target.value)}
+                    className="font-mono text-sm w-full resize-none min-h-[400px] sm:min-h-[500px] lg:min-h-[600px]"
+                    placeholder={`Enter HTML content with {{variable}} placeholders...
+
+Example:
+<h2>Welcome {{contact_name}}!</h2>
+<p>Thank you for your interest in {{organization_name}}.</p>
+<p>We're excited to work with {{business_name}}.</p>
+<p>Best regards,<br>{{organization_name}} Team</p>`}
+                    required
+                  />
+                  <p className="text-sm text-gray-600 mt-2">
+                    Available variables: &#123;&#123;contact_name&#125;&#125;, &#123;&#123;business_name&#125;&#125;, &#123;&#123;organization_name&#125;&#125;, etc.
+                  </p>
+                </div>
+                
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button type="button" variant="outline" onClick={() => {
+                    setNewTemplateName('')
+                    setNewTemplateSubject('')
+                    setNewTemplateContent('')
+                    setShowCreateTemplate(false)
+                  }}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isSubmitting}>
+                    {isSubmitting ? 'Creating...' : 'Create Template'}
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Right Column - Preview */}
+              <div className="flex-1 min-w-0 overflow-y-auto">
+                <Label className="text-sm font-medium">Live Preview</Label>
+                <div className="border rounded p-4 bg-gray-50 h-[400px] sm:h-[500px] lg:h-[600px] mt-2">
+                  {newTemplateContent ? (
+                    <iframe
+                      srcDoc={newTemplateContent}
+                      className="w-full h-full border rounded"
+                      title="Email Template Preview"
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-gray-500">
+                      <p>Preview will appear here as you type...</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 
