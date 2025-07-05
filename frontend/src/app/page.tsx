@@ -38,7 +38,7 @@ export default function Home() {
             </div>
             
             <div className="flex justify-center items-center pt-4">
-              <Link href="#benefits">
+              <Link href="/login">
                 <Button size="lg" className="bg-yellow-500 hover:bg-yellow-600 text-slate-900 font-semibold px-8 py-3 text-lg">
                   See It in Action
                 </Button>

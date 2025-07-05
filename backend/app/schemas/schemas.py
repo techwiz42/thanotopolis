@@ -353,6 +353,8 @@ class UsageStats(BaseModel):
     total_cost_cents: int
     breakdown_by_user: Optional[Dict[str, Dict[str, int]]] = {}
     breakdown_by_service: Optional[Dict[str, Dict[str, int]]] = {}
+    
+    model_config = ConfigDict(from_attributes=True)
 
 class SystemMetricsResponse(BaseModel):
     id: UUID

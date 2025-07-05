@@ -105,7 +105,7 @@ export default function OrganizationNavigation() {
     };
   }, [telephonyConfig]);
 
-  // Base navigation items
+  // Base navigation items - different for admin vs non-admin users
   const navigationItems: NavigationItem[] = [
     {
       name: 'Overview',
@@ -113,12 +113,13 @@ export default function OrganizationNavigation() {
       icon: Building2,
       description: 'Organization dashboard and overview'
     },
-    {
+    // Show Members link only for admin users
+    ...(user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'org_admin' ? [{
       name: 'Members',
       href: '/organizations/members',
       icon: Users,
       description: 'Manage organization members and roles'
-    },
+    }] : []),
     {
       name: 'Conversations',
       href: '/conversations',
@@ -133,38 +134,43 @@ export default function OrganizationNavigation() {
     }
   ];
 
-  // Telephony navigation items
+  // Telephony navigation items - different for admin vs non-admin users
   const telephonyItems: NavigationItem[] = [
-    {
-      name: 'Phone Setup',
-      href: '/organizations/telephony/setup',
-      icon: Phone,
-      badge: telephonyConfig ? 
-        (telephonyService.isSetupComplete(telephonyConfig) ? 'Active' : 'Setup Required') : 
-        'New',
-      description: 'Configure AI-powered phone support'
-    },
-    {
-      name: 'Active Calls',
-      href: '/organizations/telephony/active-calls',
-      icon: Radio,
-      badge: activeCallsCount > 0 ? activeCallsCount.toString() : undefined,
-      disabled: !telephonyConfig || !telephonyService.isSetupComplete(telephonyConfig),
-      description: 'Monitor live phone calls and agent responses'
-    },
+    // Show full telephony navigation for admin users
+    ...(user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'org_admin' ? [
+      {
+        name: 'Phone Setup',
+        href: '/organizations/telephony/setup',
+        icon: Phone,
+        badge: telephonyConfig ? 
+          (telephonyService.isSetupComplete(telephonyConfig) ? 'Active' : 'Setup Required') : 
+          'New',
+        description: 'Configure AI-powered phone support'
+      },
+      {
+        name: 'Active Calls',
+        href: '/organizations/telephony/active-calls',
+        icon: Radio,
+        badge: activeCallsCount > 0 ? activeCallsCount.toString() : undefined,
+        disabled: !telephonyConfig || !telephonyService.isSetupComplete(telephonyConfig),
+        description: 'Monitor live phone calls and agent responses'
+      },
+      {
+        name: 'Voice Analytics',
+        href: '/organizations/telephony/analytics',
+        icon: BarChart3,
+        disabled: !telephonyConfig || telephonyConfig.verification_status !== 'verified',
+        description: 'Call analytics and insights'
+      }
+    ] : []),
+    // Show Call History for all users
     {
       name: 'Call History',
       href: '/organizations/telephony/calls',
       icon: PhoneCall,
-      disabled: !telephonyConfig || !telephonyService.isSetupComplete(telephonyConfig),
+      disabled: (user?.role !== 'admin' && user?.role !== 'super_admin' && user?.role !== 'org_admin') ? 
+        false : (!telephonyConfig || !telephonyService.isSetupComplete(telephonyConfig)),
       description: 'View completed calls and transcripts'
-    },
-    {
-      name: 'Voice Analytics',
-      href: '/organizations/telephony/analytics',
-      icon: BarChart3,
-      disabled: !telephonyConfig || telephonyConfig.verification_status !== 'verified',
-      description: 'Call analytics and insights'
     }
   ];
 
@@ -192,7 +198,7 @@ export default function OrganizationNavigation() {
 
   const isActive = (href: string) => {
     if (href === '/organizations') {
-      return pathname === '/organizations';
+      return pathname === '/organizations' || pathname === '/organizations/overview';
     }
     return pathname.startsWith(href);
   };
@@ -266,14 +272,16 @@ export default function OrganizationNavigation() {
               <Headphones className="h-5 w-5 mr-2" />
               Telephony
             </h3>
-            {!telephonyLoading && (
+            {/* Show telephony status for admin users only */}
+            {(user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'org_admin') && !telephonyLoading && (
               <Badge variant={telephonyConfig?.is_enabled ? 'default' : 'secondary'}>
                 {telephonyConfig?.is_enabled ? 'Enabled' : 'Disabled'}
               </Badge>
             )}
           </div>
           
-          {telephonyLoading ? (
+          {/* Show loading state for admin users only */}
+          {(user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'org_admin') && telephonyLoading ? (
             <div className="text-center py-4 text-muted-foreground">
               <div className="animate-pulse">Loading telephony status...</div>
             </div>
@@ -308,8 +316,9 @@ export default function OrganizationNavigation() {
             </nav>
           )}
           
-          {/* Quick Stats */}
-          {telephonyConfig && telephonyService.isSetupComplete(telephonyConfig) && (
+          {/* Quick Stats - only for admin users */}
+          {(user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'org_admin') && 
+           telephonyConfig && telephonyService.isSetupComplete(telephonyConfig) && (
             <div className="mt-4 space-y-2">
               <div className="p-3 bg-muted rounded-lg">
                 <div className="flex items-center justify-between text-sm">

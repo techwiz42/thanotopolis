@@ -56,14 +56,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                       My Conversations
                     </Link>
                   )}
-                  {(user.role === 'org_admin' || user.role === 'admin' || user.role === 'super_admin') && (
-                    <Link 
-                      href="/organizations" 
-                      className="text-gray-200 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
-                    >
-                      Organization
-                    </Link>
-                  )}
+                  <Link 
+                    href="/organizations" 
+                    className="text-gray-200 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+                  >
+                    Organization
+                  </Link>
                   {user.role === 'super_admin' && (
                     <Link 
                       href="/admin/organizations" 

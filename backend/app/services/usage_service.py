@@ -3,7 +3,7 @@ Usage tracking service for monitoring token and voice usage
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from uuid import UUID
 
@@ -199,7 +199,7 @@ class UsageTrackingService:
         
         # Default to last 30 days if no dates provided
         if not end_date:
-            end_date = datetime.utcnow()
+            end_date = datetime.now(timezone.utc)
         if not start_date:
             if period == "day":
                 start_date = end_date - timedelta(days=1)
@@ -254,7 +254,9 @@ class UsageTrackingService:
             total_tts_words=total_tts_words,
             total_stt_words=total_stt_words,
             total_phone_calls=total_phone_calls,
-            total_cost_cents=total_cost_cents
+            total_cost_cents=total_cost_cents,
+            breakdown_by_user={},
+            breakdown_by_service={}
         )
     
     async def record_system_metric(
@@ -305,7 +307,7 @@ class UsageTrackingService:
     ) -> List[SystemMetrics]:
         """Get recent system metrics"""
         
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         query = select(SystemMetrics).where(
             SystemMetrics.created_at >= since
         ).order_by(desc(SystemMetrics.created_at)).limit(limit)

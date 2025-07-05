@@ -38,7 +38,9 @@ import {
   FileText,
   Edit,
   Trash2,
-  Eye
+  Eye,
+  Play,
+  Pause
 } from 'lucide-react'
 
 interface Contact {
@@ -81,7 +83,6 @@ interface EmailTemplate {
   html_content: string
   text_content?: string
   variables: string[]
-  is_active: boolean
   created_at: string
 }
 
@@ -94,7 +95,7 @@ interface PaginatedContactsResponse {
 }
 
 export default function CRMPage() {
-  const { token, user } = useAuth()
+  const { token, user, organization } = useAuth()
   const router = useRouter()
   const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -308,28 +309,8 @@ export default function CRMPage() {
     )
   }
 
-  // Check if user has admin access
-  if (user.role !== 'admin' && user.role !== 'super_admin' && user.role !== 'org_admin') {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Card className="w-96">
-          <CardContent className="p-6 text-center">
-            <AlertCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
-            <p className="text-gray-600">
-              You need administrator privileges to access the CRM system.
-            </p>
-            <Button 
-              onClick={() => router.push('/conversations')} 
-              className="mt-4"
-            >
-              Return to Conversations
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  // Check if user has access (any authenticated user can access CRM)
+  // Non-admin users will have limited functionality within the CRM
 
   if (loading) {
     return (
@@ -599,6 +580,7 @@ export default function CRMPage() {
     }
   }
 
+
   // Handle template update
   const handleTemplateUpdate = async () => {
     if (!token || !selectedTemplate) return
@@ -704,8 +686,7 @@ export default function CRMPage() {
           subject: newTemplateSubject,
           html_content: newTemplateContent,
           text_content: null,
-          variables: variables,
-          is_active: true
+          variables: variables
         })
       })
       
@@ -1057,6 +1038,13 @@ export default function CRMPage() {
                       contacts={filteredContacts} 
                       onContactUpdate={handleContactUpdate}
                       onContactDelete={handleContactDelete}
+                      currentUser={{
+                        id: user.id,
+                        email: user.email,
+                        name: [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email,
+                        role: user.role,
+                        tenant_id: user.tenant_id
+                      }}
                     />
                   </div>
                 </div>
@@ -1168,6 +1156,7 @@ export default function CRMPage() {
                                   setIsEditingTemplate(false)
                                   setShowTemplateView(true)
                                 }}
+                                title="View template"
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
@@ -1179,6 +1168,7 @@ export default function CRMPage() {
                                   startEditingTemplate(template)
                                   setShowTemplateView(true)
                                 }}
+                                title="Edit template"
                               >
                                 <Edit className="h-4 w-4" />
                               </Button>
@@ -1187,6 +1177,7 @@ export default function CRMPage() {
                                 size="sm"
                                 onClick={() => handleTemplateDelete(template.id)}
                                 className="text-red-600 hover:text-red-700"
+                                title="Delete template"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -1196,9 +1187,6 @@ export default function CRMPage() {
                           <div className="space-y-2">
                             <div className="flex items-center justify-between text-xs text-gray-500">
                               <span>Variables: {template.variables.length}</span>
-                              <span className={template.is_active ? 'text-green-600' : 'text-red-600'}>
-                                {template.is_active ? 'Active' : 'Inactive'}
-                              </span>
                             </div>
                             
                             {template.variables.length > 0 && (
@@ -1766,16 +1754,10 @@ Example:
               ) : (
                 // View Mode
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4">
                     <div>
                       <Label className="text-sm font-medium">Subject</Label>
                       <p className="text-sm text-gray-600 border rounded p-2">{selectedTemplate.subject}</p>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium">Status</Label>
-                      <Badge variant={selectedTemplate.is_active ? 'default' : 'destructive'} className="ml-2">
-                        {selectedTemplate.is_active ? 'Active' : 'Inactive'}
-                      </Badge>
                     </div>
                   </div>
                   

@@ -32,9 +32,9 @@ export default function EditOrganization() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  // Check if user has permission to edit organization
+  // Allow all authenticated users to edit their organization
   useEffect(() => {
-    if (user && user.role !== 'admin' && user.role !== 'super_admin') {
+    if (user && !user.tenant_id) {
       router.push('/conversations')
       return
     }
@@ -196,11 +196,11 @@ export default function EditOrganization() {
     )
   }
 
-  if (user.role !== 'admin' && user.role !== 'super_admin') {
+  if (!user.tenant_id) {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-bold mb-6">Edit Organization</h1>
-        <div>You don't have permission to edit organization settings.</div>
+        <div>You must be a member of an organization to edit its settings.</div>
       </div>
     )
   }

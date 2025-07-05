@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,7 +16,8 @@ import {
   Building,
   Calendar,
   MessageSquare,
-  Trash2
+  Trash2,
+  Eye
 } from 'lucide-react'
 
 interface Contact {
@@ -32,15 +34,26 @@ interface Contact {
   created_at: string
   interaction_count: number
   last_interaction_date?: string
+  created_by_user_id?: string
+}
+
+interface User {
+  id: string
+  email: string
+  name: string
+  role: string
+  tenant_id?: string
 }
 
 interface ContactTableViewProps {
   contacts: Contact[]
   onContactUpdate: (contactId: string, updatedContact: Partial<Contact>) => Promise<void>
   onContactDelete: (contactId: string) => Promise<void>
+  currentUser: User
 }
 
-const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContactUpdate, onContactDelete }) => {
+const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContactUpdate, onContactDelete, currentUser }) => {
+  const router = useRouter()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<Partial<Contact>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -318,19 +331,34 @@ const ContactTableView: React.FC<ContactTableViewProps> = ({ contacts, onContact
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleEditStart(contact)}
+                        onClick={() => router.push(`/organizations/crm/contacts/${contact.id}`)}
                         className="h-8 w-8 p-0"
+                        title="View details"
                       >
-                        <Edit3 className="h-3 w-3" />
+                        <Eye className="h-3 w-3" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(contact.id)}
-                        className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+                      {(currentUser.role === 'admin' || currentUser.role === 'super_admin' || currentUser.role === 'org_admin' || contact.created_by_user_id === currentUser.id) && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleEditStart(contact)}
+                            className="h-8 w-8 p-0"
+                            title="Edit contact"
+                          >
+                            <Edit3 className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(contact.id)}
+                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            title="Delete contact"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </>

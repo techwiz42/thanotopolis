@@ -261,6 +261,124 @@ async def list_contacts(
         total_pages=((total or 0) + pagination.page_size - 1) // pagination.page_size
     )
 
+@router.get("/contacts/search", response_model=PaginatedResponse)
+async def search_contacts_advanced(
+    current_user: User = Depends(get_current_user),
+    pagination: PaginationParams = Depends(),
+    search_term: Optional[str] = Query(None, description="Search term"),
+    search_fields: Optional[str] = Query(None, description="Comma-separated list of fields to search"),
+    status: Optional[ContactStatus] = Query(None),
+    city: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    has_email: Optional[bool] = Query(None, description="Filter contacts with/without email"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Advanced contact search with field selection"""
+    
+    tenant_id = current_user.tenant_id
+    
+    # Build query
+    query = select(Contact).where(Contact.tenant_id == tenant_id)
+    conditions = []
+    
+    # Search term with field selection
+    if search_term and search_fields:
+        fields = [field.strip() for field in search_fields.split(',')]
+        search_conditions = []
+        search_pattern = f"%{search_term}%"
+        
+        for field in fields:
+            if field == 'business_name':
+                search_conditions.append(Contact.business_name.ilike(search_pattern))
+            elif field == 'contact_name':
+                search_conditions.append(Contact.contact_name.ilike(search_pattern))
+            elif field == 'contact_email':
+                search_conditions.append(Contact.contact_email.ilike(search_pattern))
+            elif field == 'contact_role':
+                search_conditions.append(Contact.contact_role.ilike(search_pattern))
+            elif field == 'phone':
+                search_conditions.append(Contact.phone.ilike(search_pattern))
+            elif field == 'city':
+                search_conditions.append(Contact.city.ilike(search_pattern))
+            elif field == 'state':
+                search_conditions.append(Contact.state.ilike(search_pattern))
+            elif field == 'notes':
+                search_conditions.append(Contact.notes.ilike(search_pattern))
+        
+        if search_conditions:
+            conditions.append(or_(*search_conditions))
+    elif search_term:  # Fallback to all fields search
+        search_pattern = f"%{search_term}%"
+        conditions.append(
+            or_(
+                Contact.business_name.ilike(search_pattern),
+                Contact.contact_name.ilike(search_pattern),
+                Contact.contact_email.ilike(search_pattern),
+                Contact.contact_role.ilike(search_pattern),
+                Contact.phone.ilike(search_pattern),
+                Contact.city.ilike(search_pattern),
+                Contact.state.ilike(search_pattern),
+                Contact.notes.ilike(search_pattern)
+            )
+        )
+    
+    # Other filters
+    if status:
+        conditions.append(Contact.status == status.value)
+    
+    if city:
+        conditions.append(Contact.city.ilike(f"%{city}%"))
+    
+    if state:
+        conditions.append(Contact.state.ilike(f"%{state}%"))
+    
+    if has_email is True:
+        conditions.append(and_(Contact.contact_email.is_not(None), Contact.contact_email != ""))
+    elif has_email is False:
+        conditions.append(or_(Contact.contact_email.is_(None), Contact.contact_email == ""))
+    
+    if conditions:
+        query = query.where(and_(*conditions))
+    
+    # Get total count
+    total_query = select(func.count()).select_from(query.subquery())
+    total = await db.scalar(total_query)
+    
+    # Apply pagination
+    offset = (pagination.page - 1) * pagination.page_size
+    query = query.offset(offset).limit(pagination.page_size).order_by(desc(Contact.created_at))
+    
+    result = await db.execute(query)
+    contacts = result.scalars().all()
+    
+    # Add interaction counts
+    contact_responses = []
+    for contact in contacts:
+        interaction_count = await db.scalar(
+            select(func.count(ContactInteraction.id)).where(
+                ContactInteraction.contact_id == contact.id
+            )
+        )
+        
+        last_interaction = await db.scalar(
+            select(func.max(ContactInteraction.interaction_date)).where(
+                ContactInteraction.contact_id == contact.id
+            )
+        )
+        
+        contact_dict = ContactResponse.model_validate(contact).model_dump()
+        contact_dict["interaction_count"] = interaction_count or 0
+        contact_dict["last_interaction_date"] = last_interaction
+        contact_responses.append(contact_dict)
+    
+    return PaginatedResponse(
+        items=contact_responses,
+        total=total or 0,
+        page=pagination.page,
+        page_size=pagination.page_size,
+        total_pages=((total or 0) + pagination.page_size - 1) // pagination.page_size
+    )
+
 @router.get("/contacts/{contact_id}", response_model=ContactResponse)
 async def get_contact(
     contact_id: UUID,
@@ -786,16 +904,11 @@ async def send_test_email(
 @router.get("/email-templates", response_model=List[EmailTemplateResponse])
 async def list_email_templates(
     current_user: User = Depends(get_current_user),
-    include_inactive: bool = Query(False),
     db: AsyncSession = Depends(get_db)
 ):
     """List email templates"""
     
     query = select(EmailTemplate).where(EmailTemplate.tenant_id == current_user.tenant_id)
-    
-    if not include_inactive:
-        query = query.where(EmailTemplate.is_active == True)
-    
     query = query.order_by(EmailTemplate.name)
     
     result = await db.execute(query)
@@ -1020,8 +1133,7 @@ async def send_bulk_email(
         select(EmailTemplate).where(
             and_(
                 EmailTemplate.id == request.template_id,
-                EmailTemplate.tenant_id == current_user.tenant_id,
-                EmailTemplate.is_active == True
+                EmailTemplate.tenant_id == current_user.tenant_id
             )
         )
     )
@@ -1052,7 +1164,7 @@ async def send_bulk_email(
     # Send emails
     results = BulkEmailResult(
         template_id=str(request.template_id),
-        total_contacts=len(contacts),
+        total_recipients=len(contacts),
         successful_sends=0,
         failed_sends=0,
         errors=[]
@@ -1072,7 +1184,7 @@ async def send_bulk_email(
                 "state": contact.state or "",
                 "website": contact.website or "",
                 "address": contact.address or "",
-                **request.additional_variables  # Allow custom variables
+                **request.template_variables  # Allow custom variables
             }
             
             # Send email
@@ -1122,120 +1234,3 @@ async def send_bulk_email(
     
     return results
 
-@router.get("/contacts/search", response_model=PaginatedResponse)
-async def search_contacts_advanced(
-    current_user: User = Depends(get_current_user),
-    pagination: PaginationParams = Depends(),
-    search_term: Optional[str] = Query(None, description="Search term"),
-    search_fields: Optional[str] = Query(None, description="Comma-separated list of fields to search"),
-    status: Optional[ContactStatus] = Query(None),
-    city: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
-    has_email: Optional[bool] = Query(None, description="Filter contacts with/without email"),
-    db: AsyncSession = Depends(get_db)
-):
-    """Advanced contact search with field selection"""
-    
-    tenant_id = current_user.tenant_id
-    
-    # Build query
-    query = select(Contact).where(Contact.tenant_id == tenant_id)
-    conditions = []
-    
-    # Search term with field selection
-    if search_term and search_fields:
-        fields = [field.strip() for field in search_fields.split(',')]
-        search_conditions = []
-        search_pattern = f"%{search_term}%"
-        
-        for field in fields:
-            if field == 'business_name':
-                search_conditions.append(Contact.business_name.ilike(search_pattern))
-            elif field == 'contact_name':
-                search_conditions.append(Contact.contact_name.ilike(search_pattern))
-            elif field == 'contact_email':
-                search_conditions.append(Contact.contact_email.ilike(search_pattern))
-            elif field == 'contact_role':
-                search_conditions.append(Contact.contact_role.ilike(search_pattern))
-            elif field == 'phone':
-                search_conditions.append(Contact.phone.ilike(search_pattern))
-            elif field == 'city':
-                search_conditions.append(Contact.city.ilike(search_pattern))
-            elif field == 'state':
-                search_conditions.append(Contact.state.ilike(search_pattern))
-            elif field == 'notes':
-                search_conditions.append(Contact.notes.ilike(search_pattern))
-        
-        if search_conditions:
-            conditions.append(or_(*search_conditions))
-    elif search_term:  # Fallback to all fields search
-        search_pattern = f"%{search_term}%"
-        conditions.append(
-            or_(
-                Contact.business_name.ilike(search_pattern),
-                Contact.contact_name.ilike(search_pattern),
-                Contact.contact_email.ilike(search_pattern),
-                Contact.contact_role.ilike(search_pattern),
-                Contact.phone.ilike(search_pattern),
-                Contact.city.ilike(search_pattern),
-                Contact.state.ilike(search_pattern),
-                Contact.notes.ilike(search_pattern)
-            )
-        )
-    
-    # Other filters
-    if status:
-        conditions.append(Contact.status == status.value)
-    
-    if city:
-        conditions.append(Contact.city.ilike(f"%{city}%"))
-    
-    if state:
-        conditions.append(Contact.state.ilike(f"%{state}%"))
-    
-    if has_email is True:
-        conditions.append(and_(Contact.contact_email.is_not(None), Contact.contact_email != ""))
-    elif has_email is False:
-        conditions.append(or_(Contact.contact_email.is_(None), Contact.contact_email == ""))
-    
-    if conditions:
-        query = query.where(and_(*conditions))
-    
-    # Get total count
-    total_query = select(func.count()).select_from(query.subquery())
-    total = await db.scalar(total_query)
-    
-    # Apply pagination
-    offset = (pagination.page - 1) * pagination.page_size
-    query = query.offset(offset).limit(pagination.page_size).order_by(desc(Contact.created_at))
-    
-    result = await db.execute(query)
-    contacts = result.scalars().all()
-    
-    # Add interaction counts
-    contact_responses = []
-    for contact in contacts:
-        interaction_count = await db.scalar(
-            select(func.count(ContactInteraction.id)).where(
-                ContactInteraction.contact_id == contact.id
-            )
-        )
-        
-        last_interaction = await db.scalar(
-            select(func.max(ContactInteraction.interaction_date)).where(
-                ContactInteraction.contact_id == contact.id
-            )
-        )
-        
-        contact_dict = ContactResponse.model_validate(contact).model_dump()
-        contact_dict["interaction_count"] = interaction_count or 0
-        contact_dict["last_interaction_date"] = last_interaction
-        contact_responses.append(contact_dict)
-    
-    return PaginatedResponse(
-        items=contact_responses,
-        total=total or 0,
-        page=pagination.page,
-        page_size=pagination.page_size,
-        total_pages=((total or 0) + pagination.page_size - 1) // pagination.page_size
-    )

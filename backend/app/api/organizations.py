@@ -2,12 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from typing import List
+from typing import List, Dict, Any
 from uuid import UUID
 import secrets
+from datetime import datetime, timedelta
 
 from app.db.database import get_db
-from app.models.models import Tenant, User, Agent
+from app.models.models import Tenant, User, Agent, Conversation, Contact, PhoneCall, TelephonyConfiguration
 from app.schemas.schemas import (
     OrganizationResponse, 
     OrganizationUpdate,
@@ -156,6 +157,141 @@ async def update_current_organization(
     await db.refresh(org)
     
     return org
+
+@router.get("/stats", response_model=Dict[str, Any])
+async def get_organization_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get organization statistics (admin or higher required)"""
+    # Check if user has admin access
+    if current_user.role not in ["admin", "super_admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin users can access organization statistics"
+        )
+    
+    if not current_user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not belong to any organization"
+        )
+    
+    # Get organization
+    org_result = await db.execute(
+        select(Tenant).where(Tenant.id == current_user.tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found"
+        )
+    
+    # Count total users
+    users_result = await db.execute(
+        select(User).where(User.tenant_id == current_user.tenant_id)
+    )
+    total_users = len(users_result.scalars().all())
+    
+    # Count total conversations
+    conversations_result = await db.execute(
+        select(Conversation).where(Conversation.tenant_id == current_user.tenant_id)
+    )
+    total_conversations = len(conversations_result.scalars().all())
+    
+    # Count total contacts
+    contacts_result = await db.execute(
+        select(Contact).where(Contact.tenant_id == current_user.tenant_id)
+    )
+    total_contacts = len(contacts_result.scalars().all())
+    
+    # Count total phone calls
+    telephony_config_result = await db.execute(
+        select(TelephonyConfiguration).where(TelephonyConfiguration.tenant_id == current_user.tenant_id)
+    )
+    telephony_config = telephony_config_result.scalar_one_or_none()
+    
+    total_calls = 0
+    if telephony_config:
+        calls_result = await db.execute(
+            select(PhoneCall).where(PhoneCall.telephony_config_id == telephony_config.id)
+        )
+        total_calls = len(calls_result.scalars().all())
+    
+    # Get recent activity (last 30 days)
+    thirty_days_ago = datetime.now() - timedelta(days=30)
+    recent_activity = []
+    
+    # Recent conversations
+    recent_conversations_result = await db.execute(
+        select(Conversation).where(
+            and_(
+                Conversation.tenant_id == current_user.tenant_id,
+                Conversation.created_at >= thirty_days_ago
+            )
+        ).order_by(Conversation.created_at.desc()).limit(5)
+    )
+    recent_conversations = recent_conversations_result.scalars().all()
+    
+    for conv in recent_conversations:
+        recent_activity.append({
+            "id": str(conv.id),
+            "type": "conversation",
+            "description": f"New conversation started",
+            "timestamp": conv.created_at.isoformat()
+        })
+    
+    # Recent contacts
+    recent_contacts_result = await db.execute(
+        select(Contact).where(
+            and_(
+                Contact.tenant_id == current_user.tenant_id,
+                Contact.created_at >= thirty_days_ago
+            )
+        ).order_by(Contact.created_at.desc()).limit(5)
+    )
+    recent_contacts = recent_contacts_result.scalars().all()
+    
+    for contact in recent_contacts:
+        recent_activity.append({
+            "id": str(contact.id),
+            "type": "contact",
+            "description": f"New contact added: {contact.business_name}",
+            "timestamp": contact.created_at.isoformat()
+        })
+    
+    # Recent phone calls
+    if telephony_config:
+        recent_calls_result = await db.execute(
+            select(PhoneCall).where(
+                and_(
+                    PhoneCall.telephony_config_id == telephony_config.id,
+                    PhoneCall.created_at >= thirty_days_ago
+                )
+            ).order_by(PhoneCall.created_at.desc()).limit(5)
+        )
+        recent_calls = recent_calls_result.scalars().all()
+        
+        for call in recent_calls:
+            recent_activity.append({
+                "id": str(call.id),
+                "type": "call",
+                "description": f"Phone call from {call.customer_phone_number}",
+                "timestamp": call.created_at.isoformat()
+            })
+    
+    # Sort all activity by timestamp (most recent first)
+    recent_activity.sort(key=lambda x: x["timestamp"], reverse=True)
+    
+    return {
+        "total_users": total_users,
+        "total_conversations": total_conversations,
+        "total_contacts": total_contacts,
+        "total_calls": total_calls,
+        "recent_activity": recent_activity[:10]  # Limit to 10 most recent items
+    }
 
 @router.get("/{org_id}", response_model=OrganizationResponse)
 async def get_organization(

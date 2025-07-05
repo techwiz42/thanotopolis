@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -34,7 +34,6 @@ interface EmailTemplate {
   subject: string
   html_content: string
   variables: string[]
-  is_active: boolean
   created_at: string
 }
 
@@ -64,7 +63,7 @@ interface PaginatedContactsResponse {
 
 interface BulkEmailResult {
   template_id: string
-  total_contacts: number
+  total_recipients: number
   successful_sends: number
   failed_sends: number
   errors: Array<{
@@ -160,6 +159,7 @@ export default function BulkEmailPage() {
         const response = await fetch('/api/crm/email-templates', {
           headers: {
             'Authorization': `Bearer ${token}`,
+            'X-Tenant-ID': organization!,
             'Content-Type': 'application/json'
           }
         })
@@ -177,17 +177,77 @@ export default function BulkEmailPage() {
       }
     }
 
-    if (token) {
+    if (token && organization) {
       fetchTemplates()
     }
-  }, [token])
+  }, [token, organization])
 
-  // Fetch contacts when step changes or search changes
+  const fetchContacts = useCallback(async () => {
+    if (!token || !organization) return
+    
+    setContactsLoading(true)
+    try {
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        page_size: pageSize.toString()
+      })
+      
+      if (searchTerm) {
+        params.append('search_term', searchTerm)
+        // If no search fields are selected, search all fields
+        const fieldsToSearch = selectedSearchFields.length > 0 
+          ? selectedSearchFields 
+          : ['business_name', 'contact_name', 'contact_email', 'contact_role', 'phone', 'city', 'state', 'notes']
+        params.append('search_fields', fieldsToSearch.join(','))
+      }
+      
+      if (statusFilter !== 'all') {
+        params.append('status', statusFilter)
+      }
+      
+      if (emailFilter === 'with_email') {
+        params.append('has_email', 'true')
+      } else if (emailFilter === 'without_email') {
+        params.append('has_email', 'false')
+      }
+      // When emailFilter is 'all', don't add has_email parameter
+      
+      const url = `/api/crm/contacts/search?${params}`
+      console.log('Fetching contacts from:', url)
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': organization!,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (response.ok) {
+        const data: PaginatedContactsResponse = await response.json()
+        console.log('Contact search response:', data)
+        setContacts(data.items)
+        setCurrentPage(data.page)
+        setTotalPages(data.total_pages)
+        setTotalContacts(data.total)
+      } else {
+        console.error('Failed to fetch contacts:', response.status, response.statusText)
+        const errorData = await response.text()
+        console.error('Error response:', errorData)
+      }
+    } catch (error) {
+      console.error('Error fetching contacts:', error)
+    } finally {
+      setContactsLoading(false)
+    }
+  }, [token, organization, currentPage, pageSize, searchTerm, selectedSearchFields, statusFilter, emailFilter])
+
+  // Fetch contacts when step changes or search parameters change
   useEffect(() => {
-    if (currentStep === 'contacts' && token) {
+    if (currentStep === 'contacts' && token && organization) {
       fetchContacts()
     }
-  }, [currentStep, token, searchTerm, selectedSearchFields, statusFilter, emailFilter, currentPage])
+  }, [currentStep, token, organization, currentPage, searchTerm, selectedSearchFields, statusFilter, emailFilter, fetchContacts])
 
   // Check authentication - wait for loading to complete
   useEffect(() => {
@@ -208,8 +268,8 @@ export default function BulkEmailPage() {
     return null
   }
 
-  // Check if user has admin access (matching CRM page access requirements)
-  if (user.role !== 'admin' && user.role !== 'super_admin' && user.role !== 'org_admin') {
+  // Allow all authenticated users to access bulk email
+  if (!user || !user.tenant_id) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <Card className="w-96">
@@ -217,7 +277,7 @@ export default function BulkEmailPage() {
             <AlertCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
             <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
             <p className="text-gray-600">
-              You need administrator privileges to access the bulk email feature.
+              You must be a member of an organization to access the bulk email feature.
             </p>
             <Button 
               onClick={() => router.push('/organizations/crm')} 
@@ -231,57 +291,13 @@ export default function BulkEmailPage() {
     )
   }
 
-
-  const fetchContacts = async () => {
-    if (!token) return
-    
-    setContactsLoading(true)
-    try {
-      const params = new URLSearchParams({
-        page: currentPage.toString(),
-        page_size: pageSize.toString()
-      })
-      
-      if (searchTerm) {
-        params.append('search_term', searchTerm)
-        params.append('search_fields', selectedSearchFields.join(','))
-      }
-      
-      if (statusFilter !== 'all') {
-        params.append('status', statusFilter)
-      }
-      
-      if (emailFilter === 'with_email') {
-        params.append('has_email', 'true')
-      } else if (emailFilter === 'without_email') {
-        params.append('has_email', 'false')
-      }
-      
-      const response = await fetch(`/api/crm/contacts/search?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      })
-
-      if (response.ok) {
-        const data: PaginatedContactsResponse = await response.json()
-        setContacts(data.items)
-        setCurrentPage(data.page)
-        setTotalPages(data.total_pages)
-        setTotalContacts(data.total)
-      } else {
-        console.error('Failed to fetch contacts')
-      }
-    } catch (error) {
-      console.error('Error fetching contacts:', error)
-    } finally {
-      setContactsLoading(false)
-    }
-  }
-
   const handleSelectTemplate = (template: EmailTemplate) => {
     setSelectedTemplate(template)
+    // Reset search parameters when selecting a new template
+    setSearchTerm('')
+    setStatusFilter('all')
+    setEmailFilter('all')
+    setCurrentPage(1)
     setCurrentStep('contacts')
   }
 
@@ -309,7 +325,6 @@ export default function BulkEmailPage() {
 
   const handleSearch = () => {
     setCurrentPage(1)
-    fetchContacts()
   }
 
   const goToPage = (page: number) => {
@@ -327,7 +342,7 @@ export default function BulkEmailPage() {
   }
 
   const handleSendEmails = async () => {
-    if (!selectedTemplate || selectedContacts.size === 0) return
+    if (!selectedTemplate || selectedContacts.size === 0 || !organization) return
     
     setIsSubmitting(true)
     try {
@@ -335,12 +350,13 @@ export default function BulkEmailPage() {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': organization!,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           template_id: selectedTemplate.id,
           contact_ids: Array.from(selectedContacts),
-          additional_variables: additionalVariables
+          template_variables: additionalVariables
         })
       })
       
@@ -439,16 +455,17 @@ export default function BulkEmailPage() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {templates.map((template) => (
-                    <Card key={template.id} className="border border-gray-200 hover:border-blue-300 transition-colors cursor-pointer" onClick={() => handleSelectTemplate(template)}>
+                    <Card 
+                      key={template.id} 
+                      className="border border-gray-200 transition-colors hover:border-blue-300 cursor-pointer" 
+                      onClick={() => handleSelectTemplate(template)}
+                    >
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex-1">
                             <h4 className="font-medium text-gray-900">{template.name}</h4>
                             <p className="text-sm text-gray-600 mt-1">{template.subject}</p>
                           </div>
-                          <Badge variant={template.is_active ? 'default' : 'destructive'}>
-                            {template.is_active ? 'Active' : 'Inactive'}
-                          </Badge>
                         </div>
                         
                         <div className="space-y-2">
@@ -473,7 +490,10 @@ export default function BulkEmailPage() {
                         </div>
                         
                         <div className="mt-3 pt-3 border-t">
-                          <Button className="w-full" size="sm">
+                          <Button 
+                            className="w-full" 
+                            size="sm"
+                          >
                             Select Template
                           </Button>
                         </div>
@@ -842,7 +862,7 @@ export default function BulkEmailPage() {
                   </div>
                   <div className="text-center p-4 bg-blue-50 rounded-lg">
                     <Users className="h-8 w-8 mx-auto text-blue-600 mb-2" />
-                    <p className="text-2xl font-bold text-blue-600">{sendResults.total_contacts}</p>
+                    <p className="text-2xl font-bold text-blue-600">{sendResults.total_recipients}</p>
                     <p className="text-sm text-gray-600">Total Recipients</p>
                   </div>
                 </div>

@@ -16,13 +16,8 @@ const OrganizationMembersPage = () => {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [success, setSuccess] = useState('')
 
-  // Check admin access
-  useEffect(() => {
-    if (user && user.role !== 'admin' && user.role !== 'super_admin' && user.role !== 'org_admin') {
-      router.push('/conversations')
-      return
-    }
-  }, [user, router])
+  // All authenticated users can view members
+  // Only admins can perform actions like deactivation
 
   // Fetch organization members
   useEffect(() => {
@@ -221,14 +216,8 @@ const OrganizationMembersPage = () => {
     )
   }
 
-  if (user.role !== 'admin' && user.role !== 'super_admin' && user.role !== 'org_admin') {
-    return (
-      <div className="p-6">
-        <h1 className="text-2xl font-bold mb-6">Organization Members</h1>
-        <div>You don't have permission to manage organization members.</div>
-      </div>
-    )
-  }
+  // Non-admin users can view members but not manage them
+  const canManageMembers = user.role === 'admin' || user.role === 'super_admin' || user.role === 'org_admin'
 
   if (loading) {
     return (
@@ -302,18 +291,24 @@ const OrganizationMembersPage = () => {
                     <td className="py-3 px-2">{member.email}</td>
                     <td className="py-3 px-2">{member.username}</td>
                     <td className="py-3 px-2">
-                      <select
-                        value={member.role}
-                        onChange={(e) => handleUpdateRole(member.id, member.username, e.target.value)}
-                        disabled={member.id === user.id || actionLoading === member.id}
-                        className="text-xs px-2 py-1 rounded-full border focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        {getAvailableRoles(user.role, member.role).map(role => (
-                          <option key={role} value={role}>
-                            {role.replace('_', ' ')}
-                          </option>
-                        ))}
-                      </select>
+                      {canManageMembers ? (
+                        <select
+                          value={member.role}
+                          onChange={(e) => handleUpdateRole(member.id, member.username, e.target.value)}
+                          disabled={member.id === user.id || actionLoading === member.id}
+                          className="text-xs px-2 py-1 rounded-full border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {getAvailableRoles(user.role, member.role).map(role => (
+                            <option key={role} value={role}>
+                              {role.replace('_', ' ')}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleBadgeColor(member.role)}`}>
+                          {member.role.replace('_', ' ')}
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-2">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -327,7 +322,7 @@ const OrganizationMembersPage = () => {
                     </td>
                     <td className="py-3 px-2">
                       <div className="flex gap-2">
-                        {member.id !== user.id && (
+                        {canManageMembers && member.id !== user.id && (
                           <>
                             {member.is_active ? (
                               <Button
