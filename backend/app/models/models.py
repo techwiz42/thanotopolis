@@ -796,7 +796,7 @@ class Contact(Base):
     business_name = Column(String, nullable=False)
     city = Column(String, nullable=True)
     state = Column(String, nullable=True)
-    contact_name = Column(String, nullable=False)
+    contact_name = Column(String, nullable=True)
     contact_email = Column(String, nullable=True)
     contact_role = Column(String, nullable=True)
     

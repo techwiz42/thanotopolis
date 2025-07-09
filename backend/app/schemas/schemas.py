@@ -660,6 +660,9 @@ class ContactResponse(ContactBase):
     billing_status: Optional[str] = None  # Populated from Stripe data
     subscription_status: Optional[str] = None  # Populated from Stripe data
     
+    # Override contact_name to be Optional for response (many contacts have NULL contact_name)
+    contact_name: Optional[str] = Field(None, max_length=255)
+    
     model_config = ConfigDict(from_attributes=True)
 
 # Contact Interaction Schemas

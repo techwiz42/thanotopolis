@@ -688,11 +688,17 @@ async def import_contacts_csv(
                 if csv_field in row and row[csv_field]:
                     contact_data[contact_field] = row[csv_field].strip()
             
+            # Clean up contact_name - treat '-' as null
+            if contact_data.get('contact_name') == '-':
+                contact_data.pop('contact_name', None)
+            
             # Validate required fields
             if not contact_data.get('business_name'):
                 raise ValueError("business_name is required")
-            if not contact_data.get('contact_name'):
-                raise ValueError("contact_name is required")
+            
+            # contact_name is required unless contact has an email address
+            if not contact_data.get('contact_name') and not contact_data.get('contact_email'):
+                raise ValueError("contact_name is required when contact_email is not provided")
             
             # Set default status if not provided
             if 'status' not in contact_data:
@@ -712,29 +718,47 @@ async def import_contacts_csv(
             
             if existing_contact and update_existing:
                 # Update existing contact
-                for field, value in contact_data.items():
-                    setattr(existing_contact, field, value)
-                
-                await db.commit()
-                await db.refresh(existing_contact)
-                
-                results.updated_contacts.append(existing_contact.id)
-                results.successful_imports += 1
+                try:
+                    for field, value in contact_data.items():
+                        setattr(existing_contact, field, value)
+                    
+                    await db.commit()
+                    await db.refresh(existing_contact)
+                    
+                    results.updated_contacts.append(existing_contact.id)
+                    results.successful_imports += 1
+                except Exception as db_error:
+                    await db.rollback()
+                    results.failed_imports += 1
+                    results.errors.append({
+                        "row": row_num,
+                        "error": f"Failed to update contact: {str(db_error)}",
+                        "data": contact_data
+                    })
                 
             elif not existing_contact:
                 # Create new contact
-                contact = Contact(
-                    tenant_id=current_user.tenant_id,
-                    created_by_user_id=current_user.id,
-                    **contact_data
-                )
-                
-                db.add(contact)
-                await db.commit()
-                await db.refresh(contact)
-                
-                results.created_contacts.append(contact.id)
-                results.successful_imports += 1
+                try:
+                    contact = Contact(
+                        tenant_id=current_user.tenant_id,
+                        created_by_user_id=current_user.id,
+                        **contact_data
+                    )
+                    
+                    db.add(contact)
+                    await db.commit()
+                    await db.refresh(contact)
+                    
+                    results.created_contacts.append(contact.id)
+                    results.successful_imports += 1
+                except Exception as db_error:
+                    await db.rollback()
+                    results.failed_imports += 1
+                    results.errors.append({
+                        "row": row_num,
+                        "error": f"Failed to create contact: {str(db_error)}",
+                        "data": contact_data
+                    })
                 
             else:
                 # Skip existing contact
