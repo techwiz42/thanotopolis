@@ -1,7 +1,8 @@
 """
 CRM API endpoints for contact management, custom fields, and email integration
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Request
+from fastapi.responses import Response, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, and_, or_
 from typing import Optional, List, Dict, Any
@@ -15,7 +16,8 @@ from app.db.database import get_db
 from app.auth.auth import get_current_user
 from app.models.models import (
     User, Tenant, Contact, ContactInteraction, CustomField, EmailTemplate,
-    ContactStatus, ContactInteractionType, CustomFieldType
+    ContactStatus, ContactInteractionType, CustomFieldType,
+    EmailCampaign, EmailRecipient, EmailEvent
 )
 from app.models.stripe_models import StripeCustomer, StripeSubscription
 from app.schemas.schemas import (
@@ -29,6 +31,7 @@ from app.schemas.schemas import (
     PaginationParams, PaginatedResponse
 )
 from app.services.email_service import email_service, DEFAULT_TEMPLATES
+from app.services.email_tracking_service import email_tracking_service
 
 router = APIRouter(prefix="/crm", tags=["crm"])
 logger = logging.getLogger(__name__)
@@ -95,6 +98,19 @@ async def get_crm_dashboard(
     
     # Get total contacts
     total_contacts = sum(contacts_by_status.values())
+    
+    # Get unsubscribed contacts count
+    unsubscribed_query = select(func.count(Contact.id)).where(
+        and_(
+            Contact.tenant_id == tenant_id,
+            Contact.is_unsubscribed == True
+        )
+    )
+    unsubscribed_result = await db.execute(unsubscribed_query)
+    unsubscribed_contacts = unsubscribed_result.scalar() or 0
+    
+    # Calculate unsubscribe rate
+    unsubscribe_rate = (unsubscribed_contacts / total_contacts * 100) if total_contacts > 0 else 0
     
     # Get recent interactions (last 10)
     recent_interactions_query = select(ContactInteraction).where(
@@ -164,7 +180,9 @@ async def get_crm_dashboard(
         contacts_by_status=contacts_by_status,
         recent_interactions=[ContactInteractionResponse.model_validate(interaction) for interaction in recent_interactions],
         upcoming_tasks=[ContactInteractionResponse.model_validate(task) for task in upcoming_tasks],
-        contact_growth=contact_growth
+        contact_growth=contact_growth,
+        unsubscribed_contacts=unsubscribed_contacts,
+        unsubscribe_rate=round(unsubscribe_rate, 2)
     )
     
     return CRMDashboardResponse(
@@ -1141,13 +1159,14 @@ async def send_bulk_email(
     if not template:
         raise HTTPException(status_code=404, detail="Email template not found")
     
-    # Get contacts
+    # Get contacts (exclude unsubscribed)
     contacts_query = select(Contact).where(
         and_(
             Contact.tenant_id == current_user.tenant_id,
             Contact.id.in_(request.contact_ids),
             Contact.contact_email.is_not(None),
-            Contact.contact_email != ""
+            Contact.contact_email != "",
+            Contact.is_unsubscribed == False
         )
     )
     
@@ -1155,13 +1174,32 @@ async def send_bulk_email(
     contacts = contacts_result.scalars().all()
     
     if not contacts:
-        raise HTTPException(status_code=400, detail="No valid contacts found with email addresses")
+        raise HTTPException(status_code=400, detail="No valid contacts found with email addresses (excluding unsubscribed contacts)")
     
     # Get organization name for template variables
     tenant = await db.scalar(select(Tenant).where(Tenant.id == current_user.tenant_id))
     organization_name = tenant.name if tenant else "Unknown Organization"
     
-    # Send emails
+    # Create campaign entry
+    campaign = EmailCampaign(
+        tenant_id=current_user.tenant_id,
+        name=f"Bulk Email: {template.name}",
+        subject=template.subject,
+        html_content=template.html_content,
+        text_content=template.text_content,
+        status="sending",
+        recipient_count=len(contacts),
+        track_opens=True,
+        track_clicks=True,
+        created_by_user_id=current_user.id,
+        sent_at=datetime.now(timezone.utc)
+    )
+    
+    db.add(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+    
+    # Create recipients and send emails
     results = BulkEmailResult(
         template_id=str(request.template_id),
         total_recipients=len(contacts),
@@ -1172,6 +1210,21 @@ async def send_bulk_email(
     
     for contact in contacts:
         try:
+            # Generate tracking ID for this email
+            import uuid
+            tracking_id = str(uuid.uuid4())
+            
+            # Create recipient entry
+            recipient = EmailRecipient(
+                campaign_id=campaign.id,
+                contact_id=contact.id,
+                email_address=contact.contact_email,
+                name=contact.contact_name,
+                tracking_id=tracking_id,
+                status="pending"
+            )
+            db.add(recipient)
+            
             # Prepare template variables
             template_vars = {
                 "contact_name": contact.contact_name,
@@ -1187,20 +1240,29 @@ async def send_bulk_email(
                 **request.template_variables  # Allow custom variables
             }
             
-            # Send email
+            # Send email with tracking and unsubscribe link
             result = await email_service.send_template_email(
                 to_email=contact.contact_email,
                 subject_template=template.subject,
                 html_template=template.html_content,
                 template_variables=template_vars,
                 text_template=template.text_content,
-                to_name=contact.contact_name
+                to_name=contact.contact_name,
+                tracking_id=tracking_id,
+                track_opens=True,
+                track_clicks=True,
+                contact_id=str(contact.id)
             )
             
             if result["success"]:
                 results.successful_sends += 1
                 
-                # Log interaction
+                # Update recipient status
+                recipient.status = "sent"
+                recipient.sent_at = datetime.now(timezone.utc)
+                recipient.sendgrid_message_id = result.get("message_id")
+                
+                # Log interaction with tracking info
                 interaction = ContactInteraction(
                     contact_id=contact.id,
                     user_id=current_user.id,
@@ -1208,11 +1270,20 @@ async def send_bulk_email(
                     subject=f"Bulk Email: {template.subject}",
                     content=f"Sent email using template '{template.name}'",
                     interaction_date=datetime.now(timezone.utc),
-                    metadata={"template_id": str(template.id), "bulk_email": True}
+                    metadata={
+                        "template_id": str(template.id), 
+                        "bulk_email": True,
+                        "tracking_id": tracking_id,
+                        "message_id": result.get("message_id"),
+                        "campaign_id": str(campaign.id)
+                    }
                 )
                 db.add(interaction)
             else:
                 results.failed_sends += 1
+                recipient.status = "failed"
+                recipient.error_message = result.get("error", "Unknown error")
+                
                 results.errors.append({
                     "contact_id": str(contact.id),
                     "contact_email": contact.contact_email,
@@ -1227,10 +1298,414 @@ async def send_bulk_email(
                 "error": str(e)
             })
     
-    # Commit interactions
+    # Update campaign statistics
+    campaign.sent_count = results.successful_sends
+    campaign.status = "sent" if results.failed_sends == 0 else "partial"
+    
+    # Commit all changes
     await db.commit()
     
-    logger.info(f"Bulk email sent: {results.successful_sends} successful, {results.failed_sends} failed by user {current_user.email}")
+    logger.info(f"Bulk email campaign {campaign.id} sent: {results.successful_sends} successful, {results.failed_sends} failed by user {current_user.email}")
     
     return results
+
+# ============================================================================
+# EMAIL TRACKING ENDPOINTS
+# ============================================================================
+
+@router.get("/email-tracking/open/{tracking_id}")
+async def track_email_open(
+    tracking_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Track email open event via tracking pixel"""
+    
+    # Get client info
+    user_agent = request.headers.get("user-agent")
+    ip_address = request.client.host if request.client else None
+    
+    # Track the open event
+    await email_tracking_service.track_email_open(
+        db=db,
+        tracking_id=tracking_id,
+        user_agent=user_agent,
+        ip_address=ip_address
+    )
+    
+    # Return 1x1 transparent pixel
+    pixel_data = bytes([
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00,
+        0x01, 0x00, 0xF0, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x21, 0xF9, 0x04, 0x01, 0x00,
+        0x00, 0x00, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x04,
+        0x01, 0x00, 0x3B
+    ])
+    
+    return Response(
+        content=pixel_data,
+        media_type="image/gif",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
+
+@router.get("/email-tracking/click/{tracking_id}")
+async def track_email_click(
+    tracking_id: str,
+    request: Request,
+    url: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Track email click event and redirect to original URL"""
+    
+    # Get client info
+    user_agent = request.headers.get("user-agent")
+    ip_address = request.client.host if request.client else None
+    
+    # Track the click event
+    original_url = await email_tracking_service.track_email_click(
+        db=db,
+        tracking_id=tracking_id,
+        url=url,
+        user_agent=user_agent,
+        ip_address=ip_address
+    )
+    
+    # Redirect to original URL
+    return RedirectResponse(url=original_url or url, status_code=302)
+
+@router.get("/email-campaigns/{campaign_id}/analytics")
+async def get_campaign_analytics(
+    campaign_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get analytics for a specific email campaign"""
+    
+    
+    try:
+        # First check if campaign exists and belongs to user's tenant
+        campaign = await db.scalar(
+            select(EmailCampaign).where(
+                and_(
+                    EmailCampaign.id == campaign_id,
+                    EmailCampaign.tenant_id == current_user.tenant_id
+                )
+            )
+        )
+        
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        analytics = await email_tracking_service.get_campaign_analytics(
+            db=db,
+            campaign_id=campaign_id
+        )
+        
+        return analytics
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting campaign analytics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/email-recipients/{recipient_id}/analytics")
+async def get_recipient_analytics(
+    recipient_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get analytics for a specific email recipient"""
+    
+    
+    try:
+        # First check if recipient exists and belongs to user's tenant
+        recipient = await db.scalar(
+            select(EmailRecipient).join(EmailCampaign).where(
+                and_(
+                    EmailRecipient.id == recipient_id,
+                    EmailCampaign.tenant_id == current_user.tenant_id
+                )
+            )
+        )
+        
+        if not recipient:
+            raise HTTPException(status_code=404, detail="Recipient not found")
+        
+        analytics = await email_tracking_service.get_recipient_analytics(
+            db=db,
+            recipient_id=recipient_id
+        )
+        
+        return analytics
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting recipient analytics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+# ============================================================================
+# EMAIL UNSUBSCRIBE ENDPOINTS
+# ============================================================================
+
+@router.get("/unsubscribe/{contact_id}")
+async def unsubscribe_contact(
+    contact_id: str,
+    reason: str = Query("user_request", description="Reason for unsubscribing"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Unsubscribe a contact from email communications"""
+    
+    try:
+        # Find the contact
+        contact = await db.scalar(
+            select(Contact).where(Contact.id == contact_id)
+        )
+        
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        
+        # Check if already unsubscribed
+        if contact.is_unsubscribed:
+            # Return a friendly HTML page
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Already Unsubscribed</title>
+                <style>
+                    body {{
+                        font-family: Arial, sans-serif;
+                        max-width: 600px;
+                        margin: 50px auto;
+                        padding: 20px;
+                        background-color: #f9f9f9;
+                    }}
+                    .container {{
+                        background-color: white;
+                        padding: 40px;
+                        border-radius: 8px;
+                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                        text-align: center;
+                    }}
+                    .info-icon {{
+                        color: #17a2b8;
+                        font-size: 48px;
+                        margin-bottom: 20px;
+                    }}
+                    h1 {{
+                        color: #333;
+                        margin-bottom: 20px;
+                    }}
+                    p {{
+                        color: #666;
+                        line-height: 1.6;
+                    }}
+                    .email {{
+                        font-weight: bold;
+                        color: #333;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="info-icon">ℹ</div>
+                    <h1>Already Unsubscribed</h1>
+                    <p>You have already been unsubscribed from our emails.</p>
+                    <p>We are not sending marketing emails to <span class="email">{contact.contact_email}</span>.</p>
+                    <p>If you have any questions, please contact us directly.</p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            return Response(content=html_content, media_type="text/html")
+        
+        # Unsubscribe the contact
+        contact.is_unsubscribed = True
+        contact.unsubscribed_at = datetime.now(timezone.utc)
+        contact.unsubscribe_reason = reason
+        
+        await db.commit()
+        
+        logger.info(f"Contact {contact_id} ({contact.contact_email}) unsubscribed with reason: {reason}")
+        
+        # Return a simple HTML page instead of JSON for better user experience
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Unsubscribed Successfully</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    max-width: 600px;
+                    margin: 50px auto;
+                    padding: 20px;
+                    background-color: #f9f9f9;
+                }}
+                .container {{
+                    background-color: white;
+                    padding: 40px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    text-align: center;
+                }}
+                .success-icon {{
+                    color: #28a745;
+                    font-size: 48px;
+                    margin-bottom: 20px;
+                }}
+                h1 {{
+                    color: #333;
+                    margin-bottom: 20px;
+                }}
+                p {{
+                    color: #666;
+                    line-height: 1.6;
+                }}
+                .email {{
+                    font-weight: bold;
+                    color: #333;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="success-icon">✓</div>
+                <h1>Successfully Unsubscribed</h1>
+                <p>You have been successfully unsubscribed from our emails.</p>
+                <p>We will no longer send marketing emails to <span class="email">{contact.contact_email}</span>.</p>
+                <p>If you have any questions, please contact us directly.</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return Response(content=html_content, media_type="text/html")
+        
+    except Exception as e:
+        logger.error(f"Error unsubscribing contact {contact_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/resubscribe/{contact_id}")
+async def resubscribe_contact(
+    contact_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Resubscribe a contact (admin only)"""
+    
+    
+    try:
+        # Find the contact in the current tenant
+        contact = await db.scalar(
+            select(Contact).where(
+                and_(
+                    Contact.id == contact_id,
+                    Contact.tenant_id == current_user.tenant_id
+                )
+            )
+        )
+        
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        
+        # Resubscribe the contact
+        contact.is_unsubscribed = False
+        contact.unsubscribed_at = None
+        contact.unsubscribe_reason = None
+        
+        await db.commit()
+        
+        logger.info(f"Contact {contact_id} ({contact.contact_email}) resubscribed by admin {current_user.email}")
+        
+        return {
+            "message": "Contact has been resubscribed successfully.",
+            "contact_email": contact.contact_email
+        }
+        
+    except Exception as e:
+        logger.error(f"Error resubscribing contact {contact_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/email-campaigns")
+async def get_email_campaigns(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100)
+):
+    """Get email campaigns for the current tenant"""
+    
+    try:
+        # Get campaigns for current tenant
+        stmt = select(EmailCampaign).where(
+            EmailCampaign.tenant_id == current_user.tenant_id
+        ).order_by(desc(EmailCampaign.created_at)).offset(skip).limit(limit)
+        
+        result = await db.execute(stmt)
+        campaigns = result.scalars().all()
+        
+        # Get total count
+        count_stmt = select(func.count()).select_from(EmailCampaign).where(
+            EmailCampaign.tenant_id == current_user.tenant_id
+        )
+        total = await db.scalar(count_stmt)
+        
+        # Calculate unsubscribed counts for each campaign
+        campaign_data = []
+        for campaign in campaigns:
+            # Get recipients for this campaign
+            recipients_stmt = select(EmailRecipient).where(
+                EmailRecipient.campaign_id == campaign.id
+            )
+            recipients_result = await db.execute(recipients_stmt)
+            recipients = recipients_result.scalars().all()
+            
+            # Get contact IDs from recipients
+            contact_ids = [r.contact_id for r in recipients if r.contact_id]
+            
+            # Count unsubscribed contacts
+            unsubscribed_count = 0
+            if contact_ids:
+                unsubscribed_stmt = select(func.count()).select_from(Contact).where(
+                    Contact.id.in_(contact_ids),
+                    Contact.is_unsubscribed == True
+                )
+                unsubscribed_count = await db.scalar(unsubscribed_stmt) or 0
+            
+            campaign_data.append({
+                "id": str(campaign.id),
+                "name": campaign.name,
+                "subject": campaign.subject,
+                "status": campaign.status,
+                "recipient_count": campaign.recipient_count,
+                "sent_count": campaign.sent_count,
+                "opened_count": campaign.opened_count,
+                "clicked_count": campaign.clicked_count,
+                "bounced_count": campaign.bounced_count,
+                "unsubscribed_count": unsubscribed_count,
+                "created_at": campaign.created_at,
+                "sent_at": campaign.sent_at,
+                "open_rate": round((campaign.opened_count / campaign.sent_count * 100) if campaign.sent_count > 0 else 0, 2),
+                "click_rate": round((campaign.clicked_count / campaign.sent_count * 100) if campaign.sent_count > 0 else 0, 2)
+            })
+        
+        return {
+            "campaigns": campaign_data,
+            "total": total,
+            "skip": skip,
+            "limit": limit
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting email campaigns: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 

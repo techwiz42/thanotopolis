@@ -815,6 +815,11 @@ class Contact(Base):
     # Billing integration
     stripe_customer_id = Column(String, nullable=True)  # Link to Stripe customer for billing
     
+    # Email preferences
+    is_unsubscribed = Column(Boolean, default=False)
+    unsubscribed_at = Column(DateTime(timezone=True), nullable=True)
+    unsubscribe_reason = Column(String, nullable=True)
+    
     # Metadata
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -917,6 +922,138 @@ class EmailTemplate(Base):
         return f"<EmailTemplate {self.name}>"
 
 # ============================================================================
+# EMAIL TRACKING MODELS
+# ============================================================================
+
+class EmailCampaign(Base):
+    __tablename__ = "email_campaigns"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    
+    # Campaign details
+    name = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    html_content = Column(Text, nullable=False)
+    text_content = Column(Text, nullable=True)
+    
+    # Campaign metadata
+    status = Column(String, default="draft")  # draft, sending, sent, failed
+    recipient_count = Column(Integer, default=0)
+    sent_count = Column(Integer, default=0)
+    opened_count = Column(Integer, default=0)
+    clicked_count = Column(Integer, default=0)
+    bounced_count = Column(Integer, default=0)
+    
+    # Tracking configuration
+    track_opens = Column(Boolean, default=True)
+    track_clicks = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    tenant = relationship("Tenant")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    recipients = relationship("EmailRecipient", back_populates="campaign", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<EmailCampaign {self.name}>"
+
+class EmailRecipient(Base):
+    __tablename__ = "email_recipients"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    campaign_id = Column(UUID(as_uuid=True), ForeignKey("email_campaigns.id", ondelete="CASCADE"), nullable=False)
+    contact_id = Column(UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=True)
+    
+    # Recipient details
+    email_address = Column(String, nullable=False)
+    name = Column(String, nullable=True)
+    
+    # Delivery status
+    status = Column(String, default="pending")  # pending, sent, failed, bounced
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Tracking identifiers
+    tracking_id = Column(String, nullable=True, unique=True)  # Unique ID for tracking
+    sendgrid_message_id = Column(String, nullable=True)  # SendGrid message ID
+    
+    # Engagement metrics
+    opened_at = Column(DateTime(timezone=True), nullable=True)
+    first_opened_at = Column(DateTime(timezone=True), nullable=True)
+    last_opened_at = Column(DateTime(timezone=True), nullable=True)
+    open_count = Column(Integer, default=0)
+    
+    clicked_at = Column(DateTime(timezone=True), nullable=True)
+    first_clicked_at = Column(DateTime(timezone=True), nullable=True)
+    last_clicked_at = Column(DateTime(timezone=True), nullable=True)
+    click_count = Column(Integer, default=0)
+    
+    # Error tracking
+    error_message = Column(Text, nullable=True)
+    bounce_reason = Column(String, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    campaign = relationship("EmailCampaign", back_populates="recipients")
+    contact = relationship("Contact")
+    events = relationship("EmailEvent", back_populates="recipient", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<EmailRecipient {self.email_address}>"
+
+class EmailEventType(str, enum.Enum):
+    DELIVERED = "delivered"
+    OPENED = "opened"
+    CLICKED = "clicked"
+    BOUNCED = "bounced"
+    DROPPED = "dropped"
+    DEFERRED = "deferred"
+    PROCESSED = "processed"
+    SPAM_REPORT = "spamreport"
+    UNSUBSCRIBE = "unsubscribe"
+    GROUP_UNSUBSCRIBE = "group_unsubscribe"
+    GROUP_RESUBSCRIBE = "group_resubscribe"
+
+class EmailEvent(Base):
+    __tablename__ = "email_events"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recipient_id = Column(UUID(as_uuid=True), ForeignKey("email_recipients.id", ondelete="CASCADE"), nullable=False)
+    
+    # Event details
+    event_type = Column(SQLEnum(EmailEventType), nullable=False)
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+    
+    # Event metadata
+    user_agent = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    url = Column(String, nullable=True)  # For click events
+    
+    # SendGrid event data
+    sendgrid_event_id = Column(String, nullable=True)
+    sendgrid_message_id = Column(String, nullable=True)
+    
+    # Additional metadata
+    event_metadata = Column(JSONB, default={})
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    recipient = relationship("EmailRecipient", back_populates="events")
+    
+    def __repr__(self):
+        return f"<EmailEvent {self.event_type} at {self.timestamp}>"
+
+# ============================================================================
 # INDEXES FOR PERFORMANCE
 # ============================================================================
 
@@ -968,3 +1105,13 @@ Index('idx_custom_fields_tenant_id', CustomField.tenant_id)
 Index('idx_custom_fields_field_name', CustomField.field_name)
 Index('idx_email_templates_tenant_id', EmailTemplate.tenant_id)
 Index('idx_email_templates_name', EmailTemplate.name)
+
+# Email tracking indexes
+Index('idx_email_campaigns_tenant_id', EmailCampaign.tenant_id)
+Index('idx_email_campaigns_created_at', EmailCampaign.created_at)
+Index('idx_email_recipients_campaign_id', EmailRecipient.campaign_id)
+Index('idx_email_recipients_contact_id', EmailRecipient.contact_id)
+Index('idx_email_recipients_email', EmailRecipient.email_address)
+Index('idx_email_events_recipient_id', EmailEvent.recipient_id)
+Index('idx_email_events_event_type', EmailEvent.event_type)
+Index('idx_email_events_timestamp', EmailEvent.timestamp)

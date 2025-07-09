@@ -4,6 +4,8 @@ import React from 'react'
 import { AuthProvider } from '@/contexts/AuthContext'
 import MainLayout from '@/components/MainLayout'
 import { ToastProvider } from '@/components/ui/use-toast'
+import ChunkErrorBoundary from '@/components/common/ChunkErrorBoundary'
+import '@/utils/chunkErrorHandler'
 
 export const metadata = {
   title: 'Thanotopolis',
@@ -21,13 +23,15 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <AuthProvider>
-          <ToastProvider>
-            <MainLayout>
-              {children}
-            </MainLayout>
-          </ToastProvider>
-        </AuthProvider>
+        <ChunkErrorBoundary>
+          <AuthProvider>
+            <ToastProvider>
+              <MainLayout>
+                {children}
+              </MainLayout>
+            </ToastProvider>
+          </AuthProvider>
+        </ChunkErrorBoundary>
       </body>
     </html>
   )

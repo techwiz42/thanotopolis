@@ -40,7 +40,8 @@ import {
   Trash2,
   Eye,
   Play,
-  Pause
+  Pause,
+  BarChart3
 } from 'lucide-react'
 
 interface Contact {
@@ -979,6 +980,14 @@ export default function CRMPage() {
                 >
                   <Mail className="h-4 w-4 mr-2 flex-shrink-0" />
                   <span className="truncate">Send Email Campaign</span>
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="justify-start text-xs sm:text-sm bg-white hover:bg-blue-100 w-full"
+                  onClick={() => router.push('/organizations/crm/campaigns')}
+                >
+                  <BarChart3 className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="truncate">View Campaigns</span>
                 </Button>
                 <Button 
                   variant="outline" 

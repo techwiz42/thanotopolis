@@ -1,39 +1,56 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Optimize memory usage during builds
-  experimental: {
-    // Reduce memory usage by limiting worker threads
-    workerThreads: false,
-    // Reduce memory pressure during builds
-    cpus: 1,
+  // Optimize output for better chunk loading
+  output: 'standalone',
+  // Enable static optimization
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production',
   },
-  // Optimize webpack for memory usage
-  webpack: (config, { isServer }) => {
+  // Configure static file serving
+  assetPrefix: process.env.NODE_ENV === 'production' ? '' : undefined,
+  // Production-safe webpack configuration
+  webpack: (config, { isServer, dev }) => {
     // Fix webpack chunk loading for server-side rendering
     // This prevents the 'self is not defined' error
     if (isServer) {
       config.output.globalObject = '(typeof self !== "undefined" ? self : this)';
     }
     
-    // Simplified optimization to prevent chunk loading issues
-    config.optimization = {
-      ...config.optimization,
-      splitChunks: {
-        ...config.optimization.splitChunks,
-        cacheGroups: {
-          default: false,
-          vendors: false,
+    // Only apply memory optimizations in development or when explicitly requested
+    if (dev || process.env.WEBPACK_DISABLE_CACHE === 'true') {
+      // Limit parallelism to reduce memory usage in development
+      config.parallelism = 1;
+      
+      // Disable caching during builds to save memory
+      if (process.env.WEBPACK_DISABLE_CACHE === 'true') {
+        config.cache = false;
+      }
+    }
+    
+    // Ensure proper chunk splitting for production
+    if (!dev) {
+      config.optimization = {
+        ...config.optimization,
+        splitChunks: {
+          ...config.optimization.splitChunks,
+          chunks: 'all',
+          cacheGroups: {
+            ...config.optimization.splitChunks.cacheGroups,
+            default: {
+              minChunks: 2,
+              priority: -20,
+              reuseExistingChunk: true,
+            },
+            vendor: {
+              test: /[\\/]node_modules[\\/]/,
+              name: 'vendors',
+              priority: -10,
+              chunks: 'all',
+            },
+          },
         },
-      },
-    };
-    
-    // Limit parallelism to reduce memory usage
-    config.parallelism = 1;
-    
-    // Disable caching during builds to save memory
-    if (process.env.WEBPACK_DISABLE_CACHE === 'true') {
-      config.cache = false;
+      };
     }
     
     return config;

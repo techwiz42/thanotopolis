@@ -624,6 +624,9 @@ class ContactBase(BaseModel):
     notes: Optional[str] = None
     custom_fields: Dict[str, Any] = Field(default_factory=dict)
     stripe_customer_id: Optional[str] = None
+    is_unsubscribed: bool = False
+    unsubscribed_at: Optional[datetime] = None
+    unsubscribe_reason: Optional[str] = None
 
 class ContactCreate(ContactBase):
     pass
@@ -642,6 +645,9 @@ class ContactUpdate(BaseModel):
     notes: Optional[str] = None
     custom_fields: Optional[Dict[str, Any]] = None
     stripe_customer_id: Optional[str] = None
+    is_unsubscribed: Optional[bool] = None
+    unsubscribed_at: Optional[datetime] = None
+    unsubscribe_reason: Optional[str] = None
 
 class ContactResponse(ContactBase):
     id: UUID
@@ -777,6 +783,8 @@ class CRMDashboardStats(BaseModel):
     recent_interactions: List[ContactInteractionResponse]
     upcoming_tasks: List[ContactInteractionResponse]
     contact_growth: Dict[str, int]  # Last 30 days
+    unsubscribed_contacts: int
+    unsubscribe_rate: float  # Percentage of contacts that are unsubscribed
     
 class CRMDashboardResponse(BaseModel):
     stats: CRMDashboardStats

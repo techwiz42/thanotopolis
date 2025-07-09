@@ -390,15 +390,172 @@ business_name,contact_name,contact_email,phone,city,state,status,notes
 - ✅ **CSV Import**: Full import workflow with validation and error handling
 - ✅ **Billing Integration**: Links contacts to subscription status
 
+### Email Campaign Analytics (July 8, 2025)
+
+#### Overview
+Enhanced the CRM system with comprehensive email campaign tracking and analytics capabilities, providing detailed insights into campaign performance with open rates, click rates, and engagement metrics.
+
+#### Core Components Implemented
+
+##### 1. Email Tracking Service (`backend/app/services/email_tracking_service.py`)
+- **Campaign Management**: Create, send, and track email campaigns
+- **Real-time Tracking**: Track opens, clicks, and bounces
+- **Analytics Calculation**: Compute open rates, click rates, CTR, and bounce rates
+- **Event Logging**: Detailed event timeline for each recipient
+
+##### 2. Database Models for Email Tracking
+```sql
+-- Email campaigns table
+CREATE TABLE email_campaigns (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id),
+    name VARCHAR NOT NULL,
+    subject VARCHAR NOT NULL,
+    html_content TEXT NOT NULL,
+    text_content TEXT,
+    status VARCHAR DEFAULT 'draft',  -- draft, sending, sent, partial
+    recipient_count INTEGER DEFAULT 0,
+    sent_count INTEGER DEFAULT 0,
+    opened_count INTEGER DEFAULT 0,
+    clicked_count INTEGER DEFAULT 0,
+    bounced_count INTEGER DEFAULT 0,
+    track_opens BOOLEAN DEFAULT TRUE,
+    track_clicks BOOLEAN DEFAULT TRUE,
+    created_by_user_id UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT NOW(),
+    sent_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+-- Email recipients tracking
+CREATE TABLE email_recipients (
+    id UUID PRIMARY KEY,
+    campaign_id UUID REFERENCES email_campaigns(id),
+    contact_id UUID REFERENCES contacts(id),
+    email_address VARCHAR NOT NULL,
+    name VARCHAR,
+    tracking_id UUID UNIQUE NOT NULL,
+    status VARCHAR DEFAULT 'pending',  -- pending, sent, bounced, failed
+    sent_at TIMESTAMP,
+    opened_at TIMESTAMP,
+    clicked_at TIMESTAMP,
+    first_opened_at TIMESTAMP,
+    first_clicked_at TIMESTAMP,
+    last_opened_at TIMESTAMP,
+    last_clicked_at TIMESTAMP,
+    open_count INTEGER DEFAULT 0,
+    click_count INTEGER DEFAULT 0,
+    sendgrid_message_id VARCHAR,
+    error_message TEXT
+);
+
+-- Email events tracking
+CREATE TABLE email_events (
+    id UUID PRIMARY KEY,
+    recipient_id UUID REFERENCES email_recipients(id),
+    event_type VARCHAR NOT NULL,  -- opened, clicked, bounced, dropped, deferred
+    timestamp TIMESTAMP DEFAULT NOW(),
+    user_agent TEXT,
+    ip_address VARCHAR,
+    url TEXT,  -- For click events
+    metadata JSONB DEFAULT '{}'
+);
+```
+
+##### 3. API Endpoints (`backend/app/api/crm.py`)
+- `GET /api/crm/email-campaigns` - List all campaigns with metrics
+- `GET /api/crm/email-campaigns/{campaign_id}/analytics` - Detailed campaign analytics
+- `GET /api/crm/email-recipients/{recipient_id}/analytics` - Individual recipient analytics
+- `GET /api/crm/email-tracking/open/{tracking_id}` - Track email opens
+- `GET /api/crm/email-tracking/click/{tracking_id}` - Track link clicks
+
+##### 4. Frontend Campaign Analytics (`frontend/src/app/organizations/crm/campaigns/`)
+
+###### Campaigns List Page (`page.tsx`)
+- **Overview Dashboard**: Aggregate statistics across all campaigns
+- **Campaign Table**: Sortable list with key metrics
+- **Visual Indicators**: Color-coded performance metrics
+- **Search & Filter**: Find campaigns by name or subject
+- **Pagination**: Handle large campaign lists
+- **Quick Actions**: Direct links to detailed analytics
+
+###### Individual Campaign Analytics (`[id]/page.tsx`)
+- **Key Metrics Cards**: Recipients, sends, opens, clicks
+- **Engagement Rates**: Visual progress bars with industry comparisons
+- **Performance Breakdown**: Detailed delivery statistics
+- **Visual Alerts**: Warnings for high bounce rates
+- **Campaign Timeline**: Created and sent dates
+- **Export Options**: (Future enhancement)
+
+#### Analytics Metrics Provided
+
+##### Campaign Level:
+- **Total Recipients**: Number of contacts targeted
+- **Sent Count**: Successfully delivered emails
+- **Open Rate**: Percentage of recipients who opened
+- **Click Rate**: Percentage of recipients who clicked
+- **Click-Through Rate (CTR)**: Clicks as percentage of opens
+- **Bounce Rate**: Failed delivery percentage
+
+##### Aggregate Statistics:
+- **Total Campaigns**: All-time campaign count
+- **Total Emails Sent**: Cumulative sends
+- **Average Open Rate**: Cross-campaign average
+- **Average Click Rate**: Cross-campaign average
+
+#### UI/UX Features
+
+##### Navigation:
+- Added "View Campaigns" button in CRM Quick Actions
+- Located between "Send Email Campaign" and "Export Contacts"
+- Uses BarChart3 icon for visual consistency
+
+##### Design Patterns:
+- **Responsive Layout**: Works on desktop and mobile
+- **Loading States**: Skeleton loaders and progress indicators
+- **Error Handling**: Graceful fallbacks and user-friendly messages
+- **Access Control**: Admin-only viewing permissions
+- **Visual Hierarchy**: Important metrics highlighted
+
+##### Performance Indicators:
+- **Green highlighting**: Above-average performance (>25% open rate, >5% click rate)
+- **Industry benchmarks**: 21.5% average open rate, 2.6% average click rate
+- **Status badges**: Visual campaign status indicators
+
+#### Integration Points
+
+##### With Email Service:
+- Automatic tracking pixel insertion for opens
+- Link wrapping for click tracking
+- SendGrid webhook integration for real-time updates
+
+##### With CRM Contacts:
+- Links email recipients to contact records
+- Tracks engagement history per contact
+- Enables targeted follow-ups based on engagement
+
+#### Current Status:
+- ✅ **Backend Implementation**: Complete tracking service and API
+- ✅ **Database Schema**: Full tracking tables with indexes
+- ✅ **Frontend UI**: Campaign list and analytics pages
+- ✅ **Navigation Integration**: Quick access from CRM dashboard
+- ✅ **Real-time Tracking**: Open and click event logging
+- ✅ **Analytics Calculation**: All key metrics computed
+
 #### Future Enhancement Opportunities:
 1. **Advanced Email Campaigns**: Automated drip campaigns and segmentation
-2. **Mobile App**: Native mobile interface for field sales teams
-3. **Calendar Integration**: Schedule and track meetings directly in CRM
-4. **Advanced Analytics**: Contact scoring, pipeline forecasting, and conversion metrics
-5. **API Webhooks**: Real-time integration with external CRM and marketing systems
-6. **Document Management**: Attach files, contracts, and documents to contacts
-7. **Task Management**: Advanced task scheduling and reminder system
-8. **Integration Hub**: Connect with popular tools like Slack, Salesforce, HubSpot
+2. **A/B Testing**: Compare campaign variations
+3. **Recipient Timeline**: Individual engagement history view
+4. **Export Analytics**: PDF/CSV reports for campaigns
+5. **Real-time Updates**: WebSocket for live metric updates
+6. **Heatmap Analysis**: Click location tracking
+7. **Mobile App**: Native mobile interface for field sales teams
+8. **Calendar Integration**: Schedule and track meetings directly in CRM
+9. **Advanced Analytics**: Contact scoring, pipeline forecasting, and conversion metrics
+10. **API Webhooks**: Real-time integration with external CRM and marketing systems
+11. **Document Management**: Attach files, contracts, and documents to contacts
+12. **Task Management**: Advanced task scheduling and reminder system
+13. **Integration Hub**: Connect with popular tools like Slack, Salesforce, HubSpot
 
 ---
 

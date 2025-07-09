@@ -1,11 +1,12 @@
 """
-SendGrid Email Service with Template Support
+SendGrid Email Service with Template Support and Open Tracking
 """
 import os
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import re
+import uuid
 from jinja2 import Template, Environment, BaseLoader
 import sendgrid
 from sendgrid.helpers.mail import Mail, From, To, Subject, PlainTextContent, HtmlContent, Personalization
@@ -65,6 +66,83 @@ class SendGridEmailService:
         """Check if SendGrid is properly configured"""
         return self.client is not None
     
+    def generate_tracking_pixel(self, tracking_id: str) -> str:
+        """Generate tracking pixel HTML for email open tracking"""
+        # Use API_URL if available, otherwise construct from host/port
+        if settings.API_URL:
+            # API_URL should already include the /api prefix
+            backend_url = settings.API_URL.rstrip('/')
+            tracking_url = f"{backend_url}/crm/email-tracking/open/{tracking_id}"
+        else:
+            backend_url = f"http://{settings.API_HOST}:{settings.API_PORT}"
+            tracking_url = f"{backend_url}/api/crm/email-tracking/open/{tracking_id}"
+        return f'<img src="{tracking_url}" width="1" height="1" style="display: none;" alt="" />'
+    
+    def inject_tracking_pixel(self, html_content: str, tracking_id: str) -> str:
+        """Inject tracking pixel into HTML content"""
+        tracking_pixel = self.generate_tracking_pixel(tracking_id)
+        
+        # Try to inject before closing body tag
+        if "</body>" in html_content:
+            return html_content.replace("</body>", f"{tracking_pixel}</body>")
+        else:
+            # If no body tag, append to end
+            return f"{html_content}{tracking_pixel}"
+    
+    def inject_click_tracking(self, html_content: str, tracking_id: str) -> str:
+        """Inject click tracking into all links in HTML content"""
+        if not tracking_id:
+            return html_content
+            
+        # Find all href attributes and wrap them with tracking
+        import re
+        
+        def replace_link(match):
+            original_url = match.group(1)
+            # Skip tracking pixel URLs and mailto links
+            if "email-tracking/open" in original_url or original_url.startswith("mailto:"):
+                return match.group(0)
+            
+            if settings.API_URL:
+                # API_URL should already include the /api prefix
+                backend_url = settings.API_URL.rstrip('/')
+                tracking_url = f"{backend_url}/crm/email-tracking/click/{tracking_id}?url={original_url}"
+            else:
+                backend_url = f"http://{settings.API_HOST}:{settings.API_PORT}"
+                tracking_url = f"{backend_url}/api/crm/email-tracking/click/{tracking_id}?url={original_url}"
+            return f'href="{tracking_url}"'
+        
+        # Replace all href attributes
+        pattern = r'href="([^"]*)"'
+        return re.sub(pattern, replace_link, html_content)
+    
+    def inject_unsubscribe_link(self, html_content: str, contact_id: str) -> str:
+        """Inject unsubscribe link into HTML content"""
+        if not contact_id:
+            return html_content
+            
+        # Build unsubscribe URL
+        backend_url = settings.API_URL or f"http://{settings.API_HOST}:{settings.API_PORT}"
+        if settings.API_URL:
+            backend_url = settings.API_URL.rstrip('/')
+            unsubscribe_url = f"{backend_url}/crm/unsubscribe/{contact_id}"
+        else:
+            unsubscribe_url = f"{backend_url}/api/crm/unsubscribe/{contact_id}"
+        
+        # Create unsubscribe footer
+        unsubscribe_footer = f'''
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 12px; text-align: center;">
+            <p>If you no longer wish to receive these emails, you can <a href="{unsubscribe_url}" style="color: #666; text-decoration: underline;">unsubscribe here</a>.</p>
+        </div>
+        '''
+        
+        # Try to inject before closing body tag
+        if "</body>" in html_content:
+            return html_content.replace("</body>", f"{unsubscribe_footer}</body>")
+        else:
+            # If no body tag, append to end
+            return f"{html_content}{unsubscribe_footer}"
+    
     async def send_email(
         self,
         to_email: str,
@@ -73,7 +151,10 @@ class SendGridEmailService:
         text_content: Optional[str] = None,
         to_name: Optional[str] = None,
         from_email: Optional[str] = None,
-        from_name: Optional[str] = None
+        from_name: Optional[str] = None,
+        tracking_id: Optional[str] = None,
+        track_opens: bool = True,
+        track_clicks: bool = True
     ) -> Dict[str, Any]:
         """Send a single email"""
         
@@ -81,6 +162,14 @@ class SendGridEmailService:
             raise ValueError("SendGrid is not configured. Please set SENDGRID_API_KEY.")
         
         try:
+            # Inject tracking if enabled
+            processed_html = html_content
+            if tracking_id:
+                if track_opens:
+                    processed_html = self.inject_tracking_pixel(processed_html, tracking_id)
+                if track_clicks:
+                    processed_html = self.inject_click_tracking(processed_html, tracking_id)
+            
             # Create mail object
             mail = Mail()
             
@@ -99,7 +188,7 @@ class SendGridEmailService:
             # Set content
             mail.content = [
                 PlainTextContent(text_content or self._html_to_text(html_content)),
-                HtmlContent(html_content)
+                HtmlContent(processed_html)
             ]
             
             # Send email
@@ -112,7 +201,8 @@ class SendGridEmailService:
                 "status_code": response.status_code,
                 "message_id": response.headers.get('X-Message-Id'),
                 "to_email": to_email,
-                "subject": subject
+                "subject": subject,
+                "tracking_id": tracking_id
             }
             
         except Exception as e:
@@ -133,7 +223,11 @@ class SendGridEmailService:
         text_template: Optional[str] = None,
         to_name: Optional[str] = None,
         from_email: Optional[str] = None,
-        from_name: Optional[str] = None
+        from_name: Optional[str] = None,
+        tracking_id: Optional[str] = None,
+        track_opens: bool = True,
+        track_clicks: bool = True,
+        contact_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send email using templates with variable substitution"""
         
@@ -146,6 +240,10 @@ class SendGridEmailService:
             if text_template:
                 rendered_text = self.template_service.render_template(text_template, template_variables)
             
+            # Inject unsubscribe link into HTML content
+            if contact_id:
+                rendered_html = self.inject_unsubscribe_link(rendered_html, contact_id)
+            
             # Send email
             return await self.send_email(
                 to_email=to_email,
@@ -154,7 +252,10 @@ class SendGridEmailService:
                 text_content=rendered_text,
                 to_name=to_name,
                 from_email=from_email,
-                from_name=from_name
+                from_name=from_name,
+                tracking_id=tracking_id,
+                track_opens=track_opens,
+                track_clicks=track_clicks
             )
             
         except Exception as e:
