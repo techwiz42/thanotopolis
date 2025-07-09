@@ -597,7 +597,7 @@ async def get_call_messages(
     offset: int = 0,
     order_by: str = "timestamp",
     order_dir: str = "asc",
-    current_user: User = Depends(require_org_admin_or_admin),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all messages for a specific call."""
@@ -851,7 +851,7 @@ async def delete_call_message(
 async def get_call_transcript(
     call_id: UUID,
     format: str = "text",
-    current_user: User = Depends(require_org_admin_or_admin),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get formatted transcript for a call."""
@@ -916,7 +916,7 @@ async def get_call_transcript(
 @router.get("/calls/{call_id}/messages/summary")
 async def get_call_summary(
     call_id: UUID,
-    current_user: User = Depends(require_org_admin_or_admin),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get summary for a call."""

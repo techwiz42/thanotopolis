@@ -120,6 +120,18 @@ export default function PrivacyPolicy() {
           </section>
 
           <section className="mb-8">
+            <h2 className="text-2xl font-semibold mb-4">Email Tracking</h2>
+            <p className="mb-4">
+              We may include unique tracking technologies, such as pixels or web beacons, in our email 
+              communications. These technologies help us determine whether our emails have been opened 
+              and if any links were clicked. We use this information to measure the effectiveness of 
+              our communications, improve our services, and tailor future messages to better suit your 
+              interests. You can disable email tracking by adjusting your email client settings to 
+              block images or by choosing to receive plain-text emails where available.
+            </p>
+          </section>
+
+          <section className="mb-8">
             <h2 className="text-2xl font-semibold mb-4">Children's Privacy</h2>
             <p className="mb-4">
               Our service is not intended for children under 13. We do not knowingly collect 
