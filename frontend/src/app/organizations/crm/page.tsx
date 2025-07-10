@@ -152,7 +152,29 @@ export default function CRMPage() {
     website: '',
     address: '',
     status: 'lead',
-    notes: ''
+    notes: '',
+    // Cemetery-specific fields
+    ethnic_orientation: '',
+    preferred_language: '',
+    secondary_language: '',
+    family_name: '',
+    relationship_to_deceased: '',
+    deceased_name: '',
+    date_of_birth: '',
+    date_of_death: '',
+    service_type: '',
+    service_date: '',
+    service_location: '',
+    plot_number: '',
+    plot_type: '',
+    contract_amount_cents: null as number | null,
+    amount_paid_cents: null as number | null,
+    balance_due_cents: null as number | null,
+    payment_plan: '',
+    payment_status: '',
+    special_requests: '',
+    religious_preferences: '',
+    veteran_status: ''
   })
   
   // Import state
@@ -382,7 +404,29 @@ export default function CRMPage() {
           website: '',
           address: '',
           status: 'lead',
-          notes: ''
+          notes: '',
+          // Cemetery-specific fields
+          ethnic_orientation: '',
+          preferred_language: '',
+          secondary_language: '',
+          family_name: '',
+          relationship_to_deceased: '',
+          deceased_name: '',
+          date_of_birth: '',
+          date_of_death: '',
+          service_type: '',
+          service_date: '',
+          service_location: '',
+          plot_number: '',
+          plot_type: '',
+          contract_amount_cents: null as number | null,
+          amount_paid_cents: null as number | null,
+          balance_due_cents: null as number | null,
+          payment_plan: '',
+          payment_status: '',
+          special_requests: '',
+          religious_preferences: '',
+          veteran_status: ''
         })
         setShowAddContact(false)
         
@@ -1349,6 +1393,238 @@ export default function CRMPage() {
                 onChange={(e) => setNewContact({...newContact, notes: e.target.value})}
                 rows={3}
               />
+            </div>
+
+            {/* Cemetery-Specific Fields */}
+            <div className="border-t pt-4 mt-4">
+              <h3 className="text-sm font-medium mb-4">Cemetery Information (Optional)</h3>
+              
+              {/* Cultural & Language */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="ethnic_orientation">Ethnic Orientation</Label>
+                  <Input
+                    id="ethnic_orientation"
+                    value={newContact.ethnic_orientation || ''}
+                    onChange={(e) => setNewContact({...newContact, ethnic_orientation: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="preferred_language">Preferred Language</Label>
+                  <Input
+                    id="preferred_language"
+                    value={newContact.preferred_language || ''}
+                    onChange={(e) => setNewContact({...newContact, preferred_language: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="secondary_language">Secondary Language</Label>
+                  <Input
+                    id="secondary_language"
+                    value={newContact.secondary_language || ''}
+                    onChange={(e) => setNewContact({...newContact, secondary_language: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* Family Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="family_name">Family Name</Label>
+                  <Input
+                    id="family_name"
+                    value={newContact.family_name || ''}
+                    onChange={(e) => setNewContact({...newContact, family_name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="relationship_to_deceased">Relationship to Deceased</Label>
+                  <Input
+                    id="relationship_to_deceased"
+                    value={newContact.relationship_to_deceased || ''}
+                    onChange={(e) => setNewContact({...newContact, relationship_to_deceased: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* Deceased Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="deceased_name">Deceased Name</Label>
+                  <Input
+                    id="deceased_name"
+                    value={newContact.deceased_name || ''}
+                    onChange={(e) => setNewContact({...newContact, deceased_name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="date_of_birth">Date of Birth</Label>
+                  <Input
+                    id="date_of_birth"
+                    type="date"
+                    value={newContact.date_of_birth || ''}
+                    onChange={(e) => setNewContact({...newContact, date_of_birth: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="date_of_death">Date of Death</Label>
+                  <Input
+                    id="date_of_death"
+                    type="date"
+                    value={newContact.date_of_death || ''}
+                    onChange={(e) => setNewContact({...newContact, date_of_death: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* Service Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="service_type">Service Type</Label>
+                  <Input
+                    id="service_type"
+                    value={newContact.service_type || ''}
+                    onChange={(e) => setNewContact({...newContact, service_type: e.target.value})}
+                    placeholder="e.g., Burial, Cremation"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="service_date">Service Date</Label>
+                  <Input
+                    id="service_date"
+                    type="date"
+                    value={newContact.service_date || ''}
+                    onChange={(e) => setNewContact({...newContact, service_date: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="service_location">Service Location</Label>
+                  <Input
+                    id="service_location"
+                    value={newContact.service_location || ''}
+                    onChange={(e) => setNewContact({...newContact, service_location: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* Plot Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="plot_number">Plot Number</Label>
+                  <Input
+                    id="plot_number"
+                    value={newContact.plot_number || ''}
+                    onChange={(e) => setNewContact({...newContact, plot_number: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="plot_type">Plot Type</Label>
+                  <Input
+                    id="plot_type"
+                    value={newContact.plot_type || ''}
+                    onChange={(e) => setNewContact({...newContact, plot_type: e.target.value})}
+                    placeholder="e.g., Single, Double, Family"
+                  />
+                </div>
+              </div>
+
+              {/* Financial Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="contract_amount">Contract Amount</Label>
+                  <Input
+                    id="contract_amount"
+                    type="number"
+                    step="0.01"
+                    value={newContact.contract_amount_cents ? (newContact.contract_amount_cents / 100).toFixed(2) : ''}
+                    onChange={(e) => setNewContact({...newContact, contract_amount_cents: e.target.value ? Math.round(parseFloat(e.target.value) * 100) : null})}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="amount_paid">Amount Paid</Label>
+                  <Input
+                    id="amount_paid"
+                    type="number"
+                    step="0.01"
+                    value={newContact.amount_paid_cents ? (newContact.amount_paid_cents / 100).toFixed(2) : ''}
+                    onChange={(e) => setNewContact({...newContact, amount_paid_cents: e.target.value ? Math.round(parseFloat(e.target.value) * 100) : null})}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="balance_due">Balance Due</Label>
+                  <Input
+                    id="balance_due"
+                    type="number"
+                    step="0.01"
+                    value={newContact.balance_due_cents ? (newContact.balance_due_cents / 100).toFixed(2) : ''}
+                    onChange={(e) => setNewContact({...newContact, balance_due_cents: e.target.value ? Math.round(parseFloat(e.target.value) * 100) : null})}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="payment_plan">Payment Plan</Label>
+                  <Input
+                    id="payment_plan"
+                    value={newContact.payment_plan || ''}
+                    onChange={(e) => setNewContact({...newContact, payment_plan: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="payment_status">Payment Status</Label>
+                  <Select value={newContact.payment_status || ''} onValueChange={(value) => setNewContact({...newContact, payment_status: value})}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="partial">Partial</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="overdue">Overdue</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Special Preferences */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <Label htmlFor="religious_preferences">Religious Preferences</Label>
+                  <Input
+                    id="religious_preferences"
+                    value={newContact.religious_preferences || ''}
+                    onChange={(e) => setNewContact({...newContact, religious_preferences: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="veteran_status">Veteran Status</Label>
+                  <Select value={newContact.veteran_status || ''} onValueChange={(value) => setNewContact({...newContact, veteran_status: value})}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                      <SelectItem value="unknown">Unknown</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="special_requests">Special Requests</Label>
+                <Textarea
+                  id="special_requests"
+                  value={newContact.special_requests || ''}
+                  onChange={(e) => setNewContact({...newContact, special_requests: e.target.value})}
+                  rows={2}
+                  placeholder="Flowers, music preferences, special arrangements..."
+                />
+              </div>
             </div>
             
             <div className="flex justify-end gap-2">

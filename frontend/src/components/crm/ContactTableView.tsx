@@ -35,6 +35,28 @@ interface Contact {
   interaction_count: number
   last_interaction_date?: string
   created_by_user_id?: string
+  // Cemetery-specific fields
+  ethnic_orientation?: string
+  preferred_language?: string
+  secondary_language?: string
+  family_name?: string
+  relationship_to_deceased?: string
+  deceased_name?: string
+  date_of_birth?: string
+  date_of_death?: string
+  service_type?: string
+  service_date?: string
+  service_location?: string
+  plot_number?: string
+  plot_type?: string
+  contract_amount_cents?: number
+  amount_paid_cents?: number
+  balance_due_cents?: number
+  payment_plan?: string
+  payment_status?: string
+  special_requests?: string
+  religious_preferences?: string
+  veteran_status?: string
 }
 
 interface User {

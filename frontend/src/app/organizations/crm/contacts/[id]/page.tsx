@@ -44,6 +44,28 @@ interface Contact {
   last_interaction_date?: string
   billing_status?: string
   subscription_status?: string
+  // Cemetery-specific fields
+  ethnic_orientation?: string
+  preferred_language?: string
+  secondary_language?: string
+  family_name?: string
+  relationship_to_deceased?: string
+  deceased_name?: string
+  date_of_birth?: string
+  date_of_death?: string
+  service_type?: string
+  service_date?: string
+  service_location?: string
+  plot_number?: string
+  plot_type?: string
+  contract_amount_cents?: number
+  amount_paid_cents?: number
+  balance_due_cents?: number
+  payment_plan?: string
+  payment_status?: string
+  special_requests?: string
+  religious_preferences?: string
+  veteran_status?: string
 }
 
 interface ContactInteraction {
@@ -331,6 +353,124 @@ export default function ContactDetailPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Cemetery Information */}
+            {(contact.deceased_name || contact.plot_number || contact.service_type || 
+              contact.ethnic_orientation || contact.contract_amount_cents !== null ||
+              contact.religious_preferences || contact.special_requests) && (
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="text-lg">Cemetery Information</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Deceased Information */}
+                  {(contact.deceased_name || contact.date_of_birth || contact.date_of_death) && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Deceased Information</h4>
+                      {contact.deceased_name && (
+                        <p className="text-sm"><span className="text-gray-600">Name:</span> {contact.deceased_name}</p>
+                      )}
+                      {contact.date_of_birth && (
+                        <p className="text-sm"><span className="text-gray-600">Date of Birth:</span> {new Date(contact.date_of_birth).toLocaleDateString()}</p>
+                      )}
+                      {contact.date_of_death && (
+                        <p className="text-sm"><span className="text-gray-600">Date of Death:</span> {new Date(contact.date_of_death).toLocaleDateString()}</p>
+                      )}
+                      {contact.relationship_to_deceased && (
+                        <p className="text-sm"><span className="text-gray-600">Relationship:</span> {contact.relationship_to_deceased}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Cultural & Language */}
+                  {(contact.ethnic_orientation || contact.preferred_language || contact.secondary_language) && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Cultural Preferences</h4>
+                      {contact.ethnic_orientation && (
+                        <p className="text-sm"><span className="text-gray-600">Ethnic Orientation:</span> {contact.ethnic_orientation}</p>
+                      )}
+                      {contact.preferred_language && (
+                        <p className="text-sm"><span className="text-gray-600">Preferred Language:</span> {contact.preferred_language}</p>
+                      )}
+                      {contact.secondary_language && (
+                        <p className="text-sm"><span className="text-gray-600">Secondary Language:</span> {contact.secondary_language}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Service Information */}
+                  {(contact.service_type || contact.service_date || contact.service_location) && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Service Details</h4>
+                      {contact.service_type && (
+                        <p className="text-sm"><span className="text-gray-600">Type:</span> {contact.service_type}</p>
+                      )}
+                      {contact.service_date && (
+                        <p className="text-sm"><span className="text-gray-600">Date:</span> {new Date(contact.service_date).toLocaleDateString()}</p>
+                      )}
+                      {contact.service_location && (
+                        <p className="text-sm"><span className="text-gray-600">Location:</span> {contact.service_location}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Plot Information */}
+                  {(contact.plot_number || contact.plot_type) && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Plot Details</h4>
+                      {contact.plot_number && (
+                        <p className="text-sm"><span className="text-gray-600">Plot Number:</span> {contact.plot_number}</p>
+                      )}
+                      {contact.plot_type && (
+                        <p className="text-sm"><span className="text-gray-600">Plot Type:</span> {contact.plot_type}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Financial Information */}
+                  {(contact.contract_amount_cents !== null || contact.amount_paid_cents !== null || 
+                    contact.balance_due_cents !== null || contact.payment_plan || contact.payment_status) && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Financial Details</h4>
+                      {contact.contract_amount_cents !== null && contact.contract_amount_cents !== undefined && (
+                        <p className="text-sm"><span className="text-gray-600">Contract Amount:</span> ${(contact.contract_amount_cents / 100).toFixed(2)}</p>
+                      )}
+                      {contact.amount_paid_cents !== null && contact.amount_paid_cents !== undefined && (
+                        <p className="text-sm"><span className="text-gray-600">Amount Paid:</span> ${(contact.amount_paid_cents / 100).toFixed(2)}</p>
+                      )}
+                      {contact.balance_due_cents !== null && contact.balance_due_cents !== undefined && (
+                        <p className="text-sm"><span className="text-gray-600">Balance Due:</span> ${(contact.balance_due_cents / 100).toFixed(2)}</p>
+                      )}
+                      {contact.payment_plan && (
+                        <p className="text-sm"><span className="text-gray-600">Payment Plan:</span> {contact.payment_plan}</p>
+                      )}
+                      {contact.payment_status && (
+                        <p className="text-sm"><span className="text-gray-600">Payment Status:</span> {contact.payment_status}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Special Preferences */}
+                  {(contact.religious_preferences || contact.veteran_status || contact.special_requests) && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Special Preferences</h4>
+                      {contact.religious_preferences && (
+                        <p className="text-sm"><span className="text-gray-600">Religious Preferences:</span> {contact.religious_preferences}</p>
+                      )}
+                      {contact.veteran_status && (
+                        <p className="text-sm"><span className="text-gray-600">Veteran Status:</span> {contact.veteran_status}</p>
+                      )}
+                      {contact.special_requests && (
+                        <div className="mt-2">
+                          <p className="text-sm text-gray-600">Special Requests:</p>
+                          <p className="text-sm bg-gray-50 p-2 rounded border mt-1">{contact.special_requests}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Interaction History */}

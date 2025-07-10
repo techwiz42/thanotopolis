@@ -627,6 +627,29 @@ class ContactBase(BaseModel):
     is_unsubscribed: bool = False
     unsubscribed_at: Optional[datetime] = None
     unsubscribe_reason: Optional[str] = None
+    
+    # Cemetery-specific fields
+    ethnic_orientation: Optional[str] = Field(None, max_length=100)
+    preferred_language: Optional[str] = Field(None, max_length=50)
+    secondary_language: Optional[str] = Field(None, max_length=50)
+    family_name: Optional[str] = Field(None, max_length=255)
+    relationship_to_deceased: Optional[str] = Field(None, max_length=100)
+    deceased_name: Optional[str] = Field(None, max_length=255)
+    date_of_birth: Optional[str] = None
+    date_of_death: Optional[str] = None
+    service_type: Optional[str] = Field(None, max_length=100)
+    service_date: Optional[str] = None
+    service_location: Optional[str] = Field(None, max_length=255)
+    plot_number: Optional[str] = Field(None, max_length=50)
+    plot_type: Optional[str] = Field(None, max_length=100)
+    contract_amount_cents: Optional[int] = None
+    amount_paid_cents: Optional[int] = None
+    balance_due_cents: Optional[int] = None
+    payment_plan: Optional[str] = Field(None, max_length=100)
+    payment_status: Optional[str] = Field(None, max_length=50)
+    special_requests: Optional[str] = None
+    religious_preferences: Optional[str] = Field(None, max_length=255)
+    veteran_status: Optional[str] = Field(None, max_length=20)
 
 class ContactCreate(ContactBase):
     pass
@@ -648,6 +671,29 @@ class ContactUpdate(BaseModel):
     is_unsubscribed: Optional[bool] = None
     unsubscribed_at: Optional[datetime] = None
     unsubscribe_reason: Optional[str] = None
+    
+    # Cemetery-specific fields
+    ethnic_orientation: Optional[str] = Field(None, max_length=100)
+    preferred_language: Optional[str] = Field(None, max_length=50)
+    secondary_language: Optional[str] = Field(None, max_length=50)
+    family_name: Optional[str] = Field(None, max_length=255)
+    relationship_to_deceased: Optional[str] = Field(None, max_length=100)
+    deceased_name: Optional[str] = Field(None, max_length=255)
+    date_of_birth: Optional[str] = None
+    date_of_death: Optional[str] = None
+    service_type: Optional[str] = Field(None, max_length=100)
+    service_date: Optional[str] = None
+    service_location: Optional[str] = Field(None, max_length=255)
+    plot_number: Optional[str] = Field(None, max_length=50)
+    plot_type: Optional[str] = Field(None, max_length=100)
+    contract_amount_cents: Optional[int] = None
+    amount_paid_cents: Optional[int] = None
+    balance_due_cents: Optional[int] = None
+    payment_plan: Optional[str] = Field(None, max_length=100)
+    payment_status: Optional[str] = Field(None, max_length=50)
+    special_requests: Optional[str] = None
+    religious_preferences: Optional[str] = Field(None, max_length=255)
+    veteran_status: Optional[str] = Field(None, max_length=20)
 
 class ContactResponse(ContactBase):
     id: UUID
