@@ -66,10 +66,10 @@ async def create_checkout_session(
             'automatic_tax': {'enabled': True},
         }
         
-        # Add trial period if specified
+        # Add trial period if specified (minimum 1 day required by Stripe)
         if request.trial_days > 0:
             checkout_session_data['subscription_data'] = {
-                'trial_period_days': request.trial_days
+                'trial_period_days': max(request.trial_days, 1)
             }
         
         # If user is authenticated, use existing customer
@@ -119,11 +119,15 @@ async def organization_signup_checkout(
             automatic_tax={'enabled': True},
             customer_email=request.customer_email,
             subscription_data={
-                'trial_period_days': request.trial_days,
                 'metadata': {
                     'organization_name': request.organization_name,
                     'signup_type': 'new_organization'
-                }
+                },
+                **(
+                    {'trial_period_days': max(request.trial_days, 1)} 
+                    if request.trial_days > 0 
+                    else {}
+                )
             }
         )
         
@@ -579,3 +583,57 @@ async def get_super_admin_billing_dashboard(db: AsyncSession) -> Dict[str, Any]:
             "total_usage_revenue": sum(org["total_charges_cents"] - org["subscription_revenue_cents"] for org in org_billing_data)
         }
     }
+
+
+@router.get("/subscription-plans")
+async def get_subscription_plans():
+    """Get available subscription plans with current pricing"""
+    try:
+        # Fetch pricing information from Stripe using the configured price IDs
+        plans = []
+        
+        # Get the current monthly price from settings
+        if hasattr(settings, 'STRIPE_MONTHLY_PRICE_ID') and settings.STRIPE_MONTHLY_PRICE_ID:
+            try:
+                price = stripe.Price.retrieve(settings.STRIPE_MONTHLY_PRICE_ID)
+                product = stripe.Product.retrieve(price.product)
+                
+                plans.append({
+                    "id": "monthly",
+                    "name": "Monthly Subscription",
+                    "price_id": price.id,
+                    "amount_cents": price.unit_amount,
+                    "currency": price.currency,
+                    "interval": price.recurring.interval if price.recurring else "month",
+                    "features": [
+                        "AI-powered conversations",
+                        "Voice telephony integration", 
+                        "Integrated CRM for customer engagement tracking",
+                        "Usage-based billing",
+                        "24/7 customer support"
+                    ]
+                })
+            except stripe.error.StripeError as e:
+                logger.error(f"Error fetching Stripe price: {e}")
+                # Fallback to basic plan info without Stripe data
+                plans.append({
+                    "id": "monthly",
+                    "name": "Monthly Subscription", 
+                    "price_id": settings.STRIPE_MONTHLY_PRICE_ID,
+                    "amount_cents": 9900,  # Default $99 in cents
+                    "currency": "usd",
+                    "interval": "month",
+                    "features": [
+                        "AI-powered conversations",
+                        "Voice telephony integration",
+                        "Integrated CRM for customer engagement tracking",
+                        "Usage-based billing", 
+                        "24/7 customer support"
+                    ]
+                })
+        
+        return {"plans": plans}
+        
+    except Exception as e:
+        logger.error(f"Error fetching subscription plans: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch subscription plans")

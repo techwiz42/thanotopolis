@@ -1,575 +1,461 @@
-# Claude Development Context
+# Thanotopolis Development Environment Setup
 
-## Deepgram Voice Agent Integration
+## Project Overview
+Setting up a complete development installation of thanotopolis alongside the existing production instance. The development environment will mirror the production setup but use separate databases, ports, and eventually a dev subdomain.
 
-### Current Implementation Status
+## Goals
+- **Separate Development Environment**: Complete isolation from production
+- **CRM Branch Deployment**: Using the `origin/CRM` branch for development
+- **Database Isolation**: `thanotopolis_dev` database separate from production
+- **Port Separation**: Backend on 8001, Frontend on 3001 (vs prod 8000/3000)
+- **Subdomain Access**: Eventually serve via `dev.thanotopolis.com`
 
-The telephony application has successfully integrated **Deepgram Voice Agent** as the primary conversational AI solution for phone calls. This replaces the traditional STT → LLM → TTS pipeline with a unified WebSocket-based service.
+## Current Status
 
-#### Key Components:
-- **VoiceAgentService** (`app/services/voice/deepgram_voice_agent.py`): Core WebSocket client managing real-time conversational AI
-- **TelephonyVoiceAgentHandler** (`app/api/telephony_voice_agent.py`): Bridges Twilio MediaStream with Deepgram Voice Agent
-- **Feature Flag Integration**: Controlled rollout with `USE_VOICE_AGENT` and `VOICE_AGENT_ROLLOUT_PERCENTAGE`
+### ✅ Completed Tasks
 
-#### Technical Details:
-- **Audio Format**: mulaw 8kHz for telephony compatibility
-- **Models**: nova-3 (STT), gpt-4o-mini (LLM), aura-2-thalia-en (TTS)
-- **Real-time Processing**: Bidirectional audio streaming via WebSocket
-- **Usage Tracking**: STT/TTS word counts and call duration metrics
-- **Auto-summarization**: Post-call summary generation
+#### 1. Repository Setup
+- **Source**: Cloned from `git@github.com:techwiz42/thanotopolis.git`
+- **Branch**: `origin/CRM` branch checked out
+- **Location**: `/home/peter/thanotopolis_dev/`
+- **Virtual Environment**: Using existing `~/.virtualenvs/thanos`
 
-### Agent Collaboration System Analysis
+#### 2. Database Setup
+- **Database Created**: `thanotopolis_dev` with UTF8 encoding
+- **Extensions**: `vector` extension installed (pgvector for RAG features)
+- **Connection**: `postgresql+asyncpg://postgres:postgres@localhost:5432/thanotopolis_dev`
+- **Schema**: All tables created using `init_dev_db.py` script
+- **Migration Status**: Marked as current with latest revision `122b7567de22`
+- **Status**: ✅ **CONFIRMED ISOLATED** - Dev database is empty and separate from production
 
-The chat application implements a sophisticated agent collaboration system:
+#### 3. Backend Configuration
+- **Environment File**: `/home/peter/thanotopolis_dev/backend/.env`
+- **Port**: API server configured for port 8001
+- **Database URL**: Points to `thanotopolis_dev` database
+- **URLs**: Configured for `dev.thanotopolis.com` subdomain
+- **CORS**: Set up for dev subdomain access
+- **Status**: ✅ **FULLY OPERATIONAL** on port 8001
 
-#### Core Architecture:
-- **MODERATOR Agent**: Central orchestrator for routing user queries to specialist agents
-- **AgentManager**: Dynamic agent discovery and conversation processing
-- **CollaborationManager**: Multi-agent collaboration with parallel execution and response synthesis
-- **20+ Specialist Agents**: Cultural, regulatory, service-specific expertise
+#### 4. Frontend Configuration
+- **Environment File**: `/home/peter/thanotopolis_dev/frontend/.env.local`
+- **URLs**: Fixed to point to `http://localhost:8001` for API calls
+- **Authentication**: Google and Microsoft client IDs copied from production
+- **Status**: ✅ **BUILT AND DEPLOYED** with correct API routing
 
-#### Key Features:
-- Dynamic agent selection based on query analysis
-- Parallel agent execution with 30s individual / 90s total timeouts
-- LLM-powered response synthesis from multiple agent perspectives
-- Real-time WebSocket streaming with typing indicators
+#### 5. DNS and SSL Setup
+- **DNS Record**: ✅ **CONFIGURED** - `dev.thanotopolis.com` resolves correctly
+- **SSL Certificate**: ✅ **GENERATED** - Let's Encrypt certificate installed
+- **Status**: ✅ **OPERATIONAL** - HTTPS access working
 
-## Proposed Voice Agent Collaboration Integration
+#### 6. Nginx Configuration
+- **File**: `/etc/nginx/sites-available/thanotopolis-dev`
+- **Subdomain**: `dev.thanotopolis.com`
+- **Backend Proxy**: Port 8001 for API routes
+- **Frontend Proxy**: Port 3001 for web interface
+- **WebSocket Support**: Configured for real-time features
+- **Status**: ✅ **DEPLOYED AND ACTIVE**
 
-### Option B: Hybrid Implementation with Caller Consent
+#### 7. Systemd Services
+- **Backend Service**: `thanotopolis-backend-dev.service`
+- **Frontend Service**: `thanotopolis-frontend-dev.service`
+- **Auto-start**: Services configured to start on boot
+- **Status**: ✅ **INSTALLED AND RUNNING**
 
-**Estimated Effort: 4-6 weeks** (reduced from 8-12 weeks due to consent-based approach)
+#### 8. Critical Database Connection Fix
+- **Problem**: Backend was loading production .env file due to hardcoded path
+- **Root Cause**: `app/core/config.py` line 11 had `env_path = '/home/peter/thanotopolis/backend/.env'`
+- **Solution**: Changed to dynamic path resolution: `env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')`
+- **Result**: Dev backend now correctly loads dev environment and uses `thanotopolis_dev` database
+- **Status**: ✅ **FIXED AND VERIFIED**
 
-#### Phase 1: Consent Workflow (1-2 weeks)
-Implement caller consent mechanism for accessing specialist expertise:
+#### 9. Frontend API Routing Fix
+- **Problem**: Frontend .env.local had incorrect API URLs pointing to dev.thanotopolis.com
+- **Issue**: Next.js rewrites were routing API calls through nginx instead of directly to backend
+- **Solution**: Updated `NEXT_PUBLIC_API_URL=http://localhost:8001` in `.env.local`
+- **Result**: Frontend now makes direct API calls to dev backend on port 8001
+- **Status**: ✅ **FIXED AND REBUILT**
 
-```python
-# Voice Agent detects complex query requiring specialist knowledge
-await voice_agent.inject_message(
-    "I can give you a quick response, or consult with my specialist team "
-    "for a more comprehensive answer. Would you like me to check with the "
-    "experts? This will take about 30 seconds."
-)
+#### 10. Complete Billing System Implementation
+- **Dynamic Subscription Plans**: Added `/api/billing/subscription-plans` endpoint
+- **Flexible Pricing**: No code changes needed to switch pricing tiers
+- **Test Environment**: Complete Stripe test products and pricing
+- **Live Environment**: Complete Stripe live products and pricing  
+- **Usage-Based Billing**: Configurable rates via environment variables
+- **Combined Billing**: Usage charges automatically added to subscription invoices
+- **Status**: ✅ **FULLY IMPLEMENTED AND PRODUCTION READY**
+
+**Test Products (Fake Money):**
+- Beta: $99/month - `price_1RjOxWP1Wkv1gIa2p48ZcWNR`
+- Full: $299/month - `price_1RjP1JP1Wkv1gIa2q6HSeSWE`
+
+**Live Products (Real Money):**
+- Beta: $99/month - `price_1RjPgwP1Wkv1gIa2UJkNXr3J`  
+- Full: $299/month - `price_1RjPhfP1Wkv1gIa2hxe0JJjF`
+
+**Usage Pricing (Configurable):**
+- Voice: `VOICE_USAGE_PRICE_PER_1000_WORDS=100` ($1.00 per 1000 words)
+- Calls: `CALL_BASE_PRICE_CENTS=100` ($1.00 per call)
+
+#### 11. Billing Exemption System
+- **Demo Account Support**: Organizations can be marked as `is_demo=True` for billing exemption
+- **Automatic Exemption**: Demo accounts excluded from all billing processes
+- **Dashboard Integration**: Demo accounts see "exempt from billing charges" message
+- **Dev Database**: `is_demo` column added via direct database modification
+- **Production Ready**: Scripts created for production database updates
+- **Status**: ✅ **DEV IMPLEMENTED** - Production update pending
+
+**Exemption Points:**
+- ✅ Billing dashboard shows exemption message
+- ✅ Billing automation excludes demo accounts  
+- ✅ Usage tracking continues but no charges generated
+- ✅ Invoice generation skipped for demo accounts
+
+**Organizations Requiring Exemption:**
+- `demo` - Demo organization (production)
+- `cyberiad` - Company organization (production)
+
+#### 12. Cemetery CRM Enhancement
+- **Cemetery Customer Tracking**: Enhanced CRM to support cemetery-specific customer management
+- **Cultural Preferences**: Added ethnic orientation and language preference fields
+- **Deceased Information**: Added deceased name, dates, and service details
+- **Cemetery Operations**: Plot numbers, service types, religious preferences, veteran status
+- **Financial Tracking**: Contract amounts, payments, and balance due (stored in cents)
+- **Special Requests**: Notes for flowers, music preferences, special arrangements
+- **Family Relationships**: Track relationship to deceased and family name
+- **Status**: ✅ **DEV IMPLEMENTED** - Production migration pending
+
+**Cemetery-Specific Fields Added:**
+- **Cultural/Language**: `ethnic_orientation`, `preferred_language`, `secondary_language`
+- **Family Info**: `family_name`, `relationship_to_deceased`
+- **Deceased Details**: `deceased_name`, `date_of_death`, `date_of_birth`
+- **Service Info**: `service_type`, `service_date`, `service_location`
+- **Plot Details**: `plot_number`, `plot_type`
+- **Financial**: `contract_amount_cents`, `amount_paid_cents`, `balance_due_cents`, `payment_plan`, `payment_status`
+- **Special Needs**: `special_requests`, `religious_preferences`, `veteran_status`
+
+**Implementation Notes:**
+- All new fields are optional (`nullable=True`) to maintain flexibility
+- Financial amounts stored in cents for precision
+- Supports both B2B (cemetery operations) and B2C (family customers) workflows
+- Existing CRM functionality preserved for non-cemetery organizations
+
+### 🚀 Development Environment Status: FULLY OPERATIONAL
+
+The development environment is now **100% complete and functional**:
+- ✅ **Isolated Database**: Uses `thanotopolis_dev` database
+- ✅ **Separate Ports**: Backend 8001, Frontend 3001
+- ✅ **SSL/HTTPS**: Accessible via `https://dev.thanotopolis.com`
+- ✅ **Service Management**: Systemd services for auto-start
+- ✅ **Environment Isolation**: No interference with production
+- ✅ **Dynamic Pricing**: Configurable via environment variables
+
+### 🔄 Next Steps (Optional Enhancements)
+
+#### Production Deployment Readiness
+**Status**: ✅ **COMPLETE** - All billing components ready for production
+- ✅ Test products created and working
+- ✅ Live products created and ready  
+- ✅ Configurable pricing system implemented
+- ✅ Usage-based billing fully functional
+
+**When Ready for Production:**
+1. Get live Stripe API keys from Dashboard
+2. Update production environment with live keys
+3. Set initial pricing tier (beta $99 recommended)
+4. Configure webhooks for live environment
+5. **Deploy billing exemption to production**
+
+#### Production Database Updates Required
+**Billing Exemption Deployment:**
+1. **Create Alembic migration** for `is_demo` column:
+   ```sql
+   ALTER TABLE tenants ADD COLUMN is_demo BOOLEAN DEFAULT FALSE NOT NULL;
+   ```
+2. **Run migration** on production database
+3. **Update organizations** to exempt status:
+   ```sql
+   UPDATE tenants SET is_demo = TRUE WHERE name ILIKE '%demo%' OR name ILIKE '%cyberiad%';
+   ```
+4. **Verify exemptions** using production scripts
+
+**Cemetery CRM Migration:**
+1. **Create Alembic migration** for cemetery fields on Contact model:
+   ```sql
+   ALTER TABLE contacts ADD COLUMN ethnic_orientation VARCHAR;
+   ALTER TABLE contacts ADD COLUMN preferred_language VARCHAR;
+   ALTER TABLE contacts ADD COLUMN secondary_language VARCHAR;
+   -- Plus 18 additional cemetery-specific fields
+   ```
+2. **Run migration** on production database
+3. **Test CRM functionality** with cemetery-specific workflows
+
+**Scripts Available:**
+- `check_billing_exemptions.py` - Verify current exemption status
+- `update_demo_status.py` - Mark organizations as exempt
+- `add_is_demo_column.py` - Dev database column addition (completed)
+- **Cemetery CRM Migration Script** - To be created for production deployment
+
+#### Billing System Capabilities
+**Subscription Management:**
+- ✅ Dynamic pricing without code changes
+- ✅ Easy switching between beta ($99) and full ($299) pricing
+- ✅ Separate test/live environments
+
+**Usage-Based Billing:**
+- ✅ Configurable voice processing rates
+- ✅ Configurable phone call rates  
+- ✅ Automatic invoice combination
+- ✅ Transparent usage breakdowns
+
+**Administrative Features:**
+- ✅ Customer portal integration
+- ✅ Subscription cancellation/reactivation
+- ✅ Usage tracking and reporting
+- ✅ Demo account exemptions
+
+## Directory Structure
+
+```
+/home/peter/thanotopolis_dev/
+├── backend/
+│   ├── .env                    # Dev environment variables
+│   ├── alembic/               # Database migrations (copied from prod)
+│   ├── app/                   # Application code
+│   ├── init_dev_db.py        # Database initialization script
+│   └── requirements.txt      # Python dependencies
+├── frontend/
+│   ├── .env.local            # Frontend environment variables
+│   ├── src/                  # React/Next.js source code
+│   ├── package.json          # Node.js dependencies
+│   └── next.config.js        # Next.js configuration
+└── CLAUDE.md                 # This documentation file
 ```
 
-**Technical Implementation:**
-- Query complexity detection logic
-- Consent detection from caller response
-- Graceful fallback for declined collaboration
+## Environment Configuration
 
-#### Phase 2: Collaboration Bridge (2-3 weeks)
-Bridge Voice Agent with existing collaboration system:
-
-```python
-# Pause Voice Agent and route to collaboration system
-await voice_agent.update_instructions("Please hold while I consult with specialists...")
-collaborative_response = await collaboration_manager.process_query(
-    user_message, selected_agents
-)
+### Backend Environment (`.env`)
+```bash
+ENVIRONMENT=development
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/thanotopolis_dev
+API_PORT=8001
+FRONTEND_URL=https://dev.thanotopolis.com
+API_URL=https://dev.thanotopolis.com/api
+WS_URL=wss://dev.thanotopolis.com/api/ws
+CORS_ORIGINS=["https://dev.thanotopolis.com"]
 ```
 
-**Key Components:**
-- Voice Agent pause/resume state management
-- Message routing to MODERATOR system
-- Collaboration trigger without real-time streaming requirements
-- Response adaptation for voice delivery
-
-#### Phase 3: Seamless Handoff (1 week)
-Integrate collaborative responses back into voice conversation:
-
-```python
-# Resume Voice Agent with expert knowledge
-await voice_agent.update_instructions(
-    f"Based on expert consultation: {collaborative_response}. "
-    f"Continue the conversation naturally with this enhanced context."
-)
+### Frontend Environment (`.env.local`)
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8001
+NEXT_PUBLIC_WS_URL=wss://dev.thanotopolis.com/ws
+FRONTEND_URL=https://dev.thanotopolis.com
 ```
 
-**Features:**
-- Smooth transition back to Voice Agent
-- Context preservation across collaboration
-- Natural conversation flow resumption
+### Stripe Billing Configuration
 
-### Technical Advantages
+#### Test Environment Pricing (Current Dev Setup)
+```bash
+# Subscription products (test/fake money)
+STRIPE_PRICE_BETA_SUB="price_1RjOxWP1Wkv1gIa2p48ZcWNR"    # $99/month
+STRIPE_PRICE_FULL_SUB="price_1RjP1JP1Wkv1gIa2q6HSeSWE"    # $299/month
 
-#### Leverages Existing Capabilities:
-- **Real-time Instruction Updates**: `update_instructions()` and `inject_message()` methods already implemented
-- **Collaboration Infrastructure**: Complete MODERATOR + specialist agent system available
-- **Session Management**: Robust Voice Agent session handling in place
+# Active pricing (currently beta)
+STRIPE_MONTHLY_PRICE_ID="price_1RjOxWP1Wkv1gIa2p48ZcWNR"
 
-#### Simplified Architecture:
-- **No Real-time Streaming Integration**: Collaboration happens during explicit pause
-- **Clear Error Handling**: Defined fallback paths when collaboration fails
-- **User-Controlled Complexity**: Only activates when caller explicitly requests it
-- **Manageable Latency**: Caller expects wait time after consenting to specialist consultation
+# Usage rates (configurable)
+VOICE_USAGE_PRICE_PER_1000_WORDS=100    # $1.00 per 1000 words
+CALL_BASE_PRICE_CENTS=100               # $1.00 per call
+```
 
-### Benefits
+#### Production Environment Pricing (Live/Real Money)
+```bash
+# Subscription products (live/real money)  
+STRIPE_PRICE_BETA_SUB_LIVE="price_1RjPgwP1Wkv1gIa2UJkNXr3J"    # $99/month
+STRIPE_PRICE_FULL_SUB_LIVE="price_1RjPhfP1Wkv1gIa2hxe0JJjF"    # $299/month
 
-1. **Enhanced Expertise**: Access to 20+ specialist agents for complex queries
-2. **User Choice**: Callers control when to access deeper expertise
-3. **Reduced Complexity**: Consent-based approach eliminates real-time streaming challenges
-4. **Graceful Degradation**: Clear fallback to standard Voice Agent responses
-5. **Scalable Implementation**: Incremental rollout using existing feature flag system
+# For production deployment:
+STRIPE_MONTHLY_PRICE_ID="price_1RjPgwP1Wkv1gIa2UJkNXr3J"  # Start with beta
 
-### Next Steps
+# Usage rates (same logic, different rates possible)
+VOICE_USAGE_PRICE_PER_1000_WORDS=100    # Configurable per environment
+CALL_BASE_PRICE_CENTS=100               # Configurable per environment
+```
 
-1. **Implement Consent Detection**: Add logic to identify when collaboration would be beneficial
-2. **Create Collaboration Bridge**: Develop service to pause Voice Agent and route to MODERATOR
-3. **Test Integration**: Validate seamless handoff between Voice Agent and collaboration system
-4. **Performance Optimization**: Ensure sub-30s collaboration response times for telephony use
-5. **Deployment Strategy**: Gradual rollout with monitoring and fallback mechanisms
+#### Easy Pricing Switches
+**To switch to full pricing ($299):**
+- Test: `STRIPE_MONTHLY_PRICE_ID="price_1RjP1JP1Wkv1gIa2q6HSeSWE"`
+- Live: `STRIPE_MONTHLY_PRICE_ID="price_1RjPhfP1Wkv1gIa2hxe0JJjF"`
 
----
+**To adjust usage rates:**
+- Lower rates: `VOICE_USAGE_PRICE_PER_1000_WORDS=50` (50¢ per 1000 words)
+- Higher rates: `VOICE_USAGE_PRICE_PER_1000_WORDS=150` ($1.50 per 1000 words)
 
-## Stripe Billing System
+## Database Information
 
-### Implementation Overview
-
-The platform features a comprehensive Stripe-based billing system with subscription management, usage-based pricing, and automated monthly billing.
-
-#### Core Architecture:
-- **Stripe Integration**: Full customer, subscription, and invoice management
-- **Usage Tracking**: Real-time monitoring of voice services and phone calls
-- **Automated Billing**: Monthly invoice generation with detailed usage breakdown
-- **Demo Account Support**: Billing exemption for demo organizations
-
-#### Database Models (`backend/app/models/stripe_models.py`):
-- **StripeCustomer**: Links tenants to Stripe customers
-- **StripeSubscription**: Tracks subscription lifecycle and billing periods
-- **StripeInvoice**: Stores invoice history with usage tracking
-
-#### Pricing Structure:
-- **Monthly Subscription**: $299/month for platform access
-- **Voice Usage**: $1.00 per 1,000 words (STT/TTS)
-- **Phone Calls**: $1.00 per call + voice usage charges
+### Connection Details
+- **Host**: localhost
+- **Port**: 5432 (PostgreSQL default)
+- **Database**: `thanotopolis_dev`
+- **User**: postgres
+- **Password**: postgres
 
 ### Key Features
+- **pgvector Extension**: Enabled for RAG/embedding features
+- **Schema**: Complete thanotopolis schema with all tables
+- **Isolation**: Completely separate from production `thanotopolis` database
 
-#### Subscription Management:
-- Stripe Checkout integration for new signups
-- Cancel at period end with reactivation option
-- Customer portal for payment method management
-- Automatic trial period support
+## Next Steps (Tomorrow)
 
-#### Billing API (`backend/app/api/billing.py`):
-- Customer workflow endpoints (checkout, signup, portal)
-- Subscription management (cancel, reactivate)
-- Admin features (demo status, billing dashboard)
-- Webhook event handling
-
-#### Frontend Components:
-- **BillingDashboard**: Subscription status, usage stats, invoice history
-- **Organization Signup**: New customer onboarding flow
-- **Admin Dashboard**: Platform-wide revenue and usage metrics
-
-#### Automated Billing (`backend/app/services/billing_automation.py`):
-- Monthly billing runs on 1st of each month
-- Usage calculation for previous month
-- Automated invoice generation and delivery
-- Demo account exclusion
-
-#### Configuration:
-- Stripe API keys and webhook secrets
-- Monthly subscription price ID
-- Demo account flags in tenant model
-
-### Usage
-
-#### Manual Billing Trigger:
-```python
-from app.services.billing_automation import trigger_manual_billing
-await trigger_manual_billing()  # Bills for previous month
-```
-
-#### Demo Account Management:
-```python
-# Mark organization as demo (exempt from billing)
-POST /api/billing/set-demo-status/{tenant_id}
-```
-
----
-
-## CRM System Implementation (July 1, 2025)
-
-### Overview
-Successfully implemented a comprehensive Customer Relationship Management (CRM) system with contact management, interaction tracking, email integration, and billing system connectivity.
-
-#### Core Features Implemented
-
-##### 1. Database Models (`backend/app/models/models.py`)
-- **Contact Model**: Core contact information with business details, contact person, and status tracking
-- **ContactInteraction Model**: Track all customer touchpoints (calls, emails, meetings, notes, tasks)
-- **CustomField Model**: Dynamic custom fields per organization with validation rules
-- **EmailTemplate Model**: Templated email system with Jinja2 variable substitution
-- **Billing Integration**: Links contacts to Stripe customers for subscription status
-
-##### 2. API Implementation (`backend/app/api/crm.py`)
-- **Dashboard Endpoint**: Statistics, recent activity, contact growth metrics
-- **Contact CRUD**: Full create, read, update, delete operations with search/filtering
-- **CSV Import**: Bulk contact import with field mapping and duplicate handling
-- **Interaction Tracking**: Log and retrieve all customer interactions with timeline view
-- **Custom Fields Management**: Dynamic field creation and validation per organization
-- **Billing Status Integration**: Shows subscription status and payment history
-
-##### 3. Email Service (`backend/app/services/email_service.py`)
-- **SendGrid Integration**: Professional email delivery with error handling
-- **Template System**: Jinja2-powered templates with variable substitution
-- **Bulk Email**: Send personalized emails to multiple contacts
-- **Default Templates**: Welcome emails, follow-ups, invoice reminders
-- **HTML/Text Support**: Automatic HTML-to-text conversion
-
-##### 4. Frontend Interface (`frontend/src/app/organizations/crm/page.tsx`)
-- **Card-Based Layout**: Contact cards with key information at a glance
-- **Admin-Only Access**: Restricted to admin and super_admin roles
-- **Dashboard Stats**: Visual metrics and recent activity display
-- **Search & Filter**: Real-time search by name/email and status filtering
-- **CSV Import UI**: Complete import workflow with field mapping interface
-- **Responsive Design**: Works on desktop and mobile devices
-
-#### Key Implementation Details
-
-##### Database Schema:
-```sql
--- Contacts table with full business and contact information
-CREATE TABLE contacts (
-    id UUID PRIMARY KEY,
-    tenant_id UUID REFERENCES tenants(id),
-    business_name VARCHAR NOT NULL,
-    city VARCHAR, state VARCHAR,
-    contact_name VARCHAR NOT NULL,
-    contact_email VARCHAR,
-    contact_role VARCHAR,
-    phone VARCHAR, website VARCHAR,
-    address TEXT, notes TEXT,
-    status VARCHAR DEFAULT 'lead',
-    custom_fields JSONB DEFAULT '{}',
-    stripe_customer_id VARCHAR,  -- Billing integration
-    created_by_user_id UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP
-);
-
--- Interaction tracking for complete customer timeline
-CREATE TABLE contact_interactions (
-    id UUID PRIMARY KEY,
-    contact_id UUID REFERENCES contacts(id),
-    user_id UUID REFERENCES users(id),
-    interaction_type VARCHAR NOT NULL,  -- phone_call, email, meeting, note, task, follow_up
-    subject VARCHAR,
-    content TEXT NOT NULL,
-    interaction_date TIMESTAMP NOT NULL,
-    metadata JSONB DEFAULT '{}',
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Dynamic custom fields per organization
-CREATE TABLE custom_fields (
-    id UUID PRIMARY KEY,
-    tenant_id UUID REFERENCES tenants(id),
-    field_name VARCHAR NOT NULL,
-    field_label VARCHAR NOT NULL,
-    field_type VARCHAR NOT NULL,  -- text, number, date, email, phone, select, boolean
-    field_options JSONB DEFAULT '{}',
-    is_required BOOLEAN DEFAULT FALSE,
-    display_order INTEGER DEFAULT 0,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_by_user_id UUID REFERENCES users(id),
-    UNIQUE(tenant_id, field_name)
-);
-
--- Email templates with variable substitution
-CREATE TABLE email_templates (
-    id UUID PRIMARY KEY,
-    tenant_id UUID REFERENCES tenants(id),
-    name VARCHAR NOT NULL,
-    subject VARCHAR NOT NULL,
-    html_content TEXT NOT NULL,
-    text_content TEXT,
-    variables JSONB DEFAULT '[]',
-    is_active BOOLEAN DEFAULT TRUE,
-    created_by_user_id UUID REFERENCES users(id),
-    UNIQUE(tenant_id, name)
-);
-```
-
-##### Contact Status Workflow:
-- **Lead**: Initial prospect, not yet qualified
-- **Prospect**: Qualified lead, actively pursuing
-- **Customer**: Active paying customer
-- **Qualified**: Ready to close
-- **Closed Won**: Successfully closed deal
-- **Closed Lost**: Unsuccessful pursuit
-- **Inactive**: No longer pursuing
-
-##### Security & Access Control:
-- **Admin-Only Access**: CRM restricted to users with `admin` or `super_admin` roles
-- **Tenant Isolation**: All data scoped to current organization
-- **API Authentication**: All endpoints require valid JWT tokens
-- **Email Validation**: Prevents duplicate contacts within organization
-
-##### Email Integration Features:
-- **Template Variables**: Dynamic content insertion (`{{contact_name}}`, `{{business_name}}`, `{{organization_name}}`)
-- **Bulk Operations**: Send personalized emails to filtered contact lists
-- **Default Templates**: Pre-built templates for common scenarios
-- **SendGrid API**: Professional delivery with tracking and analytics
-
-##### CSV Import Capabilities:
-- **Field Mapping**: Map CSV columns to contact fields via drag-and-drop interface
-- **Duplicate Handling**: Option to update existing contacts or skip duplicates
-- **Error Reporting**: Detailed validation errors with row-by-row feedback
-- **Preview System**: Preview mapped data before import
-- **Batch Processing**: Handles large CSV files efficiently
-
-#### Configuration Requirements
-
-##### Environment Variables:
+### 1. DNS Setup
 ```bash
-# SendGrid Configuration
-SENDGRID_API_KEY=your_sendgrid_api_key_here
-SMTP_FROM_EMAIL=noreply@yourdomain.com
-SMTP_FROM_NAME=Your Organization Name
-
-# Existing billing and database configurations continue to work
+# Create DNS A record for dev.thanotopolis.com pointing to server IP
+# This needs to be done in your domain registrar/DNS provider
 ```
 
-##### Frontend Navigation:
-- Added CRM link to organization navigation sidebar
-- Admin-only visibility based on user role
-- Icon: UserCheck from Lucide React
-- Located at `/organizations/crm`
-
-#### Usage Examples
-
-##### Creating a Contact:
-```python
-contact_data = {
-    "business_name": "Acme Corporation",
-    "contact_name": "John Smith",
-    "contact_email": "john.smith@acme.com",
-    "contact_role": "CEO",
-    "phone": "+1-555-123-4567",
-    "city": "New York",
-    "state": "NY",
-    "status": "lead",
-    "notes": "Interested in enterprise plan, has 500+ employees"
-}
+### 2. SSL Certificate Generation
+```bash
+sudo certbot certonly --nginx -d dev.thanotopolis.com
 ```
 
-##### CSV Import Format:
-```csv
-business_name,contact_name,contact_email,phone,city,state,status,notes
-"Acme Corp","John Smith","john@acme.com","+1-555-123-4567","New York","NY","lead","Enterprise prospect"
-"Beta Inc","Jane Doe","jane@beta.com","+1-555-987-6543","Los Angeles","CA","prospect","Follow up in 2 weeks"
+### 3. Nginx Configuration Deployment
+```bash
+# Copy the nginx config to sites-available
+sudo cp /path/to/thanotopolis-dev /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/thanotopolis-dev /etc/nginx/sites-enabled/
+sudo nginx -t  # Test configuration
+sudo systemctl reload nginx
 ```
 
-##### Email Template Example:
-```html
-<h2>Welcome {{contact_name}}!</h2>
-<p>Thank you for your interest in {{organization_name}}. We're excited to potentially work with {{business_name}}.</p>
-<p>Based on our conversation, I understand you're looking for solutions that can help with your specific needs.</p>
-<p>Best regards,<br>{{organization_name}} Team</p>
+### 4. Systemd Service Creation
+
+#### Backend Service (`thanotopolis-backend-dev.service`)
+```ini
+[Unit]
+Description=Thanotopolis Backend Development Server
+After=network.target postgresql.service
+
+[Service]
+Type=exec
+User=peter
+Group=peter
+WorkingDirectory=/home/peter/thanotopolis_dev/backend
+Environment=PATH=/home/peter/.virtualenvs/thanos/bin
+ExecStart=/home/peter/.virtualenvs/thanos/bin/gunicorn app.main:app -c gunicorn_config.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-#### Benefits Achieved
+#### Frontend Service (`thanotopolis-frontend-dev.service`)
+```ini
+[Unit]
+Description=Thanotopolis Frontend Development Server
+After=network.target
 
-1. **Centralized Contact Management**: All customer data organized in one location
-2. **Complete Interaction History**: Timeline view of all customer touchpoints
-3. **Professional Email Campaigns**: Templated emails with personalization
-4. **Billing Integration**: Direct connection to subscription and payment data
-5. **Scalable Architecture**: Custom fields support unique business requirements
-6. **Security First**: Admin-only access with tenant isolation
-7. **User-Friendly Interface**: Intuitive card-based design with search/filter
-8. **Bulk Operations**: CSV import and bulk email capabilities for efficiency
+[Service]
+Type=exec
+User=peter
+Group=peter
+WorkingDirectory=/home/peter/thanotopolis_dev/frontend
+Environment=NODE_ENV=production
+Environment=PORT=3001
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=3
 
-#### Current Status:
-- ✅ **Complete Implementation**: All core CRM features implemented and tested
-- ✅ **Database Models**: Full schema with indexes for performance
-- ✅ **API Endpoints**: Complete CRUD operations with advanced filtering
-- ✅ **Frontend Interface**: Professional UI with admin access controls
-- ✅ **Email Integration**: SendGrid service with template system
-- ✅ **CSV Import**: Full import workflow with validation and error handling
-- ✅ **Billing Integration**: Links contacts to subscription status
-
-### Email Campaign Analytics (July 8, 2025)
-
-#### Overview
-Enhanced the CRM system with comprehensive email campaign tracking and analytics capabilities, providing detailed insights into campaign performance with open rates, click rates, and engagement metrics.
-
-#### Core Components Implemented
-
-##### 1. Email Tracking Service (`backend/app/services/email_tracking_service.py`)
-- **Campaign Management**: Create, send, and track email campaigns
-- **Real-time Tracking**: Track opens, clicks, and bounces
-- **Analytics Calculation**: Compute open rates, click rates, CTR, and bounce rates
-- **Event Logging**: Detailed event timeline for each recipient
-
-##### 2. Database Models for Email Tracking
-```sql
--- Email campaigns table
-CREATE TABLE email_campaigns (
-    id UUID PRIMARY KEY,
-    tenant_id UUID REFERENCES tenants(id),
-    name VARCHAR NOT NULL,
-    subject VARCHAR NOT NULL,
-    html_content TEXT NOT NULL,
-    text_content TEXT,
-    status VARCHAR DEFAULT 'draft',  -- draft, sending, sent, partial
-    recipient_count INTEGER DEFAULT 0,
-    sent_count INTEGER DEFAULT 0,
-    opened_count INTEGER DEFAULT 0,
-    clicked_count INTEGER DEFAULT 0,
-    bounced_count INTEGER DEFAULT 0,
-    track_opens BOOLEAN DEFAULT TRUE,
-    track_clicks BOOLEAN DEFAULT TRUE,
-    created_by_user_id UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    sent_at TIMESTAMP,
-    updated_at TIMESTAMP
-);
-
--- Email recipients tracking
-CREATE TABLE email_recipients (
-    id UUID PRIMARY KEY,
-    campaign_id UUID REFERENCES email_campaigns(id),
-    contact_id UUID REFERENCES contacts(id),
-    email_address VARCHAR NOT NULL,
-    name VARCHAR,
-    tracking_id UUID UNIQUE NOT NULL,
-    status VARCHAR DEFAULT 'pending',  -- pending, sent, bounced, failed
-    sent_at TIMESTAMP,
-    opened_at TIMESTAMP,
-    clicked_at TIMESTAMP,
-    first_opened_at TIMESTAMP,
-    first_clicked_at TIMESTAMP,
-    last_opened_at TIMESTAMP,
-    last_clicked_at TIMESTAMP,
-    open_count INTEGER DEFAULT 0,
-    click_count INTEGER DEFAULT 0,
-    sendgrid_message_id VARCHAR,
-    error_message TEXT
-);
-
--- Email events tracking
-CREATE TABLE email_events (
-    id UUID PRIMARY KEY,
-    recipient_id UUID REFERENCES email_recipients(id),
-    event_type VARCHAR NOT NULL,  -- opened, clicked, bounced, dropped, deferred
-    timestamp TIMESTAMP DEFAULT NOW(),
-    user_agent TEXT,
-    ip_address VARCHAR,
-    url TEXT,  -- For click events
-    metadata JSONB DEFAULT '{}'
-);
+[Install]
+WantedBy=multi-user.target
 ```
 
-##### 3. API Endpoints (`backend/app/api/crm.py`)
-- `GET /api/crm/email-campaigns` - List all campaigns with metrics
-- `GET /api/crm/email-campaigns/{campaign_id}/analytics` - Detailed campaign analytics
-- `GET /api/crm/email-recipients/{recipient_id}/analytics` - Individual recipient analytics
-- `GET /api/crm/email-tracking/open/{tracking_id}` - Track email opens
-- `GET /api/crm/email-tracking/click/{tracking_id}` - Track link clicks
+### 5. Service Deployment
+```bash
+# Install and enable services
+sudo systemctl daemon-reload
+sudo systemctl enable thanotopolis-backend-dev
+sudo systemctl enable thanotopolis-frontend-dev
+sudo systemctl start thanotopolis-backend-dev
+sudo systemctl start thanotopolis-frontend-dev
 
-##### 4. Frontend Campaign Analytics (`frontend/src/app/organizations/crm/campaigns/`)
+# Check status
+sudo systemctl status thanotopolis-backend-dev
+sudo systemctl status thanotopolis-frontend-dev
+```
 
-###### Campaigns List Page (`page.tsx`)
-- **Overview Dashboard**: Aggregate statistics across all campaigns
-- **Campaign Table**: Sortable list with key metrics
-- **Visual Indicators**: Color-coded performance metrics
-- **Search & Filter**: Find campaigns by name or subject
-- **Pagination**: Handle large campaign lists
-- **Quick Actions**: Direct links to detailed analytics
+## Testing Checklist
 
-###### Individual Campaign Analytics (`[id]/page.tsx`)
-- **Key Metrics Cards**: Recipients, sends, opens, clicks
-- **Engagement Rates**: Visual progress bars with industry comparisons
-- **Performance Breakdown**: Detailed delivery statistics
-- **Visual Alerts**: Warnings for high bounce rates
-- **Campaign Timeline**: Created and sent dates
-- **Export Options**: (Future enhancement)
+### After Complete Setup
+- [ ] `dev.thanotopolis.com` resolves to server IP
+- [ ] SSL certificate valid for dev subdomain
+- [ ] Backend API accessible at `https://dev.thanotopolis.com/api/health`
+- [ ] Frontend loads at `https://dev.thanotopolis.com`
+- [ ] WebSocket connections work for real-time features
+- [ ] Database operations work (user registration, conversations, etc.)
+- [ ] CRM features function correctly
+- [ ] Voice/telephony features work
+- [ ] No interference with production `thanotopolis.com`
 
-#### Analytics Metrics Provided
+## Development Workflow
 
-##### Campaign Level:
-- **Total Recipients**: Number of contacts targeted
-- **Sent Count**: Successfully delivered emails
-- **Open Rate**: Percentage of recipients who opened
-- **Click Rate**: Percentage of recipients who clicked
-- **Click-Through Rate (CTR)**: Clicks as percentage of opens
-- **Bounce Rate**: Failed delivery percentage
+### Starting Services Manually (for testing)
+```bash
+# Backend
+cd /home/peter/thanotopolis_dev/backend
+~/.virtualenvs/thanos/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8001
 
-##### Aggregate Statistics:
-- **Total Campaigns**: All-time campaign count
-- **Total Emails Sent**: Cumulative sends
-- **Average Open Rate**: Cross-campaign average
-- **Average Click Rate**: Cross-campaign average
+# Frontend  
+cd /home/peter/thanotopolis_dev/frontend
+npm run dev -- --port 3001
+```
 
-#### UI/UX Features
+### Checking Logs
+```bash
+# Backend logs
+sudo journalctl -u thanotopolis-backend-dev -f
 
-##### Navigation:
-- Added "View Campaigns" button in CRM Quick Actions
-- Located between "Send Email Campaign" and "Export Contacts"
-- Uses BarChart3 icon for visual consistency
+# Frontend logs
+sudo journalctl -u thanotopolis-frontend-dev -f
 
-##### Design Patterns:
-- **Responsive Layout**: Works on desktop and mobile
-- **Loading States**: Skeleton loaders and progress indicators
-- **Error Handling**: Graceful fallbacks and user-friendly messages
-- **Access Control**: Admin-only viewing permissions
-- **Visual Hierarchy**: Important metrics highlighted
+# Nginx logs
+sudo tail -f /var/log/nginx/access.log
+sudo tail -f /var/log/nginx/error.log
+```
 
-##### Performance Indicators:
-- **Green highlighting**: Above-average performance (>25% open rate, >5% click rate)
-- **Industry benchmarks**: 21.5% average open rate, 2.6% average click rate
-- **Status badges**: Visual campaign status indicators
+## Security Considerations
 
-#### Integration Points
+### Development Environment Security
+- **Separate Secrets**: Dev environment uses different JWT secret keys
+- **Database Isolation**: No access to production data
+- **API Keys**: Consider using separate API keys for external services in dev
+- **CORS Configuration**: Restricted to dev subdomain only
 
-##### With Email Service:
-- Automatic tracking pixel insertion for opens
-- Link wrapping for click tracking
-- SendGrid webhook integration for real-time updates
+### Production Safety
+- **Port Isolation**: Dev services on different ports (8001/3001 vs 8000/3000)
+- **Domain Separation**: Different subdomains prevent conflicts
+- **Database Separation**: Completely isolated database
+- **Service Names**: Different systemd service names prevent conflicts
 
-##### With CRM Contacts:
-- Links email recipients to contact records
-- Tracks engagement history per contact
-- Enables targeted follow-ups based on engagement
+## Notes
 
-#### Current Status:
-- ✅ **Backend Implementation**: Complete tracking service and API
-- ✅ **Database Schema**: Full tracking tables with indexes
-- ✅ **Frontend UI**: Campaign list and analytics pages
-- ✅ **Navigation Integration**: Quick access from CRM dashboard
-- ✅ **Real-time Tracking**: Open and click event logging
-- ✅ **Analytics Calculation**: All key metrics computed
+### Migration Issues Resolved
+- **Initial Problem**: Alembic migration conflicts due to complex branching history
+- **Solution**: Used `init_dev_db.py` to create all tables directly from models
+- **Result**: Database marked as current with latest migration revision
 
-#### Future Enhancement Opportunities:
-1. **Advanced Email Campaigns**: Automated drip campaigns and segmentation
-2. **A/B Testing**: Compare campaign variations
-3. **Recipient Timeline**: Individual engagement history view
-4. **Export Analytics**: PDF/CSV reports for campaigns
-5. **Real-time Updates**: WebSocket for live metric updates
-6. **Heatmap Analysis**: Click location tracking
-7. **Mobile App**: Native mobile interface for field sales teams
-8. **Calendar Integration**: Schedule and track meetings directly in CRM
-9. **Advanced Analytics**: Contact scoring, pipeline forecasting, and conversion metrics
-10. **API Webhooks**: Real-time integration with external CRM and marketing systems
-11. **Document Management**: Attach files, contracts, and documents to contacts
-12. **Task Management**: Advanced task scheduling and reminder system
-13. **Integration Hub**: Connect with popular tools like Slack, Salesforce, HubSpot
+### Configuration Strategy
+- **Environment Variables**: All URLs use `dev.thanotopolis.com` for consistency
+- **SSL/TLS**: HTTPS/WSS everywhere for production-like environment
+- **API Compatibility**: Same endpoints and features as production
+
+### Future Considerations
+- **Automated Deployment**: Consider CI/CD pipeline for dev environment
+- **Data Seeding**: Scripts to populate dev database with test data
+- **Feature Flags**: Different feature configurations for testing
+- **Performance Monitoring**: Separate monitoring for dev environment
 
 ---
 
-## Development Commands
+## Summary
 
-### Testing
-- `pytest` - Run test suite
-- `npm run test` - Frontend tests (if applicable)
-
-### Voice Agent Testing
-- `python test_voice_agent.py` - Voice Agent connection testing
-- `python debug_voice_agent_events.py` - Real-time event monitoring
-- Frontend test: `telephony/test/simulate-call`
-
-### Linting
-- `ruff check` - Python linting
-- `ruff format` - Python formatting
+The thanotopolis development environment is **95% complete**. All code is configured, databases are set up, and the application is ready to run. The only remaining step is setting up the DNS record for `dev.thanotopolis.com` and generating the SSL certificate, after which the development environment will be fully operational and accessible via the dev subdomain.

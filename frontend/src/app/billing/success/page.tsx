@@ -129,6 +129,19 @@ export default function BillingSuccess() {
               </div>
             </div>
 
+            <div className="bg-purple-50 border border-purple-200 rounded-md p-4 mb-4">
+              <h4 className="text-sm font-medium text-purple-800 mb-2">
+                📞 We're Here to Help!
+              </h4>
+              <p className="text-sm text-purple-700">
+                <strong>We will guide you through the setup process.</strong> Contact us at{' '}
+                <a href="tel:+16179971844" className="font-semibold text-purple-800 hover:text-purple-600">(617) 997-1844</a>{' '}
+                or{' '}
+                <a href="mailto:pete@cyberiad.ai" className="font-semibold text-purple-800 hover:text-purple-600">pete@cyberiad.ai</a>{' '}
+                to continue the setup process with personalized assistance.
+              </p>
+            </div>
+
             <div className="bg-yellow-100 border border-yellow-300 rounded-md p-4">
               <h4 className="text-sm font-medium text-yellow-800 mb-2">
                 🔑 Your Organization Access Code

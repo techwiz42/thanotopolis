@@ -3,8 +3,19 @@
 import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
+interface Plan {
+  id: string
+  name: string
+  price_id: string
+  amount_cents: number
+  currency: string
+  interval: string
+  features: string[]
+}
+
 export default function BillingSignup() {
   const [organizationData, setOrganizationData] = useState<any>(null)
+  const [plan, setPlan] = useState<Plan | null>(null)
   const [isCreatingCheckout, setIsCreatingCheckout] = useState(false)
   const [error, setError] = useState('')
   const router = useRouter()
@@ -18,7 +29,25 @@ export default function BillingSignup() {
       // If no pending organization data, redirect back to creation form
       router.push('/organizations/new')
     }
+
+    // Fetch current subscription plan
+    fetchPlan()
   }, [router])
+
+  const fetchPlan = async () => {
+    try {
+      const response = await fetch('/api/billing/subscription-plans')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.plans && data.plans.length > 0) {
+          setPlan(data.plans[0]) // Use the first (and likely only) plan
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching plan:', error)
+      // Fallback to default display if API fails
+    }
+  }
 
   const handleStartSubscription = async () => {
     if (!organizationData) return
@@ -104,45 +133,61 @@ export default function BillingSignup() {
         {/* Subscription Plan */}
         <div className="bg-white shadow rounded-lg p-6">
           <div className="text-center">
-            <h3 className="text-xl font-semibold text-gray-900">Thanotopolis Platform</h3>
+            <h3 className="text-xl font-semibold text-gray-900">{plan?.name || 'Thanotopolis Platform'}</h3>
             <div className="mt-4">
-              <span className="text-4xl font-bold text-gray-900">$299</span>
-              <span className="text-lg text-gray-600">/month</span>
+              <span className="text-4xl font-bold text-gray-900">
+                ${plan ? (plan.amount_cents / 100).toFixed(0) : '99'}
+              </span>
+              <span className="text-lg text-gray-600">/{plan?.interval || 'month'}</span>
             </div>
             
             <div className="mt-6 space-y-3 text-left">
               <h4 className="font-medium text-gray-900">What's included:</h4>
               <ul className="space-y-2 text-sm text-gray-600">
-                <li className="flex items-center">
-                  <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Complete multi-agent platform access
-                </li>
-                <li className="flex items-center">
-                  <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Web chat interface with AI agents
-                </li>
-                <li className="flex items-center">
-                  <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Full telephony system integration
-                </li>
-                <li className="flex items-center">
-                  <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Custom agent instructions
-                </li>
-                <li className="flex items-center">
-                  <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Unlimited team members
-                </li>
+                {plan?.features ? (
+                  plan.features.map((feature, index) => (
+                    <li key={index} className="flex items-center">
+                      <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {feature}
+                    </li>
+                  ))
+                ) : (
+                  // Fallback features if API call fails
+                  <>
+                    <li className="flex items-center">
+                      <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      AI-powered conversations
+                    </li>
+                    <li className="flex items-center">
+                      <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Voice telephony integration
+                    </li>
+                    <li className="flex items-center">
+                      <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Integrated CRM for customer engagement tracking
+                    </li>
+                    <li className="flex items-center">
+                      <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Usage-based billing
+                    </li>
+                    <li className="flex items-center">
+                      <svg className="h-4 w-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      24/7 customer support
+                    </li>
+                  </>
+                )}
               </ul>
             </div>
 

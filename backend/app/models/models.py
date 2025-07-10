@@ -1,5 +1,5 @@
 # backend/app/models/models.py
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint, Text, Enum as SQLEnum, Numeric
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Date, ForeignKey, UniqueConstraint, Text, Enum as SQLEnum, Numeric
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Index, text
@@ -804,6 +804,31 @@ class Contact(Base):
     phone = Column(String, nullable=True)
     website = Column(String, nullable=True)
     address = Column(Text, nullable=True)
+    
+    # Cultural and communication preferences (all optional)
+    ethnic_orientation = Column(String, nullable=True)  # Cultural/ethnic background
+    preferred_language = Column(String, nullable=True)  # Primary language for communication
+    secondary_language = Column(String, nullable=True)  # Secondary language if applicable
+    
+    # Cemetery-specific fields (all optional)
+    family_name = Column(String, nullable=True)  # The Smith Family
+    relationship_to_deceased = Column(String, nullable=True)  # Spouse, Child, Parent, etc.
+    deceased_name = Column(String, nullable=True)  # Mary Smith
+    date_of_death = Column(Date, nullable=True)
+    date_of_birth = Column(Date, nullable=True)
+    service_type = Column(String, nullable=True)  # Burial, Cremation, Memorial
+    service_date = Column(DateTime(timezone=True), nullable=True)
+    service_location = Column(String, nullable=True)  # Chapel A, Graveside, etc.
+    plot_number = Column(String, nullable=True)  # Section 12, Lot 45
+    plot_type = Column(String, nullable=True)  # Single, Double, Family Plot
+    contract_amount_cents = Column(Integer, nullable=True)  # Store in cents
+    amount_paid_cents = Column(Integer, nullable=True)  # Store in cents
+    balance_due_cents = Column(Integer, nullable=True)  # Store in cents
+    payment_plan = Column(Boolean, nullable=True)  # Has payment plan
+    payment_status = Column(String, nullable=True)  # Paid in Full, Payment Plan, Outstanding
+    special_requests = Column(Text, nullable=True)  # Flowers, Music preferences, etc.
+    religious_preferences = Column(String, nullable=True)
+    veteran_status = Column(Boolean, nullable=True)  # For veteran benefits
     
     # CRM fields
     status = Column(String, default=ContactStatus.LEAD.value)

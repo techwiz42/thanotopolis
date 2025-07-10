@@ -149,7 +149,7 @@ export default function NewOrganization() {
                 />
                 <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
                   <p className="text-sm text-blue-800">
-                    <strong>Need help creating custom instructions?</strong> Our team can help you craft the perfect agent instructions for your organization's specific needs. 
+                    Our team is standing by to help you craft the perfect agent instructions for your organization's specific needs. This is a free service included with your subscription to Thanotopolis.com 
                     <br />
                     <span className="font-medium">Contact us at pete@cyberiad.ai or (617) 997-1844 for personalized agent setup assistance.</span>
                   </p>

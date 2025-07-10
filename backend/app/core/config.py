@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # Determine env file path
 # DEV environment now lives on the swarmchat Digital Ocean droplet
-env_path = '/home/peter/thanotopolis/backend/.env'
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
 load_dotenv(env_path)
 
 # Set up logger
@@ -135,6 +135,10 @@ class Settings(BaseSettings):
     STRIPE_PUBLIC_KEY: str = os.getenv("STRIPE_PUBLIC_KEY", "")
     STRIPE_WEBHOOK_SECRET: str = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     STRIPE_MONTHLY_PRICE_ID: str = os.getenv("STRIPE_MONTHLY_PRICE_ID", "")
+    
+    # Usage-based pricing (in cents)
+    VOICE_USAGE_PRICE_PER_1000_WORDS: int = int(os.getenv("VOICE_USAGE_PRICE_PER_1000_WORDS", "100"))
+    CALL_BASE_PRICE_CENTS: int = int(os.getenv("CALL_BASE_PRICE_CENTS", "100"))
 
 settings = Settings()
 
