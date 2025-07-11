@@ -792,6 +792,15 @@ Important:
             # Add to pending messages batch (don't commit immediately to reduce latency)
             session_info["pending_messages"].extend([call_message, message])
             
+            # Process voice-to-CRM-to-calendar integration for user messages
+            if is_user and text.strip():
+                try:
+                    await self._process_customer_data_extraction(session_id, text, db)
+                    await self._process_scheduling_intent(session_id, text, db)
+                except Exception as crm_error:
+                    logger.error(f"❌ Error in CRM/calendar processing: {crm_error}")
+                    # Don't let CRM errors affect the main call flow
+            
             # Track usage for STT and TTS
             config = session_info["config"]
             word_count = count_words(text)
@@ -1315,6 +1324,200 @@ Important:
         except Exception as e:
             logger.error(f"❌ Error generating summary for call {call_id}: {e}")
             # Don't re-raise - summary generation is optional
+
+    async def _process_customer_data_extraction(
+        self, 
+        session_id: str, 
+        user_message: str, 
+        db: AsyncSession
+    ):
+        """Process customer data extraction from voice conversation"""
+        try:
+            session_info = self.call_sessions.get(session_id)
+            if not session_info:
+                return
+            
+            config = session_info["config"]
+            
+            # Get or create accumulated customer data for this session
+            if "customer_data" not in session_info:
+                session_info["customer_data"] = None
+            
+            # Extract customer information from the conversation text
+            from app.services.voice.customer_extraction import get_customer_extraction_service
+            extraction_service = get_customer_extraction_service()
+            
+            # Extract new customer data
+            new_data = await extraction_service.extract_customer_data(
+                conversation_text=user_message,
+                existing_data=session_info["customer_data"]
+            )
+            
+            # Update session with new data
+            session_info["customer_data"] = new_data
+            
+            # Check if we have enough data to create/update a contact
+            if new_data.is_sufficient_for_contact():
+                # Try to find existing contact
+                existing_contact = await extraction_service.find_existing_contact(
+                    db, config.tenant_id, new_data
+                )
+                
+                if existing_contact:
+                    # Update existing contact with new data
+                    updated_contact = await extraction_service.update_contact_from_data(
+                        db, existing_contact, new_data
+                    )
+                    session_info["contact_id"] = updated_contact.id
+                    logger.info(f"📞 Updated existing contact {updated_contact.id} from voice data")
+                else:
+                    # Create new contact from extracted data
+                    new_contact = await extraction_service.create_contact_from_data(
+                        db, config.tenant_id, config.tenant_id, new_data  # Using tenant_id as user_id for now
+                    )
+                    if new_contact:
+                        session_info["contact_id"] = new_contact.id
+                        logger.info(f"📞 Created new contact {new_contact.id} from voice data")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in customer data extraction: {e}")
+    
+    async def _process_scheduling_intent(
+        self,
+        session_id: str,
+        user_message: str,
+        db: AsyncSession
+    ):
+        """Process scheduling intent detection and calendar operations"""
+        try:
+            session_info = self.call_sessions.get(session_id)
+            if not session_info:
+                return
+            
+            config = session_info["config"]
+            
+            # Get or create accumulated scheduling preferences for this session
+            if "scheduling_preferences" not in session_info:
+                session_info["scheduling_preferences"] = None
+            
+            # Detect scheduling intent and extract preferences
+            from app.services.voice.scheduling_intent import get_scheduling_intent_service
+            intent_service = get_scheduling_intent_service()
+            
+            # Extract scheduling preferences
+            new_preferences = await intent_service.extract_scheduling_preferences(
+                conversation_text=user_message,
+                existing_preferences=session_info["scheduling_preferences"]
+            )
+            
+            # Update session with new preferences
+            session_info["scheduling_preferences"] = new_preferences
+            
+            # Handle scheduling intent
+            if new_preferences.has_scheduling_intent():
+                from app.services.voice.voice_calendar import get_voice_calendar_service
+                calendar_service = get_voice_calendar_service()
+                
+                # For now, use the tenant_id as user_id for calendar operations
+                # In a real implementation, you'd determine which staff member's calendar to check
+                calendar_user_id = config.tenant_id
+                
+                if new_preferences.intent.value == "schedule_appointment":
+                    # Check availability
+                    availability = await calendar_service.check_availability(
+                        db, config.tenant_id, calendar_user_id, new_preferences
+                    )
+                    
+                    if availability.has_availability():
+                        # Store availability for potential booking
+                        session_info["last_availability_check"] = availability
+                        
+                        # Generate natural language response about availability
+                        availability_response = calendar_service.format_availability_for_voice(availability)
+                        
+                        # Inject availability information into the voice agent
+                        voice_session = self.voice_agent_service.sessions.get(session_id)
+                        if voice_session:
+                            enhanced_instructions = f"""
+You just checked the calendar and found available appointment times. 
+Respond naturally to the customer with this availability information:
+
+{availability_response}
+
+If they confirm a specific time, you can proceed to book it for them.
+"""
+                            await voice_session.update_instructions(enhanced_instructions)
+                            logger.info(f"📅 Updated voice agent with availability information")
+                    else:
+                        # No availability found
+                        voice_session = self.voice_agent_service.sessions.get(session_id)
+                        if voice_session:
+                            no_availability_instructions = """
+You checked the calendar but didn't find any available times that match their preferences. 
+Apologize and offer to:
+1. Check different time periods
+2. Add them to a waitlist
+3. Schedule outside normal business hours
+4. Connect them with someone who can manually coordinate scheduling
+"""
+                            await voice_session.update_instructions(no_availability_instructions)
+                            logger.info(f"📅 No availability found, updated voice agent instructions")
+                
+                elif new_preferences.intent.value == "check_availability":
+                    # Just checking availability, not booking yet
+                    availability = await calendar_service.check_availability(
+                        db, config.tenant_id, calendar_user_id, new_preferences
+                    )
+                    
+                    if availability.has_availability():
+                        availability_response = calendar_service.format_availability_for_voice(availability)
+                        voice_session = self.voice_agent_service.sessions.get(session_id)
+                        if voice_session:
+                            await voice_session.inject_message(availability_response, "assistant")
+                
+                # Handle appointment booking confirmation
+                elif new_preferences.intent.value == "schedule_appointment" and session_info.get("last_availability_check"):
+                    # Check if user has confirmed a specific time
+                    if new_preferences.is_time_specific():
+                        availability = session_info["last_availability_check"]
+                        best_slots = availability.get_best_slots(1)
+                        
+                        if best_slots:
+                            # Book the appointment
+                            contact_id = session_info.get("contact_id")
+                            customer_notes = f"Scheduled via voice call. Customer message: {user_message[:200]}"
+                            
+                            booked_event = await calendar_service.book_appointment(
+                                db, config.tenant_id, calendar_user_id, contact_id,
+                                best_slots[0], new_preferences, customer_notes
+                            )
+                            
+                            if booked_event:
+                                # Update phone call with linked event
+                                phone_call = session_info["phone_call"]
+                                if phone_call.call_metadata is None:
+                                    phone_call.call_metadata = {}
+                                phone_call.call_metadata["booked_appointment_id"] = str(booked_event.id)
+                                await db.commit()
+                                
+                                # Confirm booking with customer
+                                confirmation_message = calendar_service.format_booking_confirmation(booked_event)
+                                voice_session = self.voice_agent_service.sessions.get(session_id)
+                                if voice_session:
+                                    await voice_session.inject_message(confirmation_message, "assistant")
+                                
+                                logger.info(f"📅 ✅ Booked appointment {booked_event.id} via voice call")
+                            else:
+                                # Booking failed
+                                voice_session = self.voice_agent_service.sessions.get(session_id)
+                                if voice_session:
+                                    error_message = "I apologize, but I wasn't able to book that appointment. The time slot may no longer be available. Let me check for other options."
+                                    await voice_session.inject_message(error_message, "assistant")
+                
+                logger.info(f"📅 Processed scheduling intent: {new_preferences.intent.value}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in scheduling intent processing: {e}")
 
 
 # Create handler instance

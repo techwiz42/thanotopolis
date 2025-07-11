@@ -1,0 +1,42 @@
+MEETING INVITATION
+==================
+
+You're invited to: {{ event_title }}
+
+Event Details:
+{% if event_description %}
+{{ event_description }}
+
+{% endif %}
+Date: {{ event_date }}
+Time: {{ event_time }}
+{% if event_location %}Location: {{ event_location }}
+{% endif %}Organizer: {{ organizer_name }}
+
+{% if custom_message %}
+Personal Message:
+{{ custom_message }}
+
+{% endif %}
+RSVP Required by {{ rsvp_deadline }}
+=====================================
+
+Please respond to let us know if you'll be attending:
+
+✓ YES - I'll attend: {{ rsvp_accept_url }}
+✗ NO - I can't attend: {{ rsvp_decline_url }}
+? MAYBE - I'm not sure: {{ rsvp_tentative_url }}
+
+Or visit this page to respond: {{ rsvp_page_url }}
+
+Add to Calendar:
+================
+Google Calendar: {{ google_calendar_url }}
+Outlook: {{ outlook_calendar_url }}
+Download .ics file: {{ ics_download_url }}
+
+Questions?
+==========
+Contact the organizer: {{ organizer_email }}
+
+This invitation was sent by {{ organization_name }}

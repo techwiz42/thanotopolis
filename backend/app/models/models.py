@@ -98,6 +98,8 @@ class Tenant(Base):
     contacts = relationship("Contact", back_populates="tenant", cascade="all, delete-orphan")
     custom_fields = relationship("CustomField", back_populates="tenant", cascade="all, delete-orphan")
     email_templates = relationship("EmailTemplate", back_populates="tenant", cascade="all, delete-orphan")
+    # Calendar relationships
+    calendar_events = relationship("CalendarEvent", back_populates="tenant", cascade="all, delete-orphan")
     
 class User(Base):
     __tablename__ = "users"
@@ -124,6 +126,8 @@ class User(Base):
     conversation_users = relationship("ConversationUser", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    # Calendar relationships
+    calendar_events = relationship("CalendarEvent", back_populates="user", foreign_keys="CalendarEvent.user_id", cascade="all, delete-orphan")
 
 class Agent(Base):
     __tablename__ = "agents"
@@ -854,6 +858,8 @@ class Contact(Base):
     tenant = relationship("Tenant", back_populates="contacts")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     interactions = relationship("ContactInteraction", back_populates="contact", cascade="all, delete-orphan")
+    # Calendar relationships
+    calendar_events = relationship("CalendarEvent", back_populates="contact", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Contact {self.business_name} - {self.contact_name}>"

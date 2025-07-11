@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Invitation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e2e8f0;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #2d3748;
+            margin: 0;
+            font-size: 24px;
+        }
+        .event-details {
+            background-color: #f7fafc;
+            padding: 20px;
+            border-radius: 6px;
+            border-left: 4px solid #4299e1;
+            margin: 20px 0;
+        }
+        .event-details h2 {
+            color: #2d3748;
+            margin-top: 0;
+            font-size: 20px;
+        }
+        .detail-row {
+            display: flex;
+            margin: 10px 0;
+            align-items: flex-start;
+        }
+        .detail-label {
+            font-weight: bold;
+            color: #4a5568;
+            min-width: 80px;
+            margin-right: 10px;
+        }
+        .detail-value {
+            color: #2d3748;
+            flex: 1;
+        }
+        .rsvp-section {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #fff5f5;
+            border-radius: 6px;
+            border: 1px solid #fed7d7;
+        }
+        .rsvp-buttons {
+            margin: 20px 0;
+        }
+        .rsvp-button {
+            display: inline-block;
+            padding: 12px 24px;
+            margin: 0 10px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .rsvp-accept {
+            background-color: #48bb78;
+            color: white;
+        }
+        .rsvp-accept:hover {
+            background-color: #38a169;
+        }
+        .rsvp-decline {
+            background-color: #e53e3e;
+            color: white;
+        }
+        .rsvp-decline:hover {
+            background-color: #c53030;
+        }
+        .rsvp-tentative {
+            background-color: #ed8936;
+            color: white;
+        }
+        .rsvp-tentative:hover {
+            background-color: #dd6b20;
+        }
+        .message {
+            background-color: #f0fff4;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #48bb78;
+            margin: 20px 0;
+            font-style: italic;
+            color: #2f855a;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+            text-align: center;
+            color: #718096;
+            font-size: 12px;
+        }
+        .calendar-links {
+            margin: 20px 0;
+            text-align: center;
+        }
+        .calendar-link {
+            display: inline-block;
+            margin: 5px 10px;
+            padding: 8px 16px;
+            background-color: #4299e1;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .calendar-link:hover {
+            background-color: #3182ce;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Meeting Invitation</h1>
+            <p>You're invited to join us</p>
+        </div>
+
+        <div class="event-details">
+            <h2>{{ event_title }}</h2>
+            {% if event_description %}
+            <p>{{ event_description }}</p>
+            {% endif %}
+            
+            <div class="detail-row">
+                <div class="detail-label">📅 Date:</div>
+                <div class="detail-value">{{ event_date }}</div>
+            </div>
+            
+            <div class="detail-row">
+                <div class="detail-label">🕐 Time:</div>
+                <div class="detail-value">{{ event_time }}</div>
+            </div>
+            
+            {% if event_location %}
+            <div class="detail-row">
+                <div class="detail-label">📍 Location:</div>
+                <div class="detail-value">{{ event_location }}</div>
+            </div>
+            {% endif %}
+            
+            <div class="detail-row">
+                <div class="detail-label">👤 Organizer:</div>
+                <div class="detail-value">{{ organizer_name }}</div>
+            </div>
+        </div>
+
+        {% if custom_message %}
+        <div class="message">
+            <strong>Personal Message:</strong><br>
+            {{ custom_message }}
+        </div>
+        {% endif %}
+
+        <div class="rsvp-section">
+            <h3>Please respond by {{ rsvp_deadline }}</h3>
+            <p>Will you be attending this event?</p>
+            
+            <div class="rsvp-buttons">
+                <a href="{{ rsvp_accept_url }}" class="rsvp-button rsvp-accept">✓ Yes, I'll attend</a>
+                <a href="{{ rsvp_decline_url }}" class="rsvp-button rsvp-decline">✗ No, I can't attend</a>
+                <a href="{{ rsvp_tentative_url }}" class="rsvp-button rsvp-tentative">? Maybe</a>
+            </div>
+            
+            <p style="font-size: 12px; color: #666;">
+                Or visit <a href="{{ rsvp_page_url }}">{{ rsvp_page_url }}</a> to respond
+            </p>
+        </div>
+
+        <div class="calendar-links">
+            <p><strong>Add to your calendar:</strong></p>
+            <a href="{{ google_calendar_url }}" class="calendar-link">📅 Google Calendar</a>
+            <a href="{{ outlook_calendar_url }}" class="calendar-link">📅 Outlook</a>
+            <a href="{{ ics_download_url }}" class="calendar-link">📅 Download .ics</a>
+        </div>
+
+        <div class="footer">
+            <p>This invitation was sent by {{ organization_name }}</p>
+            <p>If you have questions about this event, please contact {{ organizer_email }}</p>
+        </div>
+    </div>
+</body>
+</html>

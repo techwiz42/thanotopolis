@@ -51,11 +51,39 @@ class ApiService {
       finalHeaders['X-Tenant-ID'] = organization;
     }
 
+    // Add Authorization header if token is available
+    if (typeof localStorage !== 'undefined') {
+      const tokens = localStorage.getItem('tokens');
+      if (tokens) {
+        try {
+          const parsedTokens = JSON.parse(tokens);
+          if (parsedTokens.access_token) {
+            finalHeaders['Authorization'] = `Bearer ${parsedTokens.access_token}`;
+          }
+        } catch (error) {
+          console.warn('Failed to parse tokens from localStorage:', error);
+        }
+      }
+    }
+
     console.log('API Request:', {
       url,
       method: fetchOptions.method || 'GET',
       headers: finalHeaders
     });
+    
+    // Debug authentication headers specifically
+    if (finalHeaders['Authorization']) {
+      console.log('✓ Authorization header present:', finalHeaders['Authorization'].substring(0, 20) + '...');
+    } else {
+      console.log('✗ Authorization header missing');
+    }
+    
+    if (finalHeaders['X-Tenant-ID']) {
+      console.log('✓ X-Tenant-ID header present:', finalHeaders['X-Tenant-ID']);
+    } else {
+      console.log('✗ X-Tenant-ID header missing');
+    }
 
     const response = await fetch(url, {
       ...fetchOptions,

@@ -173,7 +173,7 @@ export default function OrganizationOverviewPage() {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center">
@@ -204,6 +204,23 @@ export default function OrganizationOverviewPage() {
             </p>
             <Button onClick={() => router.push('/organizations/crm')} className="w-full">
               Open CRM
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Calendar className="h-5 w-5 mr-2" />
+              Calendar
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-gray-600 mb-4">
+              Schedule appointments and manage calendar events
+            </p>
+            <Button onClick={() => router.push('/organizations/calendar')} className="w-full">
+              Open Calendar
             </Button>
           </CardContent>
         </Card>

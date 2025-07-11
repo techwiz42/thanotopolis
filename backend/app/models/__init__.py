@@ -19,12 +19,24 @@ from .models import (
     TelephonyConfiguration,
     PhoneVerificationAttempt,
     PhoneCall,
-    CallAgent
+    CallAgent,
+    CallMessage,
+    Contact,
+    ContactInteraction,
+    CustomField,
+    EmailTemplate,
+    ContactStatus,
+    ContactInteractionType,
+    CustomFieldType
 )
 from .stripe_models import (
     StripeCustomer,
     StripeSubscription,
     StripeInvoice
+)
+from .calendar_models import (
+    CalendarEvent,
+    CalendarEventAttendee
 )
 
 __all__ = [
@@ -47,5 +59,15 @@ __all__ = [
     "TelephonyConfiguration",
     "PhoneVerificationAttempt",
     "PhoneCall",
-    "CallAgent"
+    "CallAgent",
+    "CallMessage",
+    "CalendarEvent",
+    "CalendarEventAttendee",
+    "Contact",
+    "ContactInteraction",
+    "CustomField",
+    "EmailTemplate",
+    "ContactStatus",
+    "ContactInteractionType",
+    "CustomFieldType"
 ]

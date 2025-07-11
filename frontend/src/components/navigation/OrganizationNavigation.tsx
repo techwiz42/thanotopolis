@@ -21,7 +21,8 @@ import {
   Radio,
   Activity,
   TestTube,
-  UserCheck
+  UserCheck,
+  Calendar
 } from 'lucide-react';
 
 import { telephonyService, TelephonyConfig } from '@/services/telephony';
@@ -131,6 +132,12 @@ export default function OrganizationNavigation() {
       href: '/organizations/crm',
       icon: UserCheck,
       description: 'Contact management and customer relationships'
+    },
+    {
+      name: 'Calendar',
+      href: '/organizations/calendar',
+      icon: Calendar,
+      description: 'Schedule and manage appointments and events'
     }
   ];
 

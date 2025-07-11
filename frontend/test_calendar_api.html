@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar API Test</title>
+</head>
+<body>
+    <h1>Calendar API Test</h1>
+    
+    <div>
+        <h2>Step 1: Set Test Token</h2>
+        <button onclick="setTestToken()">Set Test Token</button>
+        <p id="tokenStatus"></p>
+    </div>
+    
+    <div>
+        <h2>Step 2: Test Calendar API</h2>
+        <button onclick="testCalendarAPI()">Test Calendar Events</button>
+        <p id="apiResult"></p>
+    </div>
+    
+    <div>
+        <h2>Step 3: Test Calendar Creation</h2>
+        <button onclick="testCalendarCreation()">Create Test Event</button>
+        <p id="creationResult"></p>
+    </div>
+
+    <script>
+        function setTestToken() {
+            // Set a mock token for testing
+            const testTokens = {
+                access_token: "test_token_123",
+                refresh_token: "refresh_token_123",
+                token_type: "Bearer"
+            };
+            localStorage.setItem('tokens', JSON.stringify(testTokens));
+            localStorage.setItem('organization', 'acme');
+            
+            document.getElementById('tokenStatus').textContent = 'Test tokens set in localStorage';
+        }
+
+        async function testCalendarAPI() {
+            try {
+                const response = await fetch('/api/calendar/events', {
+                    method: 'GET'
+                });
+                
+                document.getElementById('apiResult').textContent = 
+                    `Response: ${response.status} - ${response.statusText}`;
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    document.getElementById('apiResult').textContent += 
+                        `\nError: ${errorText}`;
+                }
+                
+            } catch (error) {
+                document.getElementById('apiResult').textContent = 
+                    `Error: ${error.message}`;
+            }
+        }
+
+        async function testCalendarCreation() {
+            try {
+                const testEvent = {
+                    title: "Test Event",
+                    description: "This is a test event",
+                    start_time: new Date().toISOString(),
+                    end_time: new Date(Date.now() + 3600000).toISOString(),
+                    all_day: false,
+                    event_type: "appointment",
+                    status: "confirmed"
+                };
+                
+                const response = await fetch('/api/calendar/events', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(testEvent)
+                });
+                
+                document.getElementById('creationResult').textContent = 
+                    `Response: ${response.status} - ${response.statusText}`;
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    document.getElementById('creationResult').textContent += 
+                        `\nError: ${errorText}`;
+                } else {
+                    const result = await response.json();
+                    document.getElementById('creationResult').textContent += 
+                        `\nSuccess: Created event with ID ${result.id}`;
+                }
+                
+            } catch (error) {
+                document.getElementById('creationResult').textContent = 
+                    `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
