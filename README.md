@@ -45,7 +45,15 @@ Integration combining Voice Agent's real-time capabilities with 20+ specialist a
 
 ## 📢 What's New
 
-### **July 2025 Updates**
+### **July 2025 Updates - Revolutionary Voice-to-CRM-to-Calendar Integration** 🎯
+- **📅 Complete Calendar System**: Full calendar functionality with month/week/day views
+- **🎙️ Voice-to-CRM Integration**: Automatic customer information extraction from voice calls
+- **📞 Voice-to-Calendar Integration**: Real-time appointment scheduling during phone conversations
+- **👥 Advanced Attendee Management**: Multi-type attendee selection with enhanced UI
+- **🔗 Seamless CRM-Calendar Integration**: Events linked to CRM contacts with full context
+- **📋 Organizations Dashboard**: Added Calendar section to main organizations page
+
+### **Previous Updates**
 - **📇 CRM System**: Complete Customer Relationship Management system with contact management
 - **📧 Email Integration**: SendGrid-powered email campaigns with template system
 - **📊 CSV Import**: Bulk contact import with field mapping and validation
@@ -53,7 +61,7 @@ Integration combining Voice Agent's real-time capabilities with 20+ specialist a
 - **🎨 Custom Fields**: Dynamic field creation per organization with validation rules
 - **📈 Interaction Tracking**: Complete customer touchpoint history and timeline
 
-### **June 2025 Updates**
+### **Voice Agent Infrastructure**
 - **🎙️ Deepgram Voice Agent**: Complete telephony architecture update with 90% latency reduction
 - **🤖 Voice-Agent Collaboration**: Consent-based specialist agent integration for complex queries
 - **📊 Advanced Call Analytics**: Message-based call tracking with granular transcript analysis
@@ -74,6 +82,8 @@ Integration combining Voice Agent's real-time capabilities with 20+ specialist a
 - **🎙️ Voice Processing**: Deepgram Voice Agent API (STT + LLM + TTS unified)
 - **🤖 AI Integration**: GPT-4o-mini with 20+ specialist agents
 - **☎️ Telephony**: Twilio integration with WebSocket streaming
+- **📅 Calendar System**: Full calendar with attendee management and RSVP tracking
+- **📞 Voice-to-CRM-to-Calendar**: Revolutionary voice conversation automation
 - **🔐 Authentication**: JWT-based with hierarchical role system
 - **🧪 Testing**: Comprehensive unit and integration test suite (72% coverage)
 
@@ -82,6 +92,8 @@ Integration combining Voice Agent's real-time capabilities with 20+ specialist a
 - **🎨 UI/UX**: Tailwind CSS with custom component library
 - **⚡ Real-time**: WebSocket connections for live conversations
 - **🎤 Voice**: Browser-based audio recording and playbook
+- **📅 Calendar UI**: Interactive calendar with multi-view support
+- **👥 Attendee Management**: Advanced multi-type attendee selection interface
 - **📊 State Management**: React Context with custom hooks
 - **🧪 Testing**: Jest with React Testing Library
 
@@ -95,6 +107,7 @@ erDiagram
     TENANTS ||--o{ CONTACTS : manages
     TENANTS ||--o{ CUSTOM_FIELDS : defines
     TENANTS ||--o{ EMAIL_TEMPLATES : stores
+    TENANTS ||--o{ CALENDAR_EVENTS : schedules
     TENANTS ||--|| TELEPHONY_CONFIGURATIONS : has
     
     TELEPHONY_CONFIGURATIONS ||--o{ PHONE_CALLS : receives
@@ -114,11 +127,17 @@ erDiagram
     USERS ||--o{ DOCUMENT_EMBEDDINGS : owns
     USERS ||--o{ CONTACTS : creates
     USERS ||--o{ CONTACT_INTERACTIONS : logs
+    USERS ||--o{ CALENDAR_EVENTS : creates
+    USERS ||--o{ CALENDAR_EVENT_ATTENDEES : invited_to
     
     AGENTS ||--o{ CALL_AGENTS : participates_in
     
     CONTACTS ||--o{ CONTACT_INTERACTIONS : has
     CONTACTS }o--|| STRIPE_CUSTOMERS : linked_to
+    CONTACTS ||--o{ CALENDAR_EVENTS : linked_to
+    CONTACTS ||--o{ CALENDAR_EVENT_ATTENDEES : invited_as
+    
+    CALENDAR_EVENTS ||--o{ CALENDAR_EVENT_ATTENDEES : has
     
     TENANTS {
         uuid id PK
@@ -131,6 +150,7 @@ erDiagram
         string phone
         string organization_email
         boolean is_active
+        boolean is_demo
         timestamp created_at
         timestamp updated_at
     }
@@ -269,6 +289,27 @@ erDiagram
         jsonb custom_fields
         string stripe_customer_id FK
         uuid created_by_user_id FK
+        string ethnic_orientation
+        string preferred_language
+        string secondary_language
+        string family_name
+        string relationship_to_deceased
+        string deceased_name
+        date date_of_death
+        date date_of_birth
+        string service_type
+        date service_date
+        string service_location
+        string plot_number
+        string plot_type
+        integer contract_amount_cents
+        integer amount_paid_cents
+        integer balance_due_cents
+        string payment_plan
+        string payment_status
+        text special_requests
+        string religious_preferences
+        boolean veteran_status
         timestamp created_at
         timestamp updated_at
     }
@@ -308,6 +349,44 @@ erDiagram
         jsonb variables
         boolean is_active
         uuid created_by_user_id FK
+    }
+    
+    CALENDAR_EVENTS {
+        uuid id PK
+        uuid tenant_id FK
+        uuid user_id FK
+        uuid contact_id FK
+        string title
+        text description
+        timestamp start_time
+        timestamp end_time
+        boolean all_day
+        string location
+        string event_type
+        string status
+        json event_metadata
+        timestamp created_at
+        timestamp updated_at
+    }
+    
+    CALENDAR_EVENT_ATTENDEES {
+        uuid id PK
+        uuid event_id FK
+        string attendee_type
+        uuid user_id FK
+        uuid contact_id FK
+        string external_email
+        string external_name
+        string attendee_name
+        string attendee_email
+        string invitation_status
+        string response_status
+        string invitation_token UK
+        timestamp invited_at
+        timestamp responded_at
+        text response_message
+        timestamp created_at
+        timestamp updated_at
     }
 ```
 
@@ -360,6 +439,7 @@ backend/
 │   │   ├── organizations.py            # Multi-tenant management
 │   │   ├── billing.py                  # Usage tracking & payments
 │   │   ├── crm.py                      # 📇 CRM endpoints & contact management
+│   │   ├── calendar.py                 # 📅 Calendar & event management
 │   │   ├── telephony.py                # Legacy telephony API
 │   │   ├── telephony_voice_agent.py    # 🎙️ Voice Agent WebSocket handler
 │   │   ├── telephony_websocket.py      # Legacy telephony WebSocket
@@ -372,9 +452,15 @@ backend/
 │   │   ├── voice/                      # 🎙️ Voice Processing Services
 │   │   │   ├── deepgram_voice_agent.py # Voice Agent WebSocket client
 │   │   │   ├── voice_agent_collaboration.py # Specialist agent integration
+│   │   │   ├── customer_extraction.py  # 🎯 Voice-to-CRM customer data extraction
+│   │   │   ├── scheduling_intent.py    # 🎯 Voice scheduling intent detection
+│   │   │   ├── voice_calendar.py       # 🎯 Voice-to-Calendar integration
 │   │   │   ├── deepgram_service.py     # Legacy STT service
 │   │   │   ├── elevenlabs_service.py   # Legacy TTS service
 │   │   │   └── audio_converter.py      # Audio format utilities
+│   │   │
+│   │   ├── calendar/                   # 📅 Calendar Services
+│   │   │   └── calendar_invitation_service.py # Event invitation system
 │   │   │
 │   │   ├── rag/                        # 📚 Retrieval Augmented Generation
 │   │   │   ├── ingestion_service.py    # Document processing
@@ -394,10 +480,12 @@ backend/
 │   │
 │   ├── models/                         # 🗄️ Database Models
 │   │   ├── models.py                   # Complete SQLAlchemy schema
+│   │   ├── calendar_models.py          # 📅 Calendar & attendee models
 │   │   └── stripe_models.py            # Stripe billing models
 │   │
 │   ├── schemas/                        # 📋 Pydantic Schemas
-│   │   └── schemas.py                  # API request/response models
+│   │   ├── schemas.py                  # API request/response models
+│   │   └── calendar_schemas.py         # 📅 Calendar API schemas
 │   │
 │   ├── core/                           # ⚡ Core Utilities
 │   │   ├── config.py                   # Configuration management
@@ -465,6 +553,8 @@ frontend/
 │   │   │   └── page.tsx               # Conversation list
 │   │   │
 │   │   ├── organizations/             # 🏢 Multi-Tenant Management
+│   │   │   ├── calendar/              # 📅 Calendar Management
+│   │   │   │   └── page.tsx           # Calendar main page
 │   │   │   ├── telephony/             # ☎️ Telephony Management
 │   │   │   │   ├── setup/page.tsx     # Telephony setup wizard
 │   │   │   │   ├── calls/             # 📞 Call Management
@@ -489,7 +579,13 @@ frontend/
 │   │   │   ├── admin/page.tsx         # Organization admin
 │   │   │   ├── members/page.tsx       # Member management
 │   │   │   ├── edit/page.tsx          # Organization settings
-│   │   │   └── new/page.tsx           # New organization
+│   │   │   ├── new/page.tsx           # New organization
+│   │   │   └── page.tsx               # 🎯 Organizations dashboard with Calendar section
+│   │   │
+│   │   ├── rsvp/                      # 📅 Calendar RSVP System
+│   │   │   └── [token]/               # Event RSVP pages
+│   │   │       ├── page.tsx           # RSVP landing page
+│   │   │       └── respond/page.tsx   # RSVP response form
 │   │   │
 │   │   ├── billing/page.tsx           # 💳 Billing & Usage
 │   │   ├── login/page.tsx             # 🔐 Authentication
@@ -507,7 +603,17 @@ frontend/
 │   │   │   ├── table.tsx              # Data tables
 │   │   │   ├── card.tsx               # Card layouts
 │   │   │   ├── tabs.tsx               # Tab navigation
+│   │   │   ├── command.tsx            # 🎯 Command palette UI
+│   │   │   ├── popover.tsx            # 🎯 Popover components
+│   │   │   ├── scroll-area.tsx        # 🎯 Scrollable areas
 │   │   │   └── use-toast.tsx          # Toast notifications
+│   │   │
+│   │   ├── calendar/                  # 📅 Calendar Components
+│   │   │   ├── CalendarView.tsx       # 🎯 Main calendar interface
+│   │   │   ├── EventForm.tsx          # 🎯 Event creation/editing
+│   │   │   ├── EventCard.tsx          # 🎯 Event display card
+│   │   │   ├── AttendeeManager.tsx    # 🎯 Basic attendee management
+│   │   │   └── AttendeeManagerEnhanced.tsx # 🎯 Advanced attendee selection
 │   │   │
 │   │   ├── telephony/                 # ☎️ Telephony Components
 │   │   │   ├── TelephonySystemInitializer.tsx
@@ -538,6 +644,7 @@ frontend/
 │   │   │   ├── AdvancedLanguageDetection.ts
 │   │   │   └── voiceConfig.ts
 │   │   │
+│   │   ├── calendar.ts                # 📅 Calendar API client
 │   │   ├── api.ts                     # 🌐 API client
 │   │   ├── conversations.ts           # 💬 Conversation API
 │   │   ├── telephony.ts               # ☎️ Telephony API
@@ -672,6 +779,211 @@ VOICE_AGENT_SPEAKING_MODEL=aura-2-thalia-en # TTS voice
 4. **Real-time conversation** with specialist agent collaboration
 5. **Call analytics** and transcript automatically generated
 
+## 📅 Calendar System
+
+### **Comprehensive Event Management**
+A fully-featured calendar system integrated into the platform, providing organizations with professional appointment scheduling, event management, and attendee coordination. The calendar system is designed specifically for organizations requiring sophisticated scheduling capabilities alongside their AI-powered communication services.
+
+### **Core Calendar Features**
+- **Multi-View Calendar**: Interactive month, week, and day views
+- **Event Management**: Create, edit, delete events with full details
+- **CRM Integration**: Link events directly to CRM contacts
+- **Multi-Type Attendees**: Internal users, CRM contacts, and external participants
+- **RSVP System**: Complete invitation and response tracking
+- **Real-time Updates**: Automatic refresh and synchronization
+- **Statistics Dashboard**: Event analytics and usage reports
+
+### **Advanced Attendee Management** 🎯
+Revolutionary attendee selection interface with three distinct types:
+
+#### **Internal Users (Team Members)**
+- **Dropdown Selection**: Multi-select dropdown with checkboxes
+- **Organization Filtering**: Only shows users from current organization
+- **Role Information**: Display names, emails, and roles
+- **Bulk Selection**: Select multiple team members simultaneously
+
+#### **CRM Contacts**
+- **Searchable Interface**: Real-time search with command palette UI
+- **Checkbox Selection**: Multi-select with visual feedback
+- **Contact Details**: Business names, contact names, and emails
+- **Smart Filtering**: Search across all contact fields
+
+#### **External Attendees**
+- **Email/Name Input**: Simple form for external participants
+- **Batch Addition**: Add multiple external attendees
+- **Validation**: Email format and required field validation
+- **Management**: Easy removal and editing of external attendees
+
+### **Event Types & Status Management**
+- **Event Types**: Appointment, Service, Meeting, Call, Reminder, Other
+- **Status Tracking**: Confirmed, Tentative, Cancelled
+- **All-Day Events**: Support for full-day events
+- **Location Tracking**: Optional location field for events
+- **Event Metadata**: Flexible JSON metadata storage
+
+### **RSVP & Invitation System**
+- **Invitation Tokens**: Unique tokens for secure RSVP links
+- **Response Tracking**: Accepted, Declined, Tentative, No Response
+- **Custom Messages**: Personalized invitation messages
+- **Email Integration**: Automated invitation sending
+- **Public RSVP Pages**: Accessible response forms for external attendees
+
+### **API Endpoints**
+- **`GET /api/calendar/events`** - List events with filtering and pagination
+- **`GET /api/calendar/events/range`** - Get events in specific date range
+- **`GET /api/calendar/events/{id}`** - Get single event details
+- **`POST /api/calendar/events`** - Create new event
+- **`PUT /api/calendar/events/{id}`** - Update existing event
+- **`DELETE /api/calendar/events/{id}`** - Delete event
+- **`GET /api/calendar/events/stats/summary`** - Calendar statistics
+- **`GET /api/calendar/events/{id}/attendees`** - List event attendees
+- **`POST /api/calendar/events/{id}/attendees`** - Add attendee to event
+- **`DELETE /api/calendar/events/{id}/attendees/{attendee_id}`** - Remove attendee
+- **`POST /api/calendar/events/{id}/send-invitations`** - Send invitations
+
+## 🎯 Voice-to-CRM-to-Calendar Integration
+
+### **Revolutionary AI-Powered Voice Automation** 
+The most advanced feature in Thanotopolis - a complete voice conversation automation system that transforms how cemetery and funeral homes handle customer calls. This system enables "talk-to-book" experiences where customers can call and have everything handled in one compassionate conversation.
+
+### **Core Concept**
+The AI phone agent acts as an intelligent intake system, leveraging the existing voice agent collaboration framework to:
+1. **Extract Customer Information** from natural conversation in real-time
+2. **Create CRM Contacts** automatically with cemetery-specific details  
+3. **Schedule Appointments** based on voiced preferences and real-time availability
+4. **Provide Confirmations** and maintain complete conversation documentation
+
+### **Technical Architecture - 3 Phase Implementation**
+
+#### **Phase 1: Customer Information Extraction** ✅ **COMPLETED**
+**File**: `app/services/voice/customer_extraction.py`
+- **CustomerData** dataclass with cemetery-specific fields
+- **CustomerExtractionService** with LLM-powered extraction
+- **Real-time Analysis**: Extracts data from conversation segments
+- **Progressive Building**: Accumulates customer information over conversation
+- **Contact Creation**: Automatic CRM contact creation when sufficient data available
+
+**Key Capabilities**:
+- Extract customer name, phone, email, family name automatically
+- Cemetery-specific: deceased name, relationship, service type, urgency
+- Confidence scoring and data validation
+- Phone/email normalization and duplicate prevention
+
+#### **Phase 2: Scheduling Intent Detection** ✅ **COMPLETED**
+**File**: `app/services/voice/scheduling_intent.py`
+- **SchedulingIntentService** with natural language processing
+- **Intent Detection**: Recognizes scheduling requests in conversation
+- **Preference Extraction**: Captures dates, times, service types, urgency
+- **Smart Analysis**: Understands context clues and family needs
+
+**Detection Patterns**:
+- "I need to schedule a service" → Direct scheduling intent
+- "When can I come in?" → Availability inquiry
+- "We were hoping for Friday" → Date preference
+- "This is urgent" → Priority escalation
+
+#### **Phase 3: Voice-Driven Appointment Booking** ✅ **COMPLETED**
+**File**: `app/services/voice/voice_calendar.py`
+- **VoiceCalendarService** with real-time availability checking
+- **Business Rules**: Office hours, service-specific requirements
+- **Slot Optimization**: Intelligent suggestions based on preferences
+- **Natural Language**: Voice-friendly availability responses
+
+**Booking Workflow**:
+1. Validate customer information completeness
+2. Check real-time calendar availability
+3. Offer 2-3 specific time slots via voice
+4. Handle customer selection and confirmation
+5. Create calendar event linked to CRM contact
+6. Generate confirmation number
+7. Send confirmation via preferred method
+
+### **Integration with Voice Agent**
+**File**: `app/api/telephony_voice_agent.py` (Enhanced)
+- **Real-time Processing**: Customer data extraction during conversation
+- **Session Management**: Enhanced session state with extraction context
+- **Contact Creation**: Automatic CRM contact creation from voice data
+- **Appointment Booking**: Seamless calendar integration during calls
+- **Conversation History**: Complete interaction logging
+
+### **Enhanced Session State**
+```python
+enhanced_session_info = {
+    'contact_id': str,              # CRM contact ID once created
+    'extracted_data': {},           # Accumulated customer information
+    'scheduling_state': {},         # Current scheduling workflow state
+    'conversation_history': [],     # Full conversation context
+    'intent_history': [],           # Detected intents over time
+    'data_confidence': {},          # Confidence levels for extracted data
+    'workflow_stage': str           # Current workflow stage
+}
+```
+
+### **Example Conversation Flow**
+
+```
+Customer: "Hi, I need to schedule a burial service for my mother who passed away yesterday."
+
+Voice Agent: [Extracts: contact_name="Mary Smith", deceased_name="John", relationship="spouse"]
+"I'm so sorry for your loss. I'd be happy to help you arrange a burial service for your mother. 
+Could you tell me your name and your mother's name?"
+
+Customer: "I'm Sarah Williams, and my mother was Elizabeth Williams."
+
+Voice Agent: [Updates extraction, creates CRM contact]
+"Thank you, Sarah. I understand this is a difficult time. For the burial service, 
+do you have any preferred dates? We typically recommend 3-5 days to allow family to gather."
+
+Customer: "We were hoping for this Friday or Saturday if possible."
+
+Voice Agent: [Detects scheduling intent, checks calendar availability]
+"Let me check our availability for burial services this Friday and Saturday... 
+I have Friday at 10 AM or 2 PM available, and Saturday at 11 AM or 3 PM. 
+Which would work best for your family?"
+
+Customer: "Saturday at 11 AM would be perfect."
+
+Voice Agent: [Books appointment, creates contact, links everything]
+"Excellent. I'm booking a burial service for Elizabeth Williams on Saturday at 11 AM. 
+Can I get your phone number for confirmations?"
+
+Customer: "It's 555-123-4567."
+
+Voice Agent: [Updates contact with phone]
+"Thank you. I've scheduled your service and you'll receive a confirmation shortly. 
+Your reference number is BUR-001234. We'll call you tomorrow to discuss details. 
+Is there anything else I can help you with today?"
+
+Backend Processing:
+✅ Contact Created: Sarah Williams (daughter of Elizabeth Williams)
+✅ Calendar Event: "Burial Service - Elizabeth Williams" Saturday 11 AM
+✅ CRM Interaction: Full conversation logged
+✅ Confirmation: SMS sent to 555-123-4567
+✅ Follow-up: Scheduled call for next day
+```
+
+### **Benefits & Impact**
+
+#### **Operational Benefits**
+- **24/7 Scheduling**: Families can call anytime, even outside business hours
+- **Zero Manual Entry**: Information flows automatically from voice to CRM
+- **Real-time Coordination**: Staff see appointments and customer data immediately
+- **Complete Documentation**: Full conversation history linked to contacts and events
+- **Reduced Administrative Load**: Automatic data entry and appointment booking
+
+#### **Customer Experience Benefits**
+- **One-Call Resolution**: Complete intake and scheduling in single conversation
+- **Compassionate Efficiency**: Professional handling without multiple transfers
+- **Immediate Confirmation**: Instant booking confirmation reduces anxiety
+- **Reduced Repetition**: Information captured once, available to all staff
+- **Flexible Scheduling**: Real-time availability checking
+
+#### **Technical Benefits**
+- **Cemetery-Optimized**: Fields and workflows designed for funeral homes
+- **Scalable Architecture**: Handles multiple concurrent voice sessions
+- **Error Resilient**: Comprehensive fallback mechanisms
+- **Performance Optimized**: Async processing with minimal latency
+
 ## 💬 Web Chat Application
 
 ### **Multi-Agent Chat Interface**
@@ -783,7 +1095,44 @@ A fully-featured CRM system integrated into the platform, providing organization
 - **CSV Import**: Bulk contact import with intelligent field mapping and validation
 - **Custom Fields**: Organization-specific dynamic fields with validation rules
 - **Billing Integration**: Direct link to Stripe subscription and payment status
+- **Cemetery-Specific Fields**: Enhanced with specialized fields for funeral home operations
+- **Calendar Integration**: Direct linking between contacts and calendar events
 - **Admin-Only Access**: Secure access restricted to admin and super_admin roles
+
+### **Cemetery CRM Enhancement** 🎯
+Specialized fields designed for cemetery and funeral home operations:
+
+#### **Cultural & Language Fields**
+- **Ethnic Orientation**: Cultural background for service customization
+- **Preferred Language**: Primary language for communication
+- **Secondary Language**: Additional language support
+- **Religious Preferences**: Faith-based service requirements
+
+#### **Family & Deceased Information**
+- **Family Name**: Family surname for service coordination
+- **Relationship to Deceased**: Caller's relationship (spouse, child, parent, etc.)
+- **Deceased Name**: Full name of the deceased person
+- **Date of Death**: When the person passed away
+- **Date of Birth**: Birth date for service planning
+
+#### **Service Details**
+- **Service Type**: Burial, cremation, memorial, consultation
+- **Service Date**: Scheduled service date
+- **Service Location**: Venue or chapel information
+- **Plot Number**: Cemetery plot assignment
+- **Plot Type**: Type of burial plot
+
+#### **Financial Tracking**
+- **Contract Amount**: Total service contract value (stored in cents)
+- **Amount Paid**: Payments received (stored in cents)
+- **Balance Due**: Outstanding balance (stored in cents)
+- **Payment Plan**: Payment schedule details
+- **Payment Status**: Current payment status
+
+#### **Special Considerations**
+- **Special Requests**: Flowers, music, special arrangements
+- **Veteran Status**: Military service recognition
+- **Custom Requirements**: Additional family-specific needs
 
 ### **Contact Management System**
 - **Business Information**: Company name, address, website, industry details
@@ -849,7 +1198,7 @@ business_name,contact_name,contact_email,phone,city,state,status,notes
 
 ### **Technical Implementation**
 #### **Database Schema**
-- **contacts**: Core contact information with tenant isolation
+- **contacts**: Core contact information with tenant isolation and cemetery fields
 - **contact_interactions**: Complete interaction history
 - **custom_fields**: Dynamic field definitions per organization
 - **email_templates**: Reusable email templates with variables
@@ -904,6 +1253,7 @@ SMTP_FROM_NAME=Your Organization Name
 - **`/api/organizations/*`** - Multi-tenant management
 - **`/api/billing/*`** - Usage tracking & payments
 - **`/api/crm/*`** - Contact management & CRM operations
+- **`/api/calendar/*`** - Calendar & event management 📅
 
 ### **Real-time WebSocket Endpoints**
 - **`/api/ws/conversation/{id}`** - Chat conversations
@@ -931,6 +1281,19 @@ SMTP_FROM_NAME=Your Organization Name
 - **`POST /api/crm/custom-fields`** - Create custom field
 - **`GET /api/crm/email-templates`** - List email templates
 - **`POST /api/crm/email-templates`** - Create email template
+
+### **Calendar APIs** 📅
+- **`GET /api/calendar/events`** - List events with filtering and pagination
+- **`GET /api/calendar/events/range`** - Get events in specific date range
+- **`GET /api/calendar/events/{id}`** - Get single event details
+- **`POST /api/calendar/events`** - Create new event
+- **`PUT /api/calendar/events/{id}`** - Update existing event
+- **`DELETE /api/calendar/events/{id}`** - Delete event
+- **`GET /api/calendar/events/stats/summary`** - Calendar statistics
+- **`GET /api/calendar/events/{id}/attendees`** - List event attendees
+- **`POST /api/calendar/events/{id}/attendees`** - Add attendee to event
+- **`DELETE /api/calendar/events/{id}/attendees/{attendee_id}`** - Remove attendee
+- **`POST /api/calendar/events/{id}/send-invitations`** - Send invitations
 
 ## 🤖 AI Agent Ecosystem
 
@@ -1022,12 +1385,14 @@ npm run test:integration
 - **Agent Analytics**: Usage patterns, collaboration success rates
 - **Database Performance**: Query optimization, connection pooling
 - **Real-time Monitoring**: Live call status, WebSocket connections
+- **Calendar Analytics**: Event creation patterns, attendee statistics
 
 ### **Usage Tracking**
 - **Word-Based Billing**: STT/TTS word counts for accurate pricing
 - **Call Duration**: Precise timing for telephony costs
 - **Agent Usage**: Token consumption and collaboration metrics
 - **Multi-tenant Analytics**: Organization-specific usage patterns
+- **Calendar Usage**: Event scheduling patterns and trends
 
 ### **Logging & Alerting**
 - **Structured Logging**: Correlation IDs for request tracing
@@ -1127,13 +1492,14 @@ This project is proprietary software owned by **Cyberiad.ai**. All rights reserv
 **Cyberiad.ai** develops advanced agentic AI frameworks that enable organizations to deploy sophisticated AI assistants across telephony and web chat channels. Our platforms combine voice technology, multi-agent collaboration, and enterprise-grade scalability to deliver enhanced customer experiences.
 
 **Key Features:**
-- **Voice Agent Technology**: Deepgram Voice Agent integration
+- **Voice Agent Technology**: Deepgram Voice Agent integration with revolutionary automation
 - **Multi-Agent Collaboration**: Consent-based specialist agent collaboration
 - **Cultural Sensitivity**: 17 culturally-aware specialist agents
+- **Voice-to-CRM-to-Calendar**: Revolutionary conversation automation system
 - **Enterprise Architecture**: Multi-tenant, scalable, secure platform
 
 ---
 
 **Built with ❤️ by the Cyberiad.ai team**
 
-*Advanced telephony and web chat AI • Enhanced customer service • Intelligent conversational AI*
+*Advanced telephony and web chat AI • Enhanced customer service • Intelligent conversational AI • Revolutionary voice automation*

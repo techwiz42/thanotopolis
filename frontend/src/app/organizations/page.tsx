@@ -33,7 +33,7 @@ export default function OrganizationsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-semibold mb-3">Conversations</h3>
             <p className="text-gray-600 mb-4">
@@ -70,6 +70,19 @@ export default function OrganizationsPage() {
               className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
             >
               Open CRM
+            </button>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-lg font-semibold mb-3">Calendar</h3>
+            <p className="text-gray-600 mb-4">
+              Schedule appointments and manage events
+            </p>
+            <button 
+              onClick={() => router.push('/organizations/calendar')}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Open Calendar
             </button>
           </div>
         </div>

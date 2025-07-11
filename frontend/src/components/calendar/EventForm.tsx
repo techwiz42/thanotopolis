@@ -17,7 +17,7 @@ import {
   CalendarEventUpdate,
   CalendarEventAttendee
 } from '@/services/calendar';
-import { AttendeeManager } from './AttendeeManager';
+import { AttendeeManagerEnhanced } from './AttendeeManagerEnhanced';
 
 interface Contact {
   id: string;
@@ -521,7 +521,7 @@ export function EventForm({
       <Separator />
 
       {/* Attendee Management */}
-      <AttendeeManager 
+      <AttendeeManagerEnhanced 
         eventId={currentEventId}
         isEventCreated={!!currentEventId}
         onAttendeesChange={setAttendees}
