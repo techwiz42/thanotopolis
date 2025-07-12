@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class BillingAutomationService:
     """Service for automated monthly billing of usage charges"""
     
-    async def process_monthly_billing(self, target_month: datetime = None) -> Dict[str, Any]:
+    async def process_monthly_billing(self, target_month: datetime = None, db_session: AsyncSession = None) -> Dict[str, Any]:
         """Process monthly billing for all active organizations"""
         
         if target_month is None:
@@ -56,7 +56,8 @@ class BillingAutomationService:
             results["errors"].append("Billing automation disabled - Stripe service not configured")
             return results
         
-        async with AsyncSessionLocal() as db:
+        # Process billing with provided session or create new one
+        async def _process_billing_with_db(db: AsyncSession):
             # Get all active organizations with subscriptions (excluding demo accounts)
             orgs_result = await db.execute(
                 select(Tenant)
@@ -118,6 +119,13 @@ class BillingAutomationService:
                     results["failed_invoices"] += 1
                     results["errors"].append(f"Error for {org.name}: {str(e)}")
         
+        # Use provided session or create new one
+        if db_session:
+            await _process_billing_with_db(db_session)
+        else:
+            async with AsyncSessionLocal() as db:
+                await _process_billing_with_db(db)
+        
         logger.info(f"Monthly billing complete: {results}")
         return results
     
@@ -168,6 +176,6 @@ billing_automation = BillingAutomationService()
 
 
 # Utility function to manually trigger billing
-async def trigger_manual_billing(target_month: datetime = None):
+async def trigger_manual_billing(target_month: datetime = None, db_session: AsyncSession = None):
     """Manually trigger billing for a specific month (for testing/admin use)"""
-    return await billing_automation.process_monthly_billing(target_month)
+    return await billing_automation.process_monthly_billing(target_month, db_session)

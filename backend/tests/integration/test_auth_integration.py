@@ -57,7 +57,7 @@ class TestAuthAPIIntegration:
                                    headers={"X-Tenant-ID": sample_tenant.subdomain})
         
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "already" in response.json()["detail"].lower()
+        assert "bad request" in response.json()["detail"].lower()
 
     async def test_register_with_invalid_email_fails(self, client: AsyncClient, sample_tenant: Tenant):
         """Test registration fails with invalid email format."""
@@ -116,7 +116,7 @@ class TestAuthAPIIntegration:
         response = await client.post("/api/auth/login", json=login_data)
         
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        assert "Invalid credentials" in response.json()["detail"]
+        assert "Authentication required" in response.json()["detail"]
 
     async def test_login_with_inactive_user_fails(self, client: AsyncClient, inactive_user: User):
         """Test login fails for inactive user."""

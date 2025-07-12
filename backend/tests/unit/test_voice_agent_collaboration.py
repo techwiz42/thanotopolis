@@ -555,13 +555,13 @@ class TestVoiceAgentCollaborationService:
         )
         self.service.active_sessions["test-session"] = session
         
-        with patch.object(self.service, '_cleanup_session') as mock_cleanup:
+        with patch.object(self.service, '_delayed_cleanup') as mock_delayed_cleanup:
             await self.service._decline_collaboration(session)
             
             assert session.state == CollaborationState.COMPLETED
             mock_timeout_task.cancel.assert_called_once()
             self.voice_session.agent.inject_message.assert_called_once()
-            mock_cleanup.assert_called_once_with("test-session")
+            mock_delayed_cleanup.assert_called_once_with("test-session", 5)
             
             # Check decline message
             decline_call = self.voice_session.agent.inject_message.call_args[0][0]

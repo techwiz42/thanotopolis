@@ -643,7 +643,7 @@ Important:
         
         # Handler for conversation text
         async def handle_conversation_text(event: Dict[str, Any]):
-            """Save conversation messages as CallMessage objects"""
+            """Save conversation messages as CallMessage objects with security filtering"""
             logger.info(f"🔍 handle_conversation_text called with event: {event}")
             
             # Try both 'content' and 'text' fields (different events may use different field names)
@@ -655,10 +655,51 @@ Important:
             if not text:
                 logger.warning(f"🔍 Empty text in conversation event, skipping save")
                 return
+            
+            # Apply security filtering based on role
+            filtered_text = text
+            security_metadata = {}
+            
+            try:
+                from app.security.content_security_pipeline import security_pipeline
+                
+                context = {
+                    "conversation_type": "telephony",
+                    "session_id": session_id,
+                    "call_id": call_id
+                }
+                
+                is_user = role.lower() in ["user", "human", "customer", "caller"]
+                is_agent = role.lower() in ["assistant", "agent", "ai"]
+                
+                if is_user:
+                    # Filter user input
+                    filtered_text, security_metadata = await security_pipeline.filter_user_input(
+                        text, context
+                    )
+                    
+                    # Log security events if any
+                    if security_metadata.get("security_events"):
+                        logger.warning(f"🔒 Security events for telephony user input: {security_metadata['security_events']}")
+                        
+                elif is_agent:
+                    # Filter AI response
+                    filtered_text, security_metadata = await security_pipeline.filter_ai_response(
+                        text, context
+                    )
+                    
+                    # Log if response was filtered
+                    if security_metadata.get("filtered"):
+                        logger.warning(f"🔒 AI response filtered for security: {security_metadata.get('reason', 'unknown')}")
+                
+            except Exception as e:
+                logger.error(f"Security filtering error: {e}")
+                # Continue with original text if filtering fails
+                filtered_text = text
 
-            # Handle collaboration workflow for user messages
+            # Handle collaboration workflow for user messages (use original text for consent detection)
             is_user = role.lower() in ["user", "human", "customer", "caller"]
-            if is_user and text.strip():
+            if is_user and filtered_text.strip():
                 try:
                     # Check if user is responding to a collaboration offer
                     session_info = self.call_sessions.get(session_id)
@@ -760,7 +801,7 @@ Important:
                 
             call_message = CallMessage(
                 call_id=phone_call.id,
-                content=text,
+                content=filtered_text,  # Use filtered content
                 sender={
                     "identifier": session_info["from_number"] if is_user else "voice_agent",
                     "type": "customer" if is_user else "agent",
@@ -772,7 +813,9 @@ Important:
                 message_metadata={
                     "role": role,
                     "session_id": session_id,
-                    "call_sid": session_info["call_sid"]
+                    "call_sid": session_info["call_sid"],
+                    "security_metadata": security_metadata,  # Include security info
+                    "original_length": len(text) if text != filtered_text else None
                 }
             )
             
@@ -781,11 +824,12 @@ Important:
                 conversation_id=conversation.id,
                 message_type="text",
                 agent_type="voice_agent" if not is_user else None,
-                content=text,
+                content=filtered_text,  # Use filtered content
                 message_metadata={
                     "role": role,
                     "call_sid": session_info["call_sid"],
-                    "session_id": session_id
+                    "session_id": session_id,
+                    "security_metadata": security_metadata  # Include security info
                 }
             )
             

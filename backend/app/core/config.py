@@ -1,5 +1,6 @@
 import os
 import json
+import secrets
 import logging
 from typing import List, Optional
 from pydantic_settings import BaseSettings
@@ -24,10 +25,37 @@ class Settings(BaseSettings):
     MAX_CONTEXT_MESSAGES: int = 25
 
     # Security
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key")
+    JWT_SECRET_KEY: str = None
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._validate_jwt_secret()
+    
+    def _validate_jwt_secret(self):
+        """Validate JWT secret key for security"""
+        jwt_key = os.getenv("JWT_SECRET_KEY")
+        
+        # Check for insecure default values
+        if not jwt_key or jwt_key == "your-secret-key" or len(jwt_key) < 32:
+            # Check if we're in production
+            environment = os.getenv("ENVIRONMENT", "development")
+            if environment == "production":
+                raise ValueError(
+                    "CRITICAL SECURITY ERROR: JWT_SECRET_KEY must be set to a secure random value "
+                    "of at least 32 characters in production. Set environment variable JWT_SECRET_KEY."
+                )
+            else:
+                # Generate secure key for development
+                jwt_key = secrets.token_urlsafe(32)
+                logger.warning(
+                    f"SECURITY WARNING: Using auto-generated JWT key for development. "
+                    f"Set JWT_SECRET_KEY environment variable. Generated key: {jwt_key}"
+                )
+        
+        self.JWT_SECRET_KEY = jwt_key
     
     FRONTEND_URL: Optional[str] = os.getenv("FRONTEND_URL")
 

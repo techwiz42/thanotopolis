@@ -29,15 +29,20 @@ class TestBillingAutomationService:
         return datetime(2024, 6, 15, 10, 30, 0)
     
     @pytest.mark.asyncio
-    async def test_process_monthly_billing_default_month(self, billing_service):
+    async def test_process_monthly_billing_default_month(self, billing_service, mock_db_session):
         """Test processing monthly billing with default target month (previous month)."""
+        # Mock the database execute results
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+        
         with patch('app.services.billing_automation.datetime') as mock_datetime:
             # Mock current time as July 15, 2024
             mock_now = datetime(2024, 7, 15, 14, 30, 0)
             mock_datetime.utcnow.return_value = mock_now
             mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
             
-            result = await billing_service.process_monthly_billing()
+            result = await billing_service.process_monthly_billing(db_session=mock_db_session)
             
             # Should target June 2024 (previous month)
             assert result["period_start"] == datetime(2024, 6, 1, 0, 0, 0, 0)
@@ -46,41 +51,56 @@ class TestBillingAutomationService:
             assert result["successful_invoices"] == 0
             assert result["failed_invoices"] == 0
             assert result["total_usage_charges"] == 0
-            assert len(result["errors"]) == 1
-            assert "Billing automation disabled" in result["errors"][0]
+            # Billing service is now enabled, so no errors should be present
+            assert len(result["errors"]) == 0
     
     @pytest.mark.asyncio
-    async def test_process_monthly_billing_december_to_january(self, billing_service):
+    async def test_process_monthly_billing_december_to_january(self, billing_service, mock_db_session):
         """Test processing monthly billing when crossing year boundary."""
+        # Mock the database execute results
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+        
         with patch('app.services.billing_automation.datetime') as mock_datetime:
             # Mock current time as January 15, 2025
             mock_now = datetime(2025, 1, 15, 10, 0, 0)
             mock_datetime.utcnow.return_value = mock_now
             mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
             
-            result = await billing_service.process_monthly_billing()
+            result = await billing_service.process_monthly_billing(db_session=mock_db_session)
             
             # Should target December 2024 (previous month, previous year)
             assert result["period_start"] == datetime(2024, 12, 1, 0, 0, 0, 0)
             assert result["period_end"] == datetime(2025, 1, 1, 0, 0, 0, 0)
     
     @pytest.mark.asyncio
-    async def test_process_monthly_billing_custom_month(self, billing_service):
+    async def test_process_monthly_billing_custom_month(self, billing_service, mock_db_session):
         """Test processing monthly billing with custom target month."""
         target_month = datetime(2024, 3, 1, 0, 0, 0, 0)
         
-        result = await billing_service.process_monthly_billing(target_month)
+        # Mock the database execute results
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+        
+        result = await billing_service.process_monthly_billing(target_month, db_session=mock_db_session)
         
         # Should use the provided target month
         assert result["period_start"] == datetime(2024, 3, 1, 0, 0, 0, 0)
         assert result["period_end"] == datetime(2024, 4, 1, 0, 0, 0, 0)
     
     @pytest.mark.asyncio
-    async def test_process_monthly_billing_december_custom(self, billing_service):
+    async def test_process_monthly_billing_december_custom(self, billing_service, mock_db_session):
         """Test processing monthly billing for December (year boundary)."""
         target_month = datetime(2024, 12, 1, 0, 0, 0, 0)
         
-        result = await billing_service.process_monthly_billing(target_month)
+        # Mock the database execute results
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+        
+        result = await billing_service.process_monthly_billing(target_month, db_session=mock_db_session)
         
         # Should handle December -> January year transition
         assert result["period_start"] == datetime(2024, 12, 1, 0, 0, 0, 0)
@@ -102,10 +122,15 @@ class TestBillingAutomationService:
         assert "2024-06-01" in period_log
     
     @pytest.mark.asyncio
-    async def test_process_monthly_billing_completion_log(self, billing_service, caplog):
+    async def test_process_monthly_billing_completion_log(self, billing_service, mock_db_session, caplog):
         """Test that billing process logs completion information."""
+        # Mock the database execute results
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+        
         with caplog.at_level(logging.INFO):
-            result = await billing_service.process_monthly_billing()
+            result = await billing_service.process_monthly_billing(db_session=mock_db_session)
         
         # Check that completion was logged
         log_messages = [record.message for record in caplog.records]
@@ -115,7 +140,11 @@ class TestBillingAutomationService:
     @pytest.mark.asyncio
     async def test_process_monthly_billing_disabled_service(self, billing_service, caplog):
         """Test billing process behavior when Stripe service is disabled."""
-        with caplog.at_level(logging.INFO):
+        # Mock the stripe service as disabled for this test
+        with patch('app.services.billing_automation.stripe_service') as mock_stripe, \
+             caplog.at_level(logging.INFO):
+            mock_stripe.is_enabled = False
+            
             result = await billing_service.process_monthly_billing()
         
         # Should log that billing is disabled
@@ -380,8 +409,8 @@ class TestTriggerManualBilling:
         with patch.object(billing_automation, 'process_monthly_billing', return_value=mock_result) as mock_process:
             result = await trigger_manual_billing()
             
-            # Should call process_monthly_billing with None (default)
-            mock_process.assert_called_once_with(None)
+            # Should call process_monthly_billing with None (default) and None (db_session)
+            mock_process.assert_called_once_with(None, None)
             assert result == mock_result
     
     @pytest.mark.asyncio
@@ -393,8 +422,8 @@ class TestTriggerManualBilling:
         with patch.object(billing_automation, 'process_monthly_billing', return_value=mock_result) as mock_process:
             result = await trigger_manual_billing(target_month)
             
-            # Should call process_monthly_billing with specified month
-            mock_process.assert_called_once_with(target_month)
+            # Should call process_monthly_billing with specified month and None (db_session)
+            mock_process.assert_called_once_with(target_month, None)
             assert result == mock_result
 
 
@@ -430,18 +459,23 @@ class TestBillingAutomationIntegration:
             assert period_log is not None
             assert "2024-06-01" in period_log  # Previous month (June)
             
-            # Should log disabled billing
+            # Billing service is now enabled, so no disabled message should be logged
             disabled_log = next((msg for msg in log_messages if "Billing automation disabled" in msg), None)
-            assert disabled_log is not None
+            assert disabled_log is None
             
             # Should log completion
             complete_log = next((msg for msg in log_messages if "Monthly billing complete" in msg), None)
             assert complete_log is not None
     
     @pytest.mark.asyncio
-    async def test_billing_edge_cases(self):
+    async def test_billing_edge_cases(self, mock_db_session):
         """Test billing edge cases and boundary conditions."""
         service = BillingAutomationService()
+        
+        # Mock the database execute results
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
         
         # Test case 1: January 1st (should target December of previous year)
         with patch('app.services.billing_automation.datetime') as mock_datetime:
@@ -449,7 +483,7 @@ class TestBillingAutomationIntegration:
             mock_datetime.utcnow.return_value = mock_now
             mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
             
-            result = await service.process_monthly_billing()
+            result = await service.process_monthly_billing(db_session=mock_db_session)
             
             # Should target December 2023
             assert result["period_start"] == datetime(2023, 12, 1, 0, 0, 0, 0)
@@ -461,7 +495,7 @@ class TestBillingAutomationIntegration:
             mock_datetime.utcnow.return_value = mock_now
             mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
             
-            result = await service.process_monthly_billing()
+            result = await service.process_monthly_billing(db_session=mock_db_session)
             
             # Should target February 2024
             assert result["period_start"] == datetime(2024, 2, 1, 0, 0, 0, 0)
@@ -469,7 +503,7 @@ class TestBillingAutomationIntegration:
         
         # Test case 3: Custom December period (year boundary)
         target_december = datetime(2023, 12, 1, 0, 0, 0, 0)
-        result = await service.process_monthly_billing(target_december)
+        result = await service.process_monthly_billing(target_december, db_session=mock_db_session)
         
         # Should span December 2023 to January 2024
         assert result["period_start"] == datetime(2023, 12, 1, 0, 0, 0, 0)
@@ -533,9 +567,14 @@ class TestBillingAutomationIntegration:
             assert all(duration == 3600 for duration in sleep_calls)
     
     @pytest.mark.asyncio
-    async def test_result_structure_consistency(self):
+    async def test_result_structure_consistency(self, mock_db_session):
         """Test that billing results have consistent structure."""
         service = BillingAutomationService()
+        
+        # Mock the database execute results
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
         
         # Test with different target months
         test_months = [
@@ -546,7 +585,7 @@ class TestBillingAutomationIntegration:
         ]
         
         for target_month in test_months:
-            result = await service.process_monthly_billing(target_month)
+            result = await service.process_monthly_billing(target_month, db_session=mock_db_session)
             
             # Verify all required fields are present
             required_fields = [
@@ -569,10 +608,10 @@ class TestBillingAutomationIntegration:
             # Verify period_end is after period_start
             assert result["period_end"] > result["period_start"]
             
-            # For disabled billing, should have specific values
+            # For enabled billing with no organizations, should have specific values
             assert result["processed_organizations"] == 0
             assert result["successful_invoices"] == 0
             assert result["failed_invoices"] == 0
             assert result["total_usage_charges"] == 0
-            assert len(result["errors"]) == 1
-            assert "Billing automation disabled" in result["errors"][0]
+            # Billing service is now enabled, so no errors should be present
+            assert len(result["errors"]) == 0

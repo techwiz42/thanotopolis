@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import RequestValidationError, HTTPException
 from contextlib import asynccontextmanager
 import uvicorn
 import time
@@ -27,6 +27,13 @@ from app.api.crm import router as crm_router
 # Calendar router
 from app.api.calendar import router as calendar_router
 from app.core.config import settings
+from app.security.security_middleware import (
+    SecurityHeadersMiddleware,
+    RequestSizeLimitMiddleware, 
+    SecurityAuditMiddleware,
+    RateLimitMiddleware
+)
+from app.security.error_handlers import error_handler
 
 # Set up logging
 logging.basicConfig(
@@ -50,6 +57,28 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("🚀 Starting up Thanotopolis API with Telephony Support...")
+    
+    # Validate environment variables first
+    try:
+        from app.security.env_validator import env_validator
+        validation_results = env_validator.validate_all_environment_vars()
+        
+        if validation_results["status"] == "critical":
+            logger.error("❌ CRITICAL environment validation issues found!")
+            logger.error("Fix these issues before starting the application:")
+            for rec in validation_results.get("recommendations", []):
+                logger.error(f"  - {rec}")
+            raise RuntimeError("Critical environment validation failures")
+        elif validation_results["status"] == "warning":
+            logger.warning("⚠️  Environment validation warnings:")
+            for rec in validation_results.get("recommendations", []):
+                logger.warning(f"  - {rec}")
+        else:
+            logger.info("✅ Environment variables validated successfully")
+    except Exception as e:
+        logger.error(f"❌ Environment validation failed: {e}")
+        raise
+    
     try:
         await init_db()
         logger.info("✅ Database initialized successfully")
@@ -152,6 +181,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Security middleware (order matters - add these first)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware, max_size=10 * 1024 * 1024)  # 10MB limit
+app.add_middleware(SecurityAuditMiddleware)
+app.add_middleware(RateLimitMiddleware, requests_per_minute=120)  # 120 requests per minute per IP
+
 # CORS middleware
 cors_origins = getattr(settings, 'CORS_ORIGINS', ["http://localhost:3000"])
 logger.info(f"🌐 CORS origins: {cors_origins}")
@@ -203,65 +238,26 @@ async def log_requests(request: Request, call_next):
         logger.error(f"   Traceback: {traceback.format_exc()}")
         raise
 
-# Exception handlers
+# Secure exception handlers
 @app.exception_handler(404)
-async def not_found_handler(request: Request, exc):
-    logger.warning(f"🔍 404 Not Found: {request.method} {request.url.path}")
-    
-    # Check if this is a custom HTTP exception with a detail
-    if hasattr(exc, "detail"):
-        return JSONResponse(
-            status_code=404,
-            content={"detail": str(exc.detail)}
-        )
-    
-    # Pattern match for user endpoints
-    if "/api/users/" in request.url.path:
-        return JSONResponse(
-            status_code=404,
-            content={"detail": "User not found"}
-        )
-    
-    # Default response for path not found
-    return JSONResponse(
-        status_code=404,
-        content={
-            "detail": f"Path {request.url.path} not found",
-            "method": request.method,
-            "available_endpoints": {
-                "health": "/health",
-                "docs": "/docs",
-                "api_docs": "/api/docs",
-                "auth": "/api/auth",
-                "conversations": "/api/conversations",
-                "telephony": "/api/telephony"
-            }
-        }
-    )
+async def secure_not_found_handler(request: Request, exc):
+    return await error_handler.handle_not_found(request, exc)
 
-@app.exception_handler(500)
-async def internal_error_handler(request: Request, exc):
-    logger.error(f"💥 500 Internal Server Error: {request.method} {request.url.path}")
-    logger.error(f"   Exception: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "Internal server error",
-            "type": "internal_error"
-        }
-    )
+@app.exception_handler(500) 
+async def secure_internal_error_handler(request: Request, exc):
+    return await error_handler.handle_internal_error(request, exc)
+
+@app.exception_handler(HTTPException)
+async def secure_http_exception_handler(request: Request, exc: HTTPException):
+    return await error_handler.handle_http_exception(request, exc)
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning(f"⚠️  Validation Error: {request.method} {request.url.path}")
-    logger.warning(f"   Errors: {exc.errors()}")
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": "Validation error",
-            "errors": exc.errors()
-        }
-    )
+async def secure_validation_exception_handler(request: Request, exc: RequestValidationError):
+    return await error_handler.handle_validation_error(request, exc)
+
+@app.exception_handler(Exception)
+async def secure_general_exception_handler(request: Request, exc: Exception):
+    return await error_handler.handle_internal_error(request, exc)
 
 # Common static file handlers
 @app.get("/favicon.ico")

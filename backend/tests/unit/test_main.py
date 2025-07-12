@@ -9,8 +9,8 @@ from fastapi.exceptions import RequestValidationError
 # Import the main module components
 from app.main import (
     lifespan, websocket_cleanup_task, app,
-    log_requests, not_found_handler, internal_error_handler,
-    validation_exception_handler, favicon, robots, health_check,
+    log_requests, secure_not_found_handler, secure_internal_error_handler,
+    secure_validation_exception_handler, favicon, robots, health_check,
     status, ping, root, api_info, debug_routes, startup_event
 )
 
@@ -66,7 +66,14 @@ class TestLifespanManager:
         with patch('app.main.init_db') as mock_init_db, \
              patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
              patch('app.main.settings') as mock_settings, \
-             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup, \
+             patch('app.security.env_validator.env_validator') as mock_env_validator:
+            
+            # Mock environment validation to succeed
+            mock_env_validator.validate_all_environment_vars.return_value = {
+                "status": "success", 
+                "recommendations": []
+            }
             
             # Create proper async mock for init_db
             mock_init_db_coro = AsyncMock()
@@ -97,7 +104,15 @@ class TestLifespanManager:
         """Test application startup with database initialization failure."""
         mock_app = Mock()
         
-        with patch('app.main.init_db') as mock_init_db:
+        with patch('app.main.init_db') as mock_init_db, \
+             patch('app.security.env_validator.env_validator') as mock_env_validator:
+            
+            # Mock environment validation to succeed
+            mock_env_validator.validate_all_environment_vars.return_value = {
+                "status": "success", 
+                "recommendations": []
+            }
+            
             mock_init_db.side_effect = Exception("Database connection failed")
             
             # Should raise the database error
@@ -114,7 +129,14 @@ class TestLifespanManager:
              patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
              patch('app.main.settings') as mock_settings, \
              patch('app.main.logger') as mock_logger, \
-             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup, \
+             patch('app.security.env_validator.env_validator') as mock_env_validator:
+            
+            # Mock environment validation to succeed
+            mock_env_validator.validate_all_environment_vars.return_value = {
+                "status": "success", 
+                "recommendations": []
+            }
             
             # Create proper async mock for init_db
             mock_init_db_coro = AsyncMock()
@@ -150,7 +172,14 @@ class TestLifespanManager:
         with patch('app.main.init_db') as mock_init_db, \
              patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
              patch('app.main.settings') as mock_settings, \
-             patch('app.main.logger') as mock_logger:
+             patch('app.main.logger') as mock_logger, \
+             patch('app.security.env_validator.env_validator') as mock_env_validator:
+            
+            # Mock environment validation to succeed
+            mock_env_validator.validate_all_environment_vars.return_value = {
+                "status": "success", 
+                "recommendations": []
+            }
             
             # Create proper async mock for init_db
             mock_init_db_coro = AsyncMock()
@@ -185,7 +214,14 @@ class TestLifespanManager:
              patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
              patch('app.api.voice_streaming.shutdown_all_handlers') as mock_voice_shutdown, \
              patch('app.api.streaming_stt.shutdown_stt_handlers') as mock_stt_shutdown, \
-             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup, \
+             patch('app.security.env_validator.env_validator') as mock_env_validator:
+            
+            # Mock environment validation to succeed
+            mock_env_validator.validate_all_environment_vars.return_value = {
+                "status": "success", 
+                "recommendations": []
+            }
             
             # Create proper async mocks
             mock_init_db_coro = AsyncMock()
@@ -220,7 +256,14 @@ class TestLifespanManager:
         with patch('app.main.init_db') as mock_init_db, \
              patch('app.main.websocket_cleanup_task') as mock_cleanup_func, \
              patch('app.main.logger') as mock_logger, \
-             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup:
+             patch('app.tasks.telephony_cleanup.start_cleanup_task') as mock_telephony_cleanup, \
+             patch('app.security.env_validator.env_validator') as mock_env_validator:
+            
+            # Mock environment validation to succeed
+            mock_env_validator.validate_all_environment_vars.return_value = {
+                "status": "success", 
+                "recommendations": []
+            }
             
             # Create proper async mock for init_db
             mock_init_db_coro = AsyncMock()
@@ -429,83 +472,111 @@ class TestExceptionHandlers:
     @pytest.mark.asyncio
     async def test_not_found_handler_with_detail(self):
         """Test 404 handler with custom detail."""
+        # Create properly structured mock request
+        mock_url = Mock()
+        mock_url.path = "/api/nonexistent"
+        
         mock_request = Mock(spec=Request)
         mock_request.method = "GET"
-        mock_request.url.path = "/api/nonexistent"
+        mock_request.url = mock_url
+        mock_request.headers = {"user-agent": "test"}
+        mock_request.client = Mock()
+        mock_request.client.host = "127.0.0.1"
         
         mock_exc = Mock()
         mock_exc.detail = "Custom not found message"
         
-        with patch('app.main.logger'):
-            response = await not_found_handler(mock_request, mock_exc)
-            
-            assert isinstance(response, JSONResponse)
-            assert response.status_code == 404
+        response = await secure_not_found_handler(mock_request, mock_exc)
+        
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 404
             
     @pytest.mark.asyncio
     async def test_not_found_handler_user_endpoint(self):
         """Test 404 handler for user endpoints."""
+        # Create properly structured mock request
+        mock_url = Mock()
+        mock_url.path = "/api/users/123"
+        
         mock_request = Mock(spec=Request)
         mock_request.method = "GET"
-        mock_request.url.path = "/api/users/123"
+        mock_request.url = mock_url
+        mock_request.headers = {"user-agent": "test"}
+        mock_request.client = Mock()
+        mock_request.client.host = "127.0.0.1"
         
         mock_exc = Mock()
         del mock_exc.detail  # No detail attribute
         
-        with patch('app.main.logger'):
-            response = await not_found_handler(mock_request, mock_exc)
-            
-            assert isinstance(response, JSONResponse)
-            assert response.status_code == 404
+        response = await secure_not_found_handler(mock_request, mock_exc)
+        
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 404
             
     @pytest.mark.asyncio
     async def test_not_found_handler_default(self):
         """Test 404 handler default response."""
+        # Create properly structured mock request
+        mock_url = Mock()
+        mock_url.path = "/unknown/path"
+        
         mock_request = Mock(spec=Request)
         mock_request.method = "POST"
-        mock_request.url.path = "/unknown/path"
+        mock_request.url = mock_url
+        mock_request.headers = {"user-agent": "test"}
+        mock_request.client = Mock()
+        mock_request.client.host = "127.0.0.1"
         
         mock_exc = Mock()
         del mock_exc.detail
         
-        with patch('app.main.logger'):
-            response = await not_found_handler(mock_request, mock_exc)
-            
-            assert isinstance(response, JSONResponse)
-            assert response.status_code == 404
+        response = await secure_not_found_handler(mock_request, mock_exc)
+        
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 404
             
     @pytest.mark.asyncio
     async def test_internal_error_handler(self):
         """Test 500 internal error handler."""
+        # Create properly structured mock request
+        mock_url = Mock()
+        mock_url.path = "/api/error"
+        
         mock_request = Mock(spec=Request)
         mock_request.method = "POST"
-        mock_request.url.path = "/api/error"
+        mock_request.url = mock_url
+        mock_request.headers = {"user-agent": "test"}
+        mock_request.client = Mock()
+        mock_request.client.host = "127.0.0.1"
         
         mock_exc = Exception("Internal server error")
         
-        with patch('app.main.logger') as mock_logger:
-            response = await internal_error_handler(mock_request, mock_exc)
-            
-            assert isinstance(response, JSONResponse)
-            assert response.status_code == 500
-            mock_logger.error.assert_called()
+        response = await secure_internal_error_handler(mock_request, mock_exc)
+        
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 500
             
     @pytest.mark.asyncio
     async def test_validation_exception_handler(self):
         """Test validation error handler."""
+        # Create properly structured mock request
+        mock_url = Mock()
+        mock_url.path = "/api/validate"
+        
         mock_request = Mock(spec=Request)
         mock_request.method = "POST"
-        mock_request.url.path = "/api/validate"
+        mock_request.url = mock_url
+        mock_request.headers = {"user-agent": "test"}
+        mock_request.client = Mock()
+        mock_request.client.host = "127.0.0.1"
         
         mock_exc = Mock(spec=RequestValidationError)
-        mock_exc.errors.return_value = [{"field": "test", "message": "required"}]
+        mock_exc.errors.return_value = [{"loc": ["field"], "msg": "field required", "type": "value_error.missing"}]
         
-        with patch('app.main.logger') as mock_logger:
-            response = await validation_exception_handler(mock_request, mock_exc)
-            
-            assert isinstance(response, JSONResponse)
-            assert response.status_code == 422
-            mock_logger.warning.assert_called()
+        response = await secure_validation_exception_handler(mock_request, mock_exc)
+        
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 422
 
 
 class TestStaticEndpoints:

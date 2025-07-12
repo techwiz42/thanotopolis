@@ -22,6 +22,7 @@ from app.models.models import (
     )
 from app.agents.tenant_aware_agent_manager import tenant_aware_agent_manager as agent_manager
 from app.services.monitoring_service import monitoring_service
+from app.security.websocket_auth import authenticate_websocket_secure, authenticate_websocket_with_conversation
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -601,13 +602,225 @@ async def _handle_user_message(
         }
         await connection_manager.broadcast(conversation_id, error_message)
 
+@router.websocket("/ws/secure/conversations/{conversation_id}")
+async def secure_websocket_endpoint(
+    websocket: WebSocket,
+    conversation_id: UUID
+):
+    """Secure WebSocket endpoint for conversations using header-based authentication"""
+    connection_id = None
+    user = None
+    
+    try:
+        # Check connection limits before accepting
+        if not await can_accept_connection(conversation_id):
+            await websocket.close(code=1008, reason="Connection limit reached")
+            return
+        
+        # Accept connection first
+        await websocket.accept()
+        logger.info(f"Secure WebSocket connection accepted for conversation {conversation_id}")
+        
+        # Start cleanup task if needed
+        start_cleanup_task()
+        
+        # Authenticate using secure header-based method
+        user = await authenticate_websocket_with_conversation(websocket, str(conversation_id))
+        if not user:
+            # Authentication already handled error response and closed connection
+            return
+        
+        logger.info(f"User {user.email} authenticated for secure WebSocket")
+        
+        # Register connection
+        connection_id = await connection_manager.connect(websocket, conversation_id, user.email)
+        
+        # Add monitoring for this WebSocket connection
+        monitoring_service.add_websocket_connection(
+            connection_id=str(connection_id),
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id)
+        )
+        
+        # Send welcome message
+        welcome_message = {
+            "type": "system",
+            "content": f"Welcome to conversation {conversation_id}",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        await websocket.send_json(welcome_message)
+        
+        # Fetch and send previous messages
+        await _send_conversation_history(websocket, conversation_id)
+        
+        # Handle incoming messages
+        while True:
+            try:
+                # Receive message with timeout to prevent hanging connections
+                message = await asyncio.wait_for(websocket.receive_json(), timeout=300)  # 5 minute timeout
+                
+                # Process the message
+                await _handle_secure_user_message(conversation_id, user, message)
+                
+            except asyncio.TimeoutError:
+                logger.info(f"WebSocket timeout for user {user.email} in conversation {conversation_id}")
+                break
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected for user {user.email} in conversation {conversation_id}")
+                break
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                await websocket.send_json({
+                    "type": "error",
+                    "content": "Failed to process message",
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+    
+    except Exception as e:
+        logger.error(f"Secure WebSocket endpoint error: {e}")
+    
+    finally:
+        # Clean up connection
+        if connection_id:
+            await connection_manager.disconnect(websocket, conversation_id, connection_id)
+        
+        # Remove monitoring
+        if user:
+            monitoring_service.remove_websocket_connection(
+                connection_id=str(connection_id) if connection_id else "unknown",
+                user_id=str(user.id),
+                tenant_id=str(user.tenant_id)
+            )
+        
+        logger.info(f"Secure WebSocket connection cleanup completed for conversation {conversation_id}")
+
+async def _send_conversation_history(websocket: WebSocket, conversation_id: UUID):
+    """Send conversation history to newly connected WebSocket client"""
+    try:
+        async with get_db_context() as db:
+            # Query for all messages
+            logger.info(f"Fetching all messages for conversation {conversation_id}")
+            message_query = (
+                select(Message)
+                .options(
+                    joinedload(Message.user),
+                    joinedload(Message.participant)
+                )
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.created_at)
+            )
+            message_result = await db.execute(message_query)
+            messages = message_result.scalars().all()
+            logger.info(f"Found {len(messages)} messages for conversation {conversation_id}")
+        
+        # Send historical messages to the client
+        for msg in messages:
+            # Determine sender type and metadata
+            sender_type = "system"
+            sender_name = "System"
+            
+            # Parse message metadata
+            metadata = msg.message_metadata or {}
+            
+            if msg.user:
+                sender_type = "user"
+                sender_name = msg.user.email
+            elif msg.participant:
+                sender_type = "assistant"
+                sender_name = msg.participant.name
+            elif metadata.get("sender") == "assistant":
+                sender_type = "assistant"
+                sender_name = metadata.get("sender_name", "Assistant")
+            
+            # Format message for WebSocket
+            formatted_message = {
+                "id": str(msg.id),
+                "type": sender_type,
+                "content": msg.content,
+                "sender": sender_name,
+                "timestamp": msg.created_at.isoformat(),
+                "metadata": metadata
+            }
+            
+            await websocket.send_json(formatted_message)
+            
+    except Exception as e:
+        logger.error(f"Error sending conversation history: {e}")
+        await websocket.send_json({
+            "type": "error",
+            "content": "Failed to load conversation history",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+
+async def _handle_secure_user_message(conversation_id: UUID, user: User, message: dict):
+    """Handle incoming user message with security filtering"""
+    try:
+        message_content = message.get("content", "")
+        
+        # Apply security filtering
+        from app.security.content_security_pipeline import security_pipeline
+        
+        context = {
+            "conversation_type": "web_chat",
+            "user_id": str(user.id),
+            "conversation_id": str(conversation_id)
+        }
+        
+        filtered_content, security_metadata = await security_pipeline.filter_user_input(
+            message_content, context
+        )
+        
+        # Log security events if any
+        if security_metadata.get("security_events"):
+            logger.info(f"Security events for user {user.email}: {security_metadata['security_events']}")
+        
+        # Create message in database
+        async with get_db_context() as db:
+            new_message = Message(
+                id=uuid4(),
+                conversation_id=conversation_id,
+                user_id=user.id,
+                content=filtered_content,
+                message_type=MessageType.TEXT,
+                additional_data={"security_metadata": security_metadata}
+            )
+            db.add(new_message)
+            await db.commit()
+            
+            # Process with AI agent
+            await process_conversation(
+                conversation_id, 
+                new_message.id, 
+                "MODERATOR",  # Default agent type
+                db,
+                owner_id=user.id
+            )
+        
+        logger.info(f"Processed secure message from {user.email} in conversation {conversation_id}")
+        
+    except Exception as e:
+        logger.error(f"Error handling secure user message: {e}")
+        # Broadcast error to conversation
+        error_message = {
+            "type": "error",
+            "content": "Failed to process message",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        await connection_manager.broadcast(conversation_id, error_message)
+
 @router.websocket("/ws/conversations/{conversation_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
     conversation_id: UUID,
     token: str
 ):
-    """Main WebSocket endpoint for conversations"""
+    """
+    DEPRECATED: Main WebSocket endpoint for conversations
+    
+    This endpoint is deprecated due to security concerns with token exposure in URL parameters.
+    Use /ws/secure/conversations/{conversation_id} instead which uses header-based authentication.
+    """
+    logger.warning(f"DEPRECATED WebSocket endpoint used for conversation {conversation_id}. Use /ws/secure/ endpoint instead.")
     connection_id = None
     user = None
     
@@ -691,7 +904,6 @@ async def websocket_endpoint(
                 metadata = None
                 if msg.additional_data:
                     try:
-                        import json
                         if isinstance(msg.additional_data, str):
                             metadata = json.loads(msg.additional_data)
                         else:
@@ -854,7 +1066,6 @@ async def websocket_endpoint(
             
         except Exception as e:
             logger.error(f"Error fetching historical messages: {e}")
-            import traceback
             logger.error(traceback.format_exc())
         
         # Notify others of new participant
