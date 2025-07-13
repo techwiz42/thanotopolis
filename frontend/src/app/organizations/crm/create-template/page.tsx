@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, Upload, Eye, Save } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import DOMPurify from 'dompurify';
 
 export default function CreateTemplatePage() {
   const router = useRouter();
@@ -291,7 +292,10 @@ export default function CreateTemplatePage() {
                   <div 
                     className="prose max-w-none"
                     dangerouslySetInnerHTML={{ 
-                      __html: formData.html_content || '<p class="text-gray-500">No content to preview</p>' 
+                      __html: DOMPurify.sanitize(formData.html_content || '<p class="text-gray-500">No content to preview</p>', {
+                        ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'a', 'hr', 'div', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'b', 'i', 'u'],
+                        ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'style', 'src', 'alt', 'width', 'height']
+                      })
                     }}
                   />
                 </div>

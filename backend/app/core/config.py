@@ -52,7 +52,7 @@ class Settings(BaseSettings):
                 jwt_key = secrets.token_urlsafe(32)
                 logger.warning(
                     f"SECURITY WARNING: Using auto-generated JWT key for development. "
-                    f"Set JWT_SECRET_KEY environment variable. Generated key: {jwt_key}"
+                    f"Set JWT_SECRET_KEY environment variable. Key length: {len(jwt_key)} chars"
                 )
         
         self.JWT_SECRET_KEY = jwt_key

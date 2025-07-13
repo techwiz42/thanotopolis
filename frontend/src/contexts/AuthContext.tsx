@@ -4,6 +4,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { User, AuthTokens } from '@/types/user.types'
+import { CSRFProtection } from '@/utils/csrf'
 
 // Re-export AuthTokens for backward compatibility
 export type { AuthTokens }
@@ -74,6 +75,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOrganization(null)
     localStorage.removeItem('tokens')
     localStorage.removeItem('organization')
+    
+    // Clear CSRF token
+    CSRFProtection.clearToken()
     
     // Redirect to login page
     router.push('/login')

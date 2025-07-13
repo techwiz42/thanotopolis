@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import FileDisplay from '@/app/conversations/[id]/components/FileDisplay';
 import { PrintButton } from '@/app/conversations/[id]/components/PrintButton';
+import DOMPurify from 'dompurify';
 
 // Define an enhanced interface for the Message type to include all needed properties
 interface EnhancedMessage extends Message {
@@ -332,14 +333,24 @@ const MessageItem: React.FC<Props> = ({
         <div
           ref={contentRef}
           className="document-search-results break-all w-full"
-          dangerouslySetInnerHTML={{ __html: processedContent }}
+          dangerouslySetInnerHTML={{ 
+            __html: DOMPurify.sanitize(processedContent, {
+              ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'a', 'hr'],
+              ALLOWED_ATTR: ['href', 'target', 'rel', 'class']
+            })
+          }}
         />
       );
     }
 
     // Process and handle HTML content with math expressions
     if (isHTML(message.content)) {
-      return <div ref={contentRef} className="overflow-x-auto break-all w-full" dangerouslySetInnerHTML={{ __html: message.content }} />;
+      return <div ref={contentRef} className="overflow-x-auto break-all w-full" dangerouslySetInnerHTML={{ 
+        __html: DOMPurify.sanitize(message.content, {
+          ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'a', 'hr', 'div', 'span'],
+          ALLOWED_ATTR: ['href', 'target', 'rel', 'class']
+        })
+      }} />;
     }
 
     // Process math expressions in non-HTML content
@@ -347,7 +358,12 @@ const MessageItem: React.FC<Props> = ({
 
     // If processing added HTML, use dangerouslySetInnerHTML
     if (processedContent !== message.content && isHTML(processedContent)) {
-      return <div ref={contentRef} className="overflow-x-auto break-all w-full" dangerouslySetInnerHTML={{ __html: processedContent }} />;
+      return <div ref={contentRef} className="overflow-x-auto break-all w-full" dangerouslySetInnerHTML={{ 
+        __html: DOMPurify.sanitize(processedContent, {
+          ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'a', 'hr', 'div', 'span'],
+          ALLOWED_ATTR: ['href', 'target', 'rel', 'class']
+        })
+      }} />;
     }
 
     // Handle regular text content
@@ -357,7 +373,12 @@ const MessageItem: React.FC<Props> = ({
         <div 
           ref={contentRef} 
           className="markdown-content whitespace-pre-wrap break-all text-sm w-full"
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
+          dangerouslySetInnerHTML={{ 
+            __html: DOMPurify.sanitize(renderMarkdown(message.content), {
+              ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'code', 'pre', 'blockquote', 'a', 'hr'],
+              ALLOWED_ATTR: ['href', 'target', 'rel', 'class']
+            })
+          }}
         />
       );
     } else {

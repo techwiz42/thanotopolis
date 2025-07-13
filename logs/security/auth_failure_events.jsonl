@@ -142,3 +142,5 @@
 {"event_type": "AUTH_FAILURE", "ip_address": "127.0.0.1", "user_agent": "python-httpx/0.28.1", "username": null, "failure_reason": "http_403", "timestamp": "2025-07-13T06:16:19.493319"}
 {"event_type": "AUTH_FAILURE", "ip_address": "127.0.0.1", "user_agent": "python-httpx/0.28.1", "username": null, "failure_reason": "http_403", "timestamp": "2025-07-13T06:16:19.497988"}
 {"event_type": "AUTH_FAILURE", "ip_address": "127.0.0.1", "user_agent": "python-httpx/0.28.1", "username": null, "failure_reason": "http_403", "timestamp": "2025-07-13T06:16:19.501868"}
+{"event_type": "AUTH_FAILURE", "ip_address": "104.35.14.129", "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36", "username": null, "failure_reason": "http_401", "timestamp": "2025-07-13T15:18:21.228081"}
+{"event_type": "AUTH_FAILURE", "ip_address": "104.35.14.129", "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36", "username": null, "failure_reason": "invalid_credentials", "timestamp": "2025-07-13T15:18:21.230074"}
