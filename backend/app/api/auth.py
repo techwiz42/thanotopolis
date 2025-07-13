@@ -1,12 +1,16 @@
 # backend/app/api/auth.py
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from uuid import UUID
+import secrets
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.db.database import get_db
-from app.models.models import User, Tenant, RefreshToken
+from app.models.models import User, Tenant, RefreshToken, PasswordResetToken
 # Import schemas
 from app.schemas.schemas import (
     UserRegister, 
@@ -15,7 +19,11 @@ from app.schemas.schemas import (
     RefreshTokenRequest,
     UserResponse,
     OrganizationCreate,
-    OrganizationResponse
+    OrganizationResponse,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    ForgotPasswordResponse,
+    ResetPasswordResponse
 )
 from app.auth.auth import (
     AuthService, 
@@ -23,6 +31,7 @@ from app.auth.auth import (
     get_current_active_user,
     get_tenant_from_request
 )
+from app.services.email_service import email_service
 
 router = APIRouter()
 
@@ -622,3 +631,121 @@ async def delete_user(
     await db.commit()
     
     return {"detail": "User deleted successfully"}
+
+@router.post("/auth/forgot-password", response_model=ForgotPasswordResponse, tags=["auth"])
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Send password reset email."""
+    # Find user by email
+    result = await db.execute(
+        select(User).filter(User.email == request.email)
+    )
+    user = result.scalars().first()
+    
+    # Always return success to prevent email enumeration
+    if not user:
+        return ForgotPasswordResponse(message="If an account with that email exists, you will receive a password reset link.")
+    
+    # Delete any existing password reset tokens for this user
+    result = await db.execute(
+        select(PasswordResetToken).filter(PasswordResetToken.user_id == user.id)
+    )
+    existing_tokens = result.scalars().all()
+    for token in existing_tokens:
+        await db.delete(token)
+    
+    # Generate secure reset token
+    reset_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)  # 1 hour expiry
+    
+    # Create password reset token record
+    password_reset_token = PasswordResetToken(
+        user_id=user.id,
+        token=reset_token,
+        expires_at=expires_at
+    )
+    db.add(password_reset_token)
+    await db.commit()
+    
+    # Get user's organization for email context
+    await db.refresh(user, ["tenant"])
+    organization_name = user.tenant.name if user.tenant else "Thanotopolis"
+    
+    # Send password reset email
+    try:
+        user_name = f"{user.first_name} {user.last_name}".strip() or user.username
+        await email_service.send_password_reset_email(
+            to_email=user.email,
+            user_name=user_name,
+            reset_token=reset_token,
+            organization_name=organization_name
+        )
+        logger.info(f"Password reset email sent to {user.email}")
+    except Exception as e:
+        logger.error(f"Failed to send password reset email to {user.email}: {str(e)}")
+        # Don't fail the request if email fails - the token is still valid
+    
+    return ForgotPasswordResponse(message="If an account with that email exists, you will receive a password reset link.")
+
+@router.post("/auth/reset-password", response_model=ResetPasswordResponse, tags=["auth"])
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Reset password using reset token."""
+    # Find password reset token
+    result = await db.execute(
+        select(PasswordResetToken).filter(
+            PasswordResetToken.token == request.token,
+            PasswordResetToken.is_used == False
+        )
+    )
+    reset_token = result.scalars().first()
+    
+    if not reset_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired reset token"
+        )
+    
+    # Check if token is expired
+    if reset_token.expires_at < datetime.now(timezone.utc):
+        # Delete expired token
+        await db.delete(reset_token)
+        await db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail="Reset token has expired"
+        )
+    
+    # Get user
+    result = await db.execute(
+        select(User).filter(User.id == reset_token.user_id)
+    )
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=400,
+            detail="User not found"
+        )
+    
+    # Update password
+    user.hashed_password = AuthService.get_password_hash(request.new_password)
+    
+    # Mark token as used
+    reset_token.is_used = True
+    
+    # Revoke all existing refresh tokens for security
+    result = await db.execute(
+        select(RefreshToken).filter(RefreshToken.user_id == user.id)
+    )
+    refresh_tokens = result.scalars().all()
+    for token in refresh_tokens:
+        await db.delete(token)
+    
+    await db.commit()
+    
+    return ResetPasswordResponse(message="Password reset successfully")

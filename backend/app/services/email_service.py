@@ -267,6 +267,41 @@ class SendGridEmailService:
                 "subject": subject_template
             }
     
+    async def send_password_reset_email(
+        self,
+        to_email: str,
+        user_name: str,
+        reset_token: str,
+        organization_name: str = "Thanotopolis",
+        frontend_url: str = "https://dev.thanotopolis.com"
+    ) -> Dict[str, Any]:
+        """Send password reset email using the password_reset template"""
+        
+        # Build reset link
+        reset_link = f"{frontend_url}/reset-password?token={reset_token}"
+        
+        # Get password reset template
+        template = DEFAULT_EMAIL_TEMPLATES["password_reset"]
+        
+        # Prepare template variables
+        template_variables = {
+            "user_name": user_name,
+            "organization_name": organization_name,
+            "reset_link": reset_link
+        }
+        
+        # Send template email
+        return await self.send_template_email(
+            to_email=to_email,
+            subject_template=template["subject"],
+            html_template=template["html_content"],
+            text_template=template["text_content"],
+            template_variables=template_variables,
+            to_name=user_name,
+            track_opens=False,  # Don't track password reset emails
+            track_clicks=False
+        )
+    
     async def send_bulk_emails(
         self,
         recipients: List[Dict[str, str]],  # [{"email": "...", "name": "..."}]
@@ -546,6 +581,44 @@ DEFAULT_TEMPLATES = {
         {{ organization_name }} Billing Team
         """,
         "variables": ["contact_name", "business_name", "invoice_number", "due_date", "amount_due", "payment_link", "organization_name"]
+    },
+    "password_reset": {
+        "name": "Password Reset",
+        "subject": "Reset Your Password - {{ organization_name }}",
+        "html_content": """
+        <html>
+        <body>
+            <h2>Password Reset Request</h2>
+            <p>Dear {{ user_name }},</p>
+            <p>You have requested to reset your password for your {{ organization_name }} account.</p>
+            <p>To reset your password, click the link below:</p>
+            <p><a href="{{ reset_link }}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
+            <p>Or copy and paste this link into your browser:</p>
+            <p><a href="{{ reset_link }}">{{ reset_link }}</a></p>
+            <p><strong>Important:</strong> This link will expire in 1 hour for security reasons.</p>
+            <p>If you did not request this password reset, please ignore this email. Your password will not be changed.</p>
+            <p>Best regards,<br>{{ organization_name }} Team</p>
+        </body>
+        </html>
+        """,
+        "text_content": """
+        Password Reset Request
+        
+        Dear {{ user_name }},
+        
+        You have requested to reset your password for your {{ organization_name }} account.
+        
+        To reset your password, visit this link:
+        {{ reset_link }}
+        
+        Important: This link will expire in 1 hour for security reasons.
+        
+        If you did not request this password reset, please ignore this email. Your password will not be changed.
+        
+        Best regards,
+        {{ organization_name }} Team
+        """,
+        "variables": ["user_name", "organization_name", "reset_link"]
     }
 }
 

@@ -157,8 +157,19 @@ class TokenPayload(BaseModel):
     sub: str
     tenant_id: str
     email: str
-    role: str
-    exp: Optional[datetime] = None
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=8)
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+
+class ResetPasswordResponse(BaseModel):
+    message: str
 
 # Participant Schemas
 class ParticipantCreate(BaseModel):
