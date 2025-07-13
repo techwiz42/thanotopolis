@@ -42,7 +42,10 @@ class PromptInjectionFilter:
         
         # Information extraction attempts
         r"print\s+your\s+instructions",
+        r"print\s+your\s+system\s+prompt",
+        r"print\s+your\s+prompt", 
         r"reveal\s+your\s+prompt",
+        r"reveal\s+your\s+instructions",
         r"show\s+your\s+system\s+prompt",
         r"what\s+are\s+your\s+instructions",
         r"repeat\s+your\s+system\s+prompt",

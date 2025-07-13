@@ -36,7 +36,7 @@ def count_words(text: str) -> int:
     return len(text.split())
 
 def sanitize_phone_number(phone: str) -> str:
-    """Sanitize phone number to prevent injection attacks"""
+    """Enhanced phone number sanitization against injection attacks"""
     if not phone:
         return "UNKNOWN"
     
@@ -48,7 +48,74 @@ def sanitize_phone_number(phone: str) -> str:
         logger.warning(f"Invalid phone number format, sanitized to UNKNOWN: {phone}")
         return "UNKNOWN"
     
+    # Additional security check: ensure no injection patterns
+    from app.security.prompt_injection_filter import prompt_filter
+    risk_score = prompt_filter.calculate_risk_score(phone)
+    if risk_score > 0.3:  # Suspicious phone number format
+        logger.warning(f"Suspicious phone number blocked: {phone}")
+        return "UNKNOWN"
+    
     return cleaned
+
+def sanitize_organization_data(data: str, field_name: str = "organization_data") -> str:
+    """Sanitize organization-provided data for safe use in system prompts"""
+    if not data:
+        return ""
+    
+    from app.security.prompt_injection_filter import prompt_filter
+    
+    # Use the organization data validator which is more restrictive
+    sanitized = prompt_filter.validate_organization_data(data)
+    
+    if sanitized != data:
+        logger.warning(f"Organization {field_name} was sanitized: original length {len(data)}, sanitized length {len(sanitized)}")
+    
+    return sanitized
+
+def extract_agent_name_secure(custom_prompt: str) -> Optional[str]:
+    """Securely extract agent name from custom instructions with validation"""
+    if not custom_prompt:
+        return None
+    
+    # First sanitize the input
+    safe_prompt = sanitize_organization_data(custom_prompt, "agent_name_extraction")
+    
+    # Look for common patterns that indicate an agent name
+    patterns = [
+        r"(?:I'm|I am|My name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",
+        r"(?:Your name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|\.|\n|$)",
+        r"(?:You are)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",
+        r"(?:This is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",
+        r"(?:Call me)\s+([A-Z][a-zA-Z]+)(?:,|\s|\.|\n|$)",
+        r"([A-Z][a-zA-Z]+)\s+(?:is your name)",
+        r"(?:You're called|You are called)\s+([A-Z][a-zA-Z]+)",
+        r"(?:Hi,? I am)\s+([A-Z][a-zA-Z]+)",
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, safe_prompt)
+        if match:
+            name = match.group(1)
+            
+            # Security validation of extracted name
+            if len(name) > 20:  # Reject overly long names
+                continue
+                
+            # Validate the name isn't a common word or potential injection
+            common_words = ['AI', 'Assistant', 'Agent', 'Your', 'The', 'This', 'An', 'A', 
+                          'Ignore', 'System', 'Admin', 'Root', 'Override', 'Execute',
+                          'Script', 'Function', 'Command', 'Prompt', 'Instruction']
+            
+            if name not in common_words:
+                # Additional security check on the extracted name
+                from app.security.prompt_injection_filter import prompt_filter
+                name_risk = prompt_filter.calculate_risk_score(name)
+                if name_risk < 0.2:  # Low risk names only
+                    return name
+                else:
+                    logger.warning(f"Potentially malicious agent name rejected: {name} (risk: {name_risk:.2f})")
+    
+    return None
 
 
 class TelephonyVoiceAgentHandler:
@@ -282,46 +349,24 @@ class TelephonyVoiceAgentHandler:
         return voice_session
     
     def _extract_agent_name(self, custom_prompt: str) -> Optional[str]:
-        """Extract agent name from custom instructions"""
-        if not custom_prompt:
-            return None
-        
-        import re
-        
-        # Look for common patterns that indicate an agent name
-        patterns = [
-            r"(?:I'm|I am|My name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "I'm Ada", "I am Ada", "My name is Ada"
-            r"(?:Your name is)\s+([A-Z][a-zA-Z]+)(?:,|\s|\.|\n|$)",  # "Your name is Ada"
-            r"(?:You are)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "You are Ada"
-            r"(?:This is)\s+([A-Z][a-zA-Z]+)(?:,|\s|$)",  # "This is Ada"
-            r"(?:Call me)\s+([A-Z][a-zA-Z]+)(?:,|\s|\.|\n|$)",  # "Call me Ada"
-            r"([A-Z][a-zA-Z]+)\s+(?:is your name)",  # "Ada is your name"
-            r"(?:You're called|You are called)\s+([A-Z][a-zA-Z]+)",  # "You're called Ada"
-            r"(?:Hi,? I am)\s+([A-Z][a-zA-Z]+)",  # "Hi, I am Ada"
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, custom_prompt)
-            if match:
-                name = match.group(1)
-                # Validate the name isn't a common word that might be misidentified
-                common_words = ['AI', 'Assistant', 'Agent', 'Your', 'The', 'This', 'An', 'A']
-                if name not in common_words:
-                    return name
-        
-        return None
+        """SECURE: Extract agent name from custom instructions with validation"""
+        # Use the secure version defined at module level
+        return extract_agent_name_secure(custom_prompt)
 
     async def _send_custom_greeting(self, voice_session: VoiceAgentSession, session_info: Dict[str, Any]):
-        """Send a custom greeting message with the organization name"""
+        """SECURE: Send a custom greeting message with sanitized organization name"""
         try:
             config = session_info["config"]
             
-            # Get organization name from tenant
+            # SECURITY: Get and sanitize organization name from tenant
             org_name = "this organization"  # Default fallback
             if hasattr(config, 'tenant') and config.tenant:
-                org_name = config.tenant.name or "this organization"
+                raw_org_name = config.tenant.name or "this organization"
+                org_name = sanitize_organization_data(raw_org_name, "greeting_org_name")
+                if not org_name.strip():  # If sanitization removed everything, use fallback
+                    org_name = "this organization"
             
-            # Extract agent name from tenant description (Additional instructions for agent)
+            # SECURITY: Extract agent name using secure method
             agent_name = None
             if hasattr(config, 'tenant') and config.tenant and config.tenant.description:
                 agent_name = self._extract_agent_name(config.tenant.description)
@@ -347,10 +392,10 @@ class TelephonyVoiceAgentHandler:
         config: Any, 
         session_info: Dict[str, Any]
     ) -> str:
-        """Build system prompt for Voice Agent"""
+        """SECURE: Build system prompt for Voice Agent with input sanitization"""
         from_number = sanitize_phone_number(session_info["from_number"])
         
-        # Get organization information from tenant
+        # Get organization information from tenant with SECURITY SANITIZATION
         org_info = ""
         contact_info = ""
         additional_instructions = ""
@@ -359,26 +404,39 @@ class TelephonyVoiceAgentHandler:
         
         if hasattr(config, 'tenant') and config.tenant:
             tenant = config.tenant
-            # Use the organization name from the model - name field is the Organization Name
-            # full_name field is the Contact Name (person), not the organization
-            org_name = tenant.name or "this organization"
+            
+            # SECURITY: Sanitize organization name before use in prompt
+            raw_org_name = tenant.name or "this organization"
+            org_name = sanitize_organization_data(raw_org_name, "organization_name")
+            if not org_name.strip():  # If sanitization removed everything, use fallback
+                org_name = "this organization"
             
             org_info = f"Organization: {org_name}"
             
-            # Use organization description as additional agent instructions
+            # SECURITY: Sanitize organization description before use in prompt
             if tenant.description and tenant.description.strip():
-                additional_instructions = f"""
+                safe_description = sanitize_organization_data(tenant.description, "organization_description")
+                if safe_description.strip():  # Only add if sanitization left something useful
+                    additional_instructions = f"""
 ADDITIONAL INSTRUCTIONS FOR THIS ORGANIZATION:
-{tenant.description.strip()}
+{safe_description}
 
 Follow these specific instructions in addition to your general role."""
+                else:
+                    logger.warning("Organization description was completely filtered due to security concerns")
             
             # Build contact person information for call transfers
             contact_parts = []
             if tenant.phone:
-                contact_parts.append(f"Phone: {tenant.phone}")
+                # SECURITY: Sanitize contact phone
+                safe_phone = sanitize_phone_number(tenant.phone)
+                if safe_phone != "UNKNOWN":
+                    contact_parts.append(f"Phone: {safe_phone}")
             if tenant.organization_email:
-                contact_parts.append(f"Email: {tenant.organization_email}")
+                # SECURITY: Basic email sanitization
+                safe_email = sanitize_organization_data(tenant.organization_email, "organization_email")
+                if safe_email.strip() and "@" in safe_email:  # Basic email validation
+                    contact_parts.append(f"Email: {safe_email}")
             
             if contact_parts:
                 contact_info = f"""
@@ -389,7 +447,7 @@ Contact Information: {', '.join(contact_parts)}
 Say something like: "I can transfer you to a human representative who can help you directly. Would you like me to connect you now?"
 """
         
-        # Extract agent name from tenant description (Additional instructions for agent)
+        # SECURITY: Extract agent name using secure method
         if hasattr(config, 'tenant') and config.tenant and config.tenant.description:
             agent_name = self._extract_agent_name(config.tenant.description)
         
