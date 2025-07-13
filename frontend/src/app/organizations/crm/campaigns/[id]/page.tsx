@@ -69,7 +69,7 @@ interface RecipientDetail {
   }>
 }
 
-export default function CampaignAnalyticsPage({ params }: { params: { id: string } }) {
+export default function CampaignAnalyticsPage({ params }: { params: Promise<{ id: string }> }) {
   const { token, user, organization, isLoading } = useAuth()
   const router = useRouter()
   
@@ -79,6 +79,13 @@ export default function CampaignAnalyticsPage({ params }: { params: { id: string
   const [recipientsLoading, setRecipientsLoading] = useState(false)
   const [selectedTab, setSelectedTab] = useState<'overview' | 'recipients'>('overview')
   const [error, setError] = useState<string | null>(null)
+  const [campaignId, setCampaignId] = useState<string | null>(null)
+
+  useEffect(() => {
+    params.then(resolvedParams => {
+      setCampaignId(resolvedParams.id)
+    })
+  }, [params])
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -87,12 +94,12 @@ export default function CampaignAnalyticsPage({ params }: { params: { id: string
   }, [user, isLoading, router])
 
   const fetchAnalytics = async () => {
-    if (!token || !organization || !params.id) return
+    if (!token || !organization || !campaignId) return
     
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch(`/api/crm/email-campaigns/${params.id}/analytics`, {
+      const response = await fetch(`/api/crm/email-campaigns/${campaignId}/analytics`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'X-Tenant-ID': organization,
@@ -140,10 +147,10 @@ export default function CampaignAnalyticsPage({ params }: { params: { id: string
     if (token && organization) {
       fetchAnalytics()
     }
-  }, [token, organization, params.id, router])
+  }, [token, organization, campaignId, router])
 
   const fetchRecipients = async () => {
-    if (!token || !organization || !params.id) return
+    if (!token || !organization || !campaignId) return
     
     setRecipientsLoading(true)
     try {

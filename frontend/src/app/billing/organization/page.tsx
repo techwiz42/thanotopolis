@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -328,4 +328,10 @@ const OrganizationBillingPage: React.FC = () => {
   );
 };
 
-export default OrganizationBillingPage;
+export default function BillingPageWrapper() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <OrganizationBillingPage />
+    </Suspense>
+  );
+}

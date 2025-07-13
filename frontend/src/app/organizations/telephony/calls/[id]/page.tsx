@@ -43,9 +43,9 @@ import { CallMessagesList } from '../components/CallMessagesList';
 import { useActiveCall } from '@/hooks/useActiveCall';
 
 interface CallDetailsPageProps {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default function CallDetailsPage({ params }: CallDetailsPageProps) {
@@ -53,10 +53,8 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   const { token } = useAuth();
   const { toast } = useToast();
 
-  console.log('CallDetailsPage mounted with params:', params);
-  console.log('Token available:', !!token);
-
   // State
+  const [callId, setCallId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [call, setCall] = useState<TelephonyPhoneCall | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,8 +64,14 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   const [showLiveControls, setShowLiveControls] = useState(false);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
+
+  useEffect(() => {
+    params.then(resolvedParams => {
+      setCallId(resolvedParams.id);
+    });
+  }, [params]);
   
-  // Call messages hook
+  // Call messages hook - only use when callId is available
   const {
     messages,
     isLoading: messagesLoading,
@@ -75,12 +79,12 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
     deleteMessage,
     loadMessages
   } = useCallMessages({ 
-    callId: params.id,
+    callId: callId || '',
     autoLoad: false // We'll load manually after call is loaded
   });
 
   // Active call hook for real-time functionality
-  const activeCall = useActiveCall(params.id, {
+  const activeCall = useActiveCall(callId || '', {
     autoStartStreaming: true,
     onNewMessage: (message) => {
       console.log('📞 New live message:', message);
@@ -105,14 +109,14 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
   // Load call data
   useEffect(() => {
     const loadCall = async () => {
-      if (!token || !params.id) return;
+      if (!token || !callId) return;
 
       try {
         setIsLoading(true);
         setError(null);
         
         // Load call data first, then messages
-        const callData = await telephonyService.getCall(params.id, token);
+        const callData = await telephonyService.getCall(callId, token);
         setCall(callData);
         
         // Check if this is an active call
@@ -142,7 +146,7 @@ export default function CallDetailsPage({ params }: CallDetailsPageProps) {
     };
 
     loadCall();
-  }, [token, params.id]);
+  }, [token, callId]);
 
   // Cleanup audio on unmount
   useEffect(() => {

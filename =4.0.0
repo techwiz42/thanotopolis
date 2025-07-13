@@ -1,0 +1,3 @@
+Requirement already satisfied: anyio in /home/peter/.virtualenvs/thanos/lib/python3.12/site-packages (3.7.1)
+Requirement already satisfied: idna>=2.8 in /home/peter/.virtualenvs/thanos/lib/python3.12/site-packages (from anyio) (3.10)
+Requirement already satisfied: sniffio>=1.1 in /home/peter/.virtualenvs/thanos/lib/python3.12/site-packages (from anyio) (1.3.1)

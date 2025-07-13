@@ -63,6 +63,15 @@ Revolutionary AI voice agent that automatically:
 - `/app/services/voice/voice_calendar.py` - Calendar integration
 - Modified `/app/api/telephony_voice_agent.py` - Voice agent enhancement
 
+### 5. Security Upgrades 🔒
+**Status**: COMPLETED (July 13, 2025)
+
+Critical security vulnerability fixes:
+- **Next.js Upgrade**: 13.5.11 → 15.4.0 (eliminates CVE vulnerabilities)
+- **React Upgrade**: 18.2.0 → 19.0.0 (latest stable)
+- **Breaking Changes Handled**: Async route params, Suspense boundaries
+- **Build Process**: All 33 pages compile successfully
+
 ## 📋 Pending Production Updates
 
 ### Database Migrations Required
@@ -74,6 +83,7 @@ Revolutionary AI voice agent that automatically:
 2. Run database migrations
 3. Mark demo/cyberiad organizations as exempt
 4. Deploy voice integration features
+5. **Deploy Next.js 15 upgrade** (security fixes included)
 
 ## 🛠️ Quick Commands
 
@@ -92,6 +102,44 @@ cd /home/peter/thanotopolis_dev/backend
 
 cd /home/peter/thanotopolis_dev/frontend
 npm run dev -- --port 3001
+
+# Next.js Upgrade Commands (if needed)
+npm install next@15.4.0 react@19.0.0 react-dom@19.0.0
+npm run build  # Test build process
+```
+
+## 🔧 Next.js 15 Upgrade Details
+
+### Breaking Changes Handled
+- **Async Route Parameters**: Dynamic routes now use `Promise<{ param: string }>` 
+  - Updated: `/organizations/crm/campaigns/[id]/page.tsx`
+  - Updated: `/organizations/telephony/calls/[id]/page.tsx`
+- **Suspense Boundaries**: Added for `useSearchParams()` hook usage
+  - Updated: `/billing/organization/page.tsx`
+
+### Migration Process
+```bash
+# 1. Upgrade packages
+npm install next@15.4.0 react@19.0.0 react-dom@19.0.0
+
+# 2. Fix dynamic route components
+# Change: { params }: { params: { id: string } }
+# To: { params }: { params: Promise<{ id: string }> }
+
+# 3. Add async param resolution
+useEffect(() => {
+  params.then(resolvedParams => {
+    setParamId(resolvedParams.id)
+  })
+}, [params])
+
+# 4. Wrap useSearchParams in Suspense
+<Suspense fallback={<div>Loading...</div>}>
+  <ComponentUsingSearchParams />
+</Suspense>
+
+# 5. Test build
+npm run build
 ```
 
 ## 📁 Directory Structure
@@ -125,5 +173,5 @@ Currently on `calendar` branch with all features integrated:
 
 ---
 
-**Last Updated**: July 11, 2025
-**Status**: Development environment fully operational with voice-to-CRM-to-calendar integration complete
+**Last Updated**: July 13, 2025
+**Status**: Development environment fully operational with voice-to-CRM-to-calendar integration complete and Next.js 15 security upgrade
