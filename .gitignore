@@ -176,3 +176,18 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Database dumps
+*.dump
+backend/*.dump
+
+# Backup directories
+backups/
+backup/
+
+# Scripts directories
+backend/scripts/
+scripts/
+
+# GitHub workflows (if in backend)
+backend/.github/
