@@ -852,8 +852,8 @@ export default function CRMPage() {
   // Filter contacts based on search and status
   const filteredContacts = contacts.filter(contact => {
     const matchesSearch = searchTerm === '' || 
-      contact.business_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      contact.contact_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      contact.business_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      contact.contact_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       contact.contact_email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       contact.phone?.includes(searchTerm)
     

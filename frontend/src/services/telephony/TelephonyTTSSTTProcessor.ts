@@ -230,7 +230,7 @@ export class TelephonyTTSSTTProcessor {
       formData.append('similarity_boost', '0.8');
       formData.append('style', '0.0');
       formData.append('use_speaker_boost', 'true');
-      formData.append('model_id', 'eleven_monolingual_v1'); // Optimized for telephony
+      formData.append('tts_model', 'eleven_monolingual_v1'); // Optimized for telephony
 
       // Use separate TTS endpoint for telephony to avoid conflicts
       const response = await fetch('/api/voice/telephony/tts', {

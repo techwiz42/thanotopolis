@@ -449,36 +449,103 @@ async def create_contact(
 ):
     """Create a new contact"""
     
-    # Check for duplicate email within tenant
-    if contact_data.contact_email:
-        existing = await db.scalar(
-            select(Contact).where(
-                and_(
-                    Contact.tenant_id == current_user.tenant_id,
-                    Contact.contact_email == contact_data.contact_email
+    try:
+        # Check for duplicate email within tenant
+        if contact_data.contact_email:
+            existing = await db.scalar(
+                select(Contact).where(
+                    and_(
+                        Contact.tenant_id == current_user.tenant_id,
+                        Contact.contact_email == contact_data.contact_email
+                    )
                 )
             )
+            if existing:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Contact with email {contact_data.contact_email} already exists"
+                )
+        
+        # Prepare contact data with proper date handling
+        contact_dict = contact_data.model_dump()
+        
+        # Handle date fields - convert string dates to date objects only if they have values
+        if contact_dict.get('date_of_birth') and contact_dict['date_of_birth'].strip():
+            try:
+                from datetime import datetime
+                contact_dict['date_of_birth'] = datetime.fromisoformat(contact_dict['date_of_birth'].replace('Z', '+00:00')).date()
+            except (ValueError, TypeError, AttributeError):
+                logger.warning(f"Invalid date_of_birth format: {contact_dict.get('date_of_birth')}")
+                contact_dict['date_of_birth'] = None
+        else:
+            contact_dict['date_of_birth'] = None
+        
+        if contact_dict.get('date_of_death') and contact_dict['date_of_death'].strip():
+            try:
+                from datetime import datetime
+                contact_dict['date_of_death'] = datetime.fromisoformat(contact_dict['date_of_death'].replace('Z', '+00:00')).date()
+            except (ValueError, TypeError, AttributeError):
+                logger.warning(f"Invalid date_of_death format: {contact_dict.get('date_of_death')}")
+                contact_dict['date_of_death'] = None
+        else:
+            contact_dict['date_of_death'] = None
+        
+        # Handle service_date if present
+        if contact_dict.get('service_date') and contact_dict['service_date'].strip():
+            try:
+                from datetime import datetime
+                contact_dict['service_date'] = datetime.fromisoformat(contact_dict['service_date'].replace('Z', '+00:00'))
+            except (ValueError, TypeError, AttributeError):
+                logger.warning(f"Invalid service_date format: {contact_dict.get('service_date')}")
+                contact_dict['service_date'] = None
+        else:
+            contact_dict['service_date'] = None
+        
+        # Handle boolean fields - convert empty strings to None, string values to boolean
+        def convert_string_to_boolean(value):
+            """Convert string values to boolean, handling empty strings as None"""
+            if value is None or value == "":
+                return None
+            if isinstance(value, str):
+                value = value.strip().lower()
+                if value in ("true", "yes", "1", "on"):
+                    return True
+                elif value in ("false", "no", "0", "off"):
+                    return False
+                else:
+                    return None
+            return value
+        
+        # Convert boolean fields that are stored as strings in schema but boolean in DB
+        contact_dict['veteran_status'] = convert_string_to_boolean(contact_dict.get('veteran_status'))
+        contact_dict['payment_plan'] = convert_string_to_boolean(contact_dict.get('payment_plan'))
+        
+        # Create contact
+        contact = Contact(
+            tenant_id=current_user.tenant_id,
+            created_by_user_id=current_user.id,
+            **contact_dict
         )
-        if existing:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Contact with email {contact_data.contact_email} already exists"
-            )
-    
-    # Create contact
-    contact = Contact(
-        tenant_id=current_user.tenant_id,
-        created_by_user_id=current_user.id,
-        **contact_data.model_dump()
-    )
-    
-    db.add(contact)
-    await db.commit()
-    await db.refresh(contact)
-    
-    logger.info(f"Contact created: {contact.business_name} by user {current_user.email}")
-    
-    return ContactResponse.model_validate(contact)
+        
+        db.add(contact)
+        await db.commit()
+        await db.refresh(contact)
+        
+        logger.info(f"Contact created: {contact.business_name} by user {current_user.email}")
+        
+        return ContactResponse.model_validate(contact)
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as they are
+        raise
+    except Exception as e:
+        # Log the error and rollback
+        logger.error(f"Error creating contact: {str(e)}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while creating the contact"
+        )
 
 @router.patch("/contacts/{contact_id}", response_model=ContactResponse)
 async def update_contact(
@@ -518,8 +585,66 @@ async def update_contact(
                 detail=f"Contact with email {contact_data.contact_email} already exists"
             )
     
-    # Update fields
-    for field, value in contact_data.model_dump(exclude_unset=True).items():
+    # Update fields with proper data conversion
+    update_data = contact_data.model_dump(exclude_unset=True)
+    
+    # Handle boolean field conversions
+    def convert_string_to_boolean(value):
+        """Convert string values to boolean, handling empty strings as None"""
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            value = value.strip().lower()
+            if value in ("true", "yes", "1", "on"):
+                return True
+            elif value in ("false", "no", "0", "off"):
+                return False
+            else:
+                return None
+        return value
+    
+    # Convert boolean fields if they're being updated
+    if 'veteran_status' in update_data:
+        update_data['veteran_status'] = convert_string_to_boolean(update_data['veteran_status'])
+    if 'payment_plan' in update_data:
+        update_data['payment_plan'] = convert_string_to_boolean(update_data['payment_plan'])
+    
+    # Handle date fields if they're being updated
+    if 'date_of_birth' in update_data:
+        if update_data['date_of_birth'] and update_data['date_of_birth'].strip():
+            try:
+                from datetime import datetime
+                update_data['date_of_birth'] = datetime.fromisoformat(update_data['date_of_birth'].replace('Z', '+00:00')).date()
+            except (ValueError, TypeError, AttributeError):
+                logger.warning(f"Invalid date_of_birth format: {update_data.get('date_of_birth')}")
+                update_data['date_of_birth'] = None
+        else:
+            update_data['date_of_birth'] = None
+    
+    if 'date_of_death' in update_data:
+        if update_data['date_of_death'] and update_data['date_of_death'].strip():
+            try:
+                from datetime import datetime
+                update_data['date_of_death'] = datetime.fromisoformat(update_data['date_of_death'].replace('Z', '+00:00')).date()
+            except (ValueError, TypeError, AttributeError):
+                logger.warning(f"Invalid date_of_death format: {update_data.get('date_of_death')}")
+                update_data['date_of_death'] = None
+        else:
+            update_data['date_of_death'] = None
+    
+    if 'service_date' in update_data:
+        if update_data['service_date'] and update_data['service_date'].strip():
+            try:
+                from datetime import datetime
+                update_data['service_date'] = datetime.fromisoformat(update_data['service_date'].replace('Z', '+00:00'))
+            except (ValueError, TypeError, AttributeError):
+                logger.warning(f"Invalid service_date format: {update_data.get('service_date')}")
+                update_data['service_date'] = None
+        else:
+            update_data['service_date'] = None
+    
+    # Apply the updates
+    for field, value in update_data.items():
         setattr(contact, field, value)
     
     await db.commit()

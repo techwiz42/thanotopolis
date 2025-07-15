@@ -350,7 +350,7 @@ async def transcribe_audio_file(
 async def synthesize_speech(
     text: str = Form(...),
     voice_id: Optional[str] = Form(None),
-    model_id: Optional[str] = Form(None),
+    tts_model: Optional[str] = Form(None),
     stability: float = Form(0.5),
     similarity_boost: float = Form(0.5),
     style: float = Form(0.0),
@@ -374,13 +374,13 @@ async def synthesize_speech(
         }
         
         # Log TTS request details
-        logger.info(f"TTS request from user {current_user.email}: text_len={len(text)}, voice={voice_id}, model={model_id}")
+        logger.info(f"TTS request from user {current_user.email}: text_len={len(text)}, voice={voice_id}, model={tts_model}")
         
         # Synthesize speech
         result = await elevenlabs_service.synthesize_speech(
             text=text,
             voice_id=voice_id,
-            model_id=model_id,
+            model_id=tts_model,
             voice_settings=voice_settings,
             output_format=output_format
         )
@@ -403,7 +403,7 @@ async def synthesize_speech(
                 user_id=current_user.id,
                 word_count=word_count,
                 service_provider="elevenlabs",
-                model_name=model_id or elevenlabs_service.default_model
+                model_name=tts_model or elevenlabs_service.default_model
             )
         
         # Return audio as response
@@ -432,7 +432,7 @@ async def synthesize_speech(
 async def stream_speech(
     text: str = Form(...),
     voice_id: Optional[str] = Form(None),
-    model_id: Optional[str] = Form(None),
+    tts_model: Optional[str] = Form(None),
     stability: float = Form(0.5),
     similarity_boost: float = Form(0.5),
     style: float = Form(0.0),
@@ -467,7 +467,7 @@ async def stream_speech(
                 user_id=current_user.id,
                 word_count=word_count,
                 service_provider="elevenlabs",
-                model_name=model_id or elevenlabs_service.default_model
+                model_name=tts_model or elevenlabs_service.default_model
             )
         
         # Stream speech
@@ -476,7 +476,7 @@ async def stream_speech(
                 async for chunk in elevenlabs_service.stream_speech(
                     text=text,
                     voice_id=voice_id,
-                    model_id=model_id,
+                    model_id=tts_model,
                     voice_settings=voice_settings,
                     output_format=output_format
                 ):
@@ -503,7 +503,7 @@ async def stream_speech(
                 "Content-Disposition": "attachment; filename=speech_stream.mp3",
                 "X-Text-Length": str(len(text)),
                 "X-Voice-ID": voice_id or elevenlabs_service.default_voice_id,
-                "X-Model-ID": model_id or elevenlabs_service.default_model,
+                "X-Model-ID": tts_model or elevenlabs_service.default_model,
                 "X-Output-Format": output_fmt
             }
         )
