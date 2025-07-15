@@ -141,7 +141,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             <div className="flex space-x-6 mt-2 sm:mt-0">
               <Link href="/privacy" className="text-sm text-blue-600 hover:text-blue-800 underline">Privacy Policy</Link>
               <Link href="/terms" className="text-sm text-blue-600 hover:text-blue-800 underline">Terms of Service</Link>
-              <a href="https://github.com/techwiz42/thanotopolis/issues" target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:text-blue-800 underline">Report Issue</a>
+              <Link href="/issues" className="text-sm text-blue-600 hover:text-blue-800 underline">Report Issue</Link>
               <a href={`mailto:pete@cyberiad.ai${user ? `?from=${encodeURIComponent(user.email)}` : ''}`} className="text-sm text-blue-600 hover:text-blue-800 underline">Contact</a>
             </div>
           </div>

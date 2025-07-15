@@ -26,6 +26,8 @@ from app.api.telephony_websocket import router as telephony_ws_router
 from app.api.crm import router as crm_router
 # Calendar router
 from app.api.calendar import router as calendar_router
+# Issues router
+from app.api.issues import router as issues_router
 from app.core.config import settings
 from app.security.security_middleware import (
     SecurityHeadersMiddleware,
@@ -436,6 +438,13 @@ try:
     logger.info("✅ Calendar router registered")
 except Exception as e:
     logger.error(f"❌ Failed to register calendar router: {e}")
+
+# Issues router
+try:
+    app.include_router(issues_router, prefix="/api", tags=["Issues"])
+    logger.info("✅ Issues router registered")
+except Exception as e:
+    logger.error(f"❌ Failed to register issues router: {e}")
 
 # NEW: Add telephony routers
 try:

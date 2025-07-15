@@ -38,6 +38,13 @@ from .calendar_models import (
     CalendarEvent,
     CalendarEventAttendee
 )
+from .issues import (
+    Issue,
+    IssueComment,
+    IssueStatus,
+    IssuePriority,
+    IssueType
+)
 
 __all__ = [
     "Base",
@@ -69,5 +76,10 @@ __all__ = [
     "EmailTemplate",
     "ContactStatus",
     "ContactInteractionType",
-    "CustomFieldType"
+    "CustomFieldType",
+    "Issue",
+    "IssueComment",
+    "IssueStatus",
+    "IssuePriority",
+    "IssueType"
 ]
