@@ -6,7 +6,7 @@ Bridges Twilio MediaStream with Deepgram's conversational AI
 import asyncio
 import json
 import base64
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from datetime import datetime
 import logging
 import re
@@ -15,6 +15,7 @@ from fastapi import WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from openai import AsyncOpenAI
 from twilio.rest import Client as TwilioClient
+from agents import WebSearchTool
 
 from app.models.models import PhoneCall, CallDirection, CallMessage, Conversation, Message
 from app.db.database import get_db
@@ -126,15 +127,15 @@ class TelephonyVoiceAgentHandler:
         self.call_sessions: Dict[str, Dict[str, Any]] = {}
         self.db_locks: Dict[str, asyncio.Lock] = {}  # Per-session database locks
         
+        # Initialize web search tool
+        self.web_search_tool = WebSearchTool(search_context_size="medium")
+        
         # Rate limiting settings
         self.max_concurrent_connections = 50  # Maximum concurrent WebSocket connections
         self.max_audio_packets_per_second = 100  # Maximum audio packets per second per session
         self.connection_count = 0
         self.session_packet_counts: Dict[str, int] = {}  # Track packet counts per session
         self.packet_reset_task: Optional[asyncio.Task] = None
-        
-        # Start packet count reset task
-        self.packet_reset_task = asyncio.create_task(self._reset_packet_counts_periodically())
         
     async def handle_connection(self, websocket: WebSocket, db: AsyncSession):
         """Handle incoming Twilio WebSocket connection"""
@@ -152,6 +153,10 @@ class TelephonyVoiceAgentHandler:
             await websocket.accept()
             self.connection_count += 1
             logger.info(f"🔌 Accepted new telephony Voice Agent connection ({self.connection_count}/{self.max_concurrent_connections})")
+            
+            # Start packet reset task if not already running
+            if self.packet_reset_task is None or self.packet_reset_task.done():
+                self.packet_reset_task = asyncio.create_task(self._reset_packet_counts_periodically())
             
             # Process Twilio messages
             while True:
@@ -485,6 +490,13 @@ Your role:
 - Provide information about the organization when asked
 - If you don't know something, acknowledge it honestly and offer alternatives
 
+WEB SEARCH CAPABILITY:
+- You have direct access to web search for current information
+- When callers ask about news, prices, weather, recent events, or current information, you can search the web instantly
+- If a caller asks you to "search the web", "look it up online", or needs current information, you will automatically search and provide results
+- Examples: "What's the weather like today?", "Search for recent news about...", "What are current gas prices?"
+- You can also consult with other specialist teams when complex questions arise that require human expertise
+
 {contact_info}
 
 Important:
@@ -492,6 +504,7 @@ Important:
 - Speak naturally, as if having a real phone conversation
 - Always identify yourself as representing the organization
 - Always greet the caller first when the call begins
+- You have direct web search access for current information and can consult specialists for complex questions
 """
         
         # Additional instructions are already included above in the ADDITIONAL INSTRUCTIONS section
@@ -899,6 +912,17 @@ Important:
                 try:
                     await self._process_customer_data_extraction(session_id, text, db)
                     await self._process_scheduling_intent(session_id, text, db)
+                    
+                    # Check if user wants web search and perform it directly
+                    if self._should_perform_web_search(text):
+                        search_results = await self._perform_web_search(session_id, text)
+                        if search_results:
+                            # Get the voice session and inject the search results
+                            voice_session = self.voice_agent_service.sessions.get(session_id)
+                            if voice_session:
+                                await voice_session.inject_message(search_results, "assistant")
+                                logger.info(f"📡 Injected web search results into voice conversation")
+                                
                 except Exception as crm_error:
                     logger.error(f"❌ Error in CRM/calendar processing: {crm_error}")
                     # Don't let CRM errors affect the main call flow
@@ -1620,6 +1644,123 @@ Apologize and offer to:
             
         except Exception as e:
             logger.error(f"❌ Error in scheduling intent processing: {e}")
+
+    async def _perform_web_search(self, session_id: str, user_message: str) -> Optional[str]:
+        """Perform web search and return formatted results"""
+        try:
+            session_info = self.call_sessions.get(session_id)
+            if not session_info:
+                return None
+            
+            # Extract search query from user message
+            search_query = self._extract_search_query(user_message)
+            if not search_query:
+                return None
+            
+            logger.info(f"📡 Performing web search for: {search_query}")
+            
+            # Perform web search using the tool
+            search_results = await self.web_search_tool.web_search(search_query)
+            
+            if not search_results:
+                return "I wasn't able to find any current information on that topic. Would you like me to help you with something else?"
+            
+            # Format results for voice conversation
+            formatted_results = self._format_search_results_for_voice(search_results, search_query)
+            
+            logger.info(f"📡 Web search completed for: {search_query}")
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"❌ Error performing web search: {e}")
+            return "I encountered an error while searching. Let me try to help you with the information I have available."
+    
+    def _extract_search_query(self, user_message: str) -> Optional[str]:
+        """Extract search query from user message"""
+        # Simple extraction - in a real implementation, this could be more sophisticated
+        message_lower = user_message.lower()
+        
+        # Remove web search trigger phrases to get the actual query
+        trigger_phrases = [
+            "search the web for", "search online for", "look up", "google", 
+            "find information about", "search for", "what is", "what are",
+            "tell me about", "can you find", "look for"
+        ]
+        
+        query = user_message.strip()
+        for phrase in trigger_phrases:
+            if phrase in message_lower:
+                # Find the phrase and extract everything after it
+                phrase_index = message_lower.find(phrase)
+                if phrase_index != -1:
+                    query = user_message[phrase_index + len(phrase):].strip()
+                    break
+        
+        # Clean up common question words at the beginning
+        query = re.sub(r'^(what|who|where|when|why|how|is|are|can|do|does)\s+', '', query, flags=re.IGNORECASE)
+        
+        return query if query and len(query) > 2 else None
+    
+    def _format_search_results_for_voice(self, results: List[Dict], query: str) -> str:
+        """Format search results for natural voice conversation"""
+        if not results:
+            return f"I couldn't find current information about {query}."
+        
+        # Take the most relevant results (usually first 2-3)
+        top_results = results[:3]
+        
+        response_parts = [f"I found some current information about {query}:"]
+        
+        for i, result in enumerate(top_results, 1):
+            title = result.get('title', 'Unknown source')
+            content = result.get('content', '')
+            
+            # Truncate content for voice conversation
+            if len(content) > 200:
+                content = content[:200] + "..."
+            
+            if i == 1:
+                response_parts.append(f"According to {title}: {content}")
+            else:
+                response_parts.append(f"Additionally, {title} reports: {content}")
+        
+        # Add a natural ending
+        if len(top_results) > 1:
+            response_parts.append("Would you like me to search for more specific information about any of these points?")
+        
+        return " ".join(response_parts)
+    
+    def _should_perform_web_search(self, user_message: str) -> bool:
+        """Check if user message indicates a web search is needed"""
+        message_lower = user_message.lower()
+        
+        # Direct web search requests
+        web_search_indicators = [
+            "search the web", "search online", "search the internet",
+            "look it up online", "google it", "find information online",
+            "check online", "what does the internet say", "search for",
+            "current information", "latest news", "recent updates",
+            "what's happening", "current events", "up to date",
+            "recent", "today", "this week", "this month"
+        ]
+        
+        # Current information topics
+        current_info_topics = [
+            "news", "price", "stock", "weather", "traffic", "events",
+            "schedule", "hours", "open", "closed", "available"
+        ]
+        
+        # Check for direct web search requests
+        for indicator in web_search_indicators:
+            if indicator in message_lower:
+                return True
+        
+        # Check for current information topics
+        for topic in current_info_topics:
+            if topic in message_lower:
+                return True
+        
+        return False
 
 
 # Create handler instance
